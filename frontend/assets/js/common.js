@@ -182,12 +182,10 @@ function updateWarehouseList() {
 // 切换仓库
 async function switchWarehouse(warehouseId) {
     try {
-        const response = await fetch(`${API_BASE_URL}/users/${currentUser.id}/switch-warehouse`, {
+        const params = new URLSearchParams({ warehouse_id: warehouseId });
+        const response = await fetch(`${API_BASE_URL}/users/${currentUser.id}/switch-warehouse?${params.toString()}`, {
             method: 'POST',
-            headers: getHeaders(),
-            body: JSON.stringify({
-                warehouse_id: warehouseId
-            })
+            headers: getHeaders()
         });
         
         if (!response.ok) {
