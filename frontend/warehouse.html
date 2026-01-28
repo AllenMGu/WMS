@@ -220,12 +220,6 @@
                                     地址
                                 </th>
                                 <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                    状态
-                                </th>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                    创建时间
-                                </th>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     操作
                                 </th>
                             </tr>
@@ -233,7 +227,7 @@
                         <tbody class="bg-white divide-y divide-gray-200" id="warehouseTableBody">
                             <!-- 仓库数据将通过JS动态生成 -->
                             <tr>
-                                <td colspan="6" class="px-6 py-4 text-center text-gray-500">加载中...</td>
+                                <td colspan="4" class="px-6 py-4 text-center text-gray-500">加载中...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -315,13 +309,7 @@
                         <label for="warehouseAddress" class="block text-sm font-medium text-gray-700 mb-1">仓库地址</label>
                         <input type="text" id="warehouseAddress" class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all-300" placeholder="请输入仓库地址">
                     </div>
-                    <div class="mb-4">
-                        <label for="warehouseStatus" class="block text-sm font-medium text-gray-700 mb-1">状态</label>
-                        <select id="warehouseStatus" class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all-300">
-                            <option value="true">启用</option>
-                            <option value="false">禁用</option>
-                        </select>
-                    </div>
+                    
                 </form>
             </div>
             <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
@@ -373,6 +361,7 @@
         let accessToken = null;
         let warehouses = [];
         let currentWarehouseId = null;
+        let warehouseDataList = [];
         let currentEditId = null;
         let currentDeleteId = null;
         
@@ -396,7 +385,6 @@
         const warehouseCode = document.getElementById('warehouseCode');
         const warehouseName = document.getElementById('warehouseName');
         const warehouseAddress = document.getElementById('warehouseAddress');
-        const warehouseStatus = document.getElementById('warehouseStatus');
         const cancelBtn = document.getElementById('cancelBtn');
         const saveBtn = document.getElementById('saveBtn');
         const deleteModal = document.getElementById('deleteModal');
@@ -566,7 +554,7 @@
         async function loadWarehouseData() {
             try {
                 // 显示加载状态
-                warehouseTableBody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500">加载中...</td></tr>';
+                warehouseTableBody.innerHTML = '<tr><td colspan="4" class="px-6 py-4 text-center text-gray-500">加载中...</td></tr>';
                 
                 // 获取仓库列表
                 const response = await fetch(`${API_BASE_URL}/warehouses/`, {
@@ -580,19 +568,20 @@
                 }
                 
                 const data = await response.json();
+                warehouseDataList = Array.isArray(data) ? data : [];
                 
                 // 更新表格
-                renderWarehouseTable(data);
+                renderWarehouseTable(warehouseDataList);
             } catch (error) {
                 console.error('加载仓库数据失败:', error);
-                warehouseTableBody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-red-500">加载失败，请重试</td></tr>';
+                warehouseTableBody.innerHTML = '<tr><td colspan="4" class="px-6 py-4 text-center text-red-500">加载失败，请重试</td></tr>';
             }
         }
         
         // 渲染仓库表格
         function renderWarehouseTable(data) {
             if (!data || data.length === 0) {
-                warehouseTableBody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500">暂无数据</td></tr>';
+                warehouseTableBody.innerHTML = '<tr><td colspan="4" class="px-6 py-4 text-center text-gray-500">暂无数据</td></tr>';
                 return;
             }
             
@@ -619,22 +608,6 @@
                 addressCell.className = 'px-6 py-4';
                 addressCell.innerHTML = `<div class="text-sm text-gray-900">${warehouse.address || '-'}</div>`;
                 row.appendChild(addressCell);
-                
-                // 状态
-                const statusCell = document.createElement('td');
-                statusCell.className = 'px-6 py-4 whitespace-nowrap';
-                const statusBadge = warehouse.is_active ? 
-                    '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">启用</span>' : 
-                    '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">禁用</span>';
-                statusCell.innerHTML = statusBadge;
-                row.appendChild(statusCell);
-                
-                // 创建时间
-                const timeCell = document.createElement('td');
-                timeCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
-                const createTime = new Date(warehouse.create_time).toLocaleString('zh-CN');
-                timeCell.textContent = createTime;
-                row.appendChild(timeCell);
                 
                 // 操作
                 const actionCell = document.createElement('td');
@@ -683,42 +656,28 @@
             modalTitle.textContent = '新增仓库';
             warehouseForm.reset();
             warehouseId.value = '';
-            warehouseStatus.value = 'true';
             currentEditId = null;
             warehouseModal.classList.remove('hidden');
         }
         
         // 打开编辑仓库模态框
         async function editWarehouse(id) {
-            try {
-                // 获取仓库详情
-                const response = await fetch(`${API_BASE_URL}/warehouses/${id}`, {
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`
-                    }
-                });
-                
-                if (!response.ok) {
-                    throw new Error('获取仓库详情失败');
-                }
-                
-                const warehouse = await response.json();
-                
-                // 填充表单
-                modalTitle.textContent = '编辑仓库';
-                warehouseId.value = warehouse.id;
-                warehouseCode.value = warehouse.code;
-                warehouseName.value = warehouse.name;
-                warehouseAddress.value = warehouse.address || '';
-                warehouseStatus.value = warehouse.is_active.toString();
-                currentEditId = id;
-                
-                // 显示模态框
-                warehouseModal.classList.remove('hidden');
-            } catch (error) {
-                console.error('编辑仓库失败:', error);
+            const warehouse = warehouseDataList.find(item => item.id === id);
+            if (!warehouse) {
                 showToast('获取仓库详情失败', 'error');
+                return;
             }
+            
+            // 填充表单
+            modalTitle.textContent = '编辑仓库';
+            warehouseId.value = warehouse.id;
+            warehouseCode.value = warehouse.code;
+            warehouseName.value = warehouse.name;
+            warehouseAddress.value = warehouse.address || '';
+            currentEditId = id;
+            
+            // 显示模态框
+            warehouseModal.classList.remove('hidden');
         }
         
         // 保存仓库
