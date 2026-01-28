@@ -329,6 +329,17 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[UserRole] = None
+    password: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    class Config:
+        json_encoders = {
+            UserRole: lambda v: v.value
+        }
+
 class WarehouseCreate(BaseModel):
     code: str
     name: str
@@ -722,9 +733,37 @@ async def get_all_users(
             "id": user.id,
             "username": user.username,
             "full_name": user.full_name,
-            "role": user.role
+            "role": user.role,
+            "is_active": user.is_active
         })
     return result
+
+# 修改用户（仅管理员可操作）
+@app.put("/users/{user_id}", summary="修改用户信息")
+async def update_user(
+    user_id: int,
+    user_update: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="无权限操作")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    if user_update.full_name is not None:
+        user.full_name = user_update.full_name
+    if user_update.role is not None:
+        user.role = user_update.role
+    if user_update.is_active is not None:
+        user.is_active = user_update.is_active
+    if user_update.password:
+        user.hashed_password = get_password_hash(user_update.password)
+
+    db.commit()
+    return {"message": "用户更新成功"}
 
 # 为用户分配/取消分配仓库
 @app.post("/users/{user_id}/assign-warehouse", summary="为用户分配仓库")

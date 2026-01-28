@@ -160,6 +160,8 @@
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用户名</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">角色</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                             </tr>
                         </thead>
                         <tbody id="userTableBody" class="bg-white divide-y divide-gray-200"></tbody>
@@ -209,10 +211,75 @@
         </div>
     </div>
 
+    <div id="editUserModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-30">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-800">编辑用户</h2>
+                <button id="closeEditModal" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa fa-times"></i>
+                </button>
+            </div>
+            <form id="editUserForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">用户名</label>
+                    <input type="text" id="editUsername" class="mt-1 block w-full rounded-md border-gray-300 bg-gray-100 shadow-sm" disabled>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">姓名</label>
+                    <input type="text" id="editFullName" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">新密码（可选）</label>
+                    <input type="password" id="editPassword" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">角色</label>
+                    <select id="editRole" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary">
+                        <option value="operator">操作员</option>
+                        <option value="admin">管理员</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">状态</label>
+                    <select id="editStatus" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary">
+                        <option value="active">启用</option>
+                        <option value="inactive">禁用</option>
+                    </select>
+                </div>
+                <div class="flex justify-end space-x-3 pt-2">
+                    <button type="button" id="cancelEditUser" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300">取消</button>
+                    <button type="submit" class="px-4 py-2 bg-primary text-white rounded-md hover:bg-secondary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="warehouseModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-30">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-xl p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-800">管理用户仓库</h2>
+                <button id="closeWarehouseModal" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa fa-times"></i>
+                </button>
+            </div>
+            <div class="mb-4 text-sm text-gray-600">
+                为用户选择可操作的仓库，取消勾选将移除权限。
+            </div>
+            <div id="warehouseManageList" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto mb-6"></div>
+            <div class="flex justify-end space-x-3">
+                <button type="button" id="cancelWarehouseManage" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300">取消</button>
+                <button type="button" id="saveWarehouseManage" class="px-4 py-2 bg-primary text-white rounded-md hover:bg-secondary">保存</button>
+            </div>
+        </div>
+    </div>
+
     <script src="assets/js/common.js"></script>
     <script>
         let users = [];
         let warehouses = [];
+        let currentEditUserId = null;
+        let currentWarehouseUserId = null;
+        let currentWarehouseAssignments = [];
 
         function pageInit() {
             loadUsers();
@@ -261,7 +328,7 @@
             if (errorMessage) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="3" class="px-6 py-6 text-center text-red-500">${errorMessage}</td>
+                        <td colspan="5" class="px-6 py-6 text-center text-red-500">${errorMessage}</td>
                     </tr>
                 `;
                 return;
@@ -270,7 +337,7 @@
             if (users.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="3" class="px-6 py-6 text-center text-gray-500">暂无用户数据</td>
+                        <td colspan="5" class="px-6 py-6 text-center text-gray-500">暂无用户数据</td>
                     </tr>
                 `;
                 return;
@@ -279,6 +346,8 @@
             tbody.innerHTML = users.map(user => {
                 const roleLabel = user.role === 'admin' ? '管理员' : '操作员';
                 const roleClass = user.role === 'admin' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800';
+                const statusLabel = user.is_active ? '启用' : '禁用';
+                const statusClass = user.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600';
 
                 return `
                     <tr class="hover:bg-gray-50">
@@ -290,6 +359,13 @@
                         </td>
                         <td class="px-6 py-4">
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${roleClass}">${roleLabel}</span>
+                        </td>
+                        <td class="px-6 py-4">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">${statusLabel}</span>
+                        </td>
+                        <td class="px-6 py-4 text-sm font-medium space-x-3">
+                            <button class="text-primary hover:text-secondary edit-user" data-id="${user.id}">编辑</button>
+                            <button class="text-indigo-600 hover:text-indigo-800 manage-warehouse" data-id="${user.id}">仓库权限</button>
                         </td>
                     </tr>
                 `;
@@ -324,6 +400,14 @@
             const userForm = document.getElementById('userForm');
             const roleSelect = document.getElementById('role');
             const warehouseSelect = document.getElementById('warehouseSelect');
+            const editModal = document.getElementById('editUserModal');
+            const closeEditModal = document.getElementById('closeEditModal');
+            const cancelEditUser = document.getElementById('cancelEditUser');
+            const editUserForm = document.getElementById('editUserForm');
+            const warehouseModal = document.getElementById('warehouseModal');
+            const closeWarehouseModal = document.getElementById('closeWarehouseModal');
+            const cancelWarehouseManage = document.getElementById('cancelWarehouseManage');
+            const saveWarehouseManage = document.getElementById('saveWarehouseManage');
 
             addUserBtn.addEventListener('click', () => {
                 modal.classList.remove('hidden');
@@ -389,6 +473,180 @@
                     showToast(error.message, 'error');
                 }
             });
+
+            function closeEditUserModal() {
+                editModal.classList.add('hidden');
+                editModal.classList.remove('flex');
+                editUserForm.reset();
+                currentEditUserId = null;
+            }
+
+            closeEditModal.addEventListener('click', closeEditUserModal);
+            cancelEditUser.addEventListener('click', closeEditUserModal);
+
+            editUserForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+
+                if (!currentEditUserId) return;
+
+                const fullName = document.getElementById('editFullName').value.trim();
+                const password = document.getElementById('editPassword').value.trim();
+                const role = document.getElementById('editRole').value;
+                const status = document.getElementById('editStatus').value;
+
+                const payload = {
+                    full_name: fullName,
+                    role,
+                    is_active: status === 'active'
+                };
+
+                if (password) {
+                    payload.password = password;
+                }
+
+                try {
+                    const response = await fetch(`${API_BASE_URL}/users/${currentEditUserId}`, {
+                        method: 'PUT',
+                        headers: getHeaders(),
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || '更新用户失败');
+                    }
+
+                    showToast('用户更新成功', 'success');
+                    closeEditUserModal();
+                    loadUsers();
+                } catch (error) {
+                    console.error('更新用户失败:', error);
+                    showToast(error.message, 'error');
+                }
+            });
+
+            function closeWarehouseManageModal() {
+                warehouseModal.classList.add('hidden');
+                warehouseModal.classList.remove('flex');
+                currentWarehouseUserId = null;
+                currentWarehouseAssignments = [];
+                document.getElementById('warehouseManageList').innerHTML = '';
+            }
+
+            closeWarehouseModal.addEventListener('click', closeWarehouseManageModal);
+            cancelWarehouseManage.addEventListener('click', closeWarehouseManageModal);
+
+            saveWarehouseManage.addEventListener('click', async () => {
+                if (!currentWarehouseUserId) return;
+
+                const selections = Array.from(document.querySelectorAll('#warehouseManageList input[type=\"checkbox\"]'))
+                    .map(input => ({
+                        id: Number(input.value),
+                        checked: input.checked
+                    }));
+
+                const assignedIds = new Set(currentWarehouseAssignments.map(item => item.id));
+                const tasks = [];
+
+                selections.forEach(selection => {
+                    if (selection.checked && !assignedIds.has(selection.id)) {
+                        const params = new URLSearchParams({ warehouse_id: selection.id });
+                        tasks.push(fetch(`${API_BASE_URL}/users/${currentWarehouseUserId}/assign-warehouse?${params.toString()}`, {
+                            method: 'POST',
+                            headers: getHeaders()
+                        }));
+                    } else if (!selection.checked && assignedIds.has(selection.id)) {
+                        const params = new URLSearchParams({ warehouse_id: selection.id });
+                        tasks.push(fetch(`${API_BASE_URL}/users/${currentWarehouseUserId}/unassign-warehouse?${params.toString()}`, {
+                            method: 'DELETE',
+                            headers: getHeaders()
+                        }));
+                    }
+                });
+
+                try {
+                    const results = await Promise.all(tasks);
+                    const failed = results.find(result => !result.ok);
+                    if (failed) {
+                        const errorData = await failed.json();
+                        throw new Error(errorData.detail || '更新仓库权限失败');
+                    }
+
+                    showToast('仓库权限更新成功', 'success');
+                    closeWarehouseManageModal();
+                } catch (error) {
+                    console.error('更新仓库权限失败:', error);
+                    showToast(error.message, 'error');
+                }
+            });
+
+            document.getElementById('userTableBody').addEventListener('click', (event) => {
+                const editButton = event.target.closest('.edit-user');
+                const manageButton = event.target.closest('.manage-warehouse');
+
+                if (editButton) {
+                    const userId = Number(editButton.dataset.id);
+                    const user = users.find(item => item.id === userId);
+                    if (user) {
+                        openEditUser(user);
+                    }
+                }
+
+                if (manageButton) {
+                    const userId = Number(manageButton.dataset.id);
+                    openWarehouseManage(userId);
+                }
+            });
+        }
+
+        function openEditUser(user) {
+            currentEditUserId = user.id;
+            document.getElementById('editUsername').value = user.username;
+            document.getElementById('editFullName').value = user.full_name || '';
+            document.getElementById('editPassword').value = '';
+            document.getElementById('editRole').value = user.role;
+            document.getElementById('editStatus').value = user.is_active ? 'active' : 'inactive';
+
+            const editModal = document.getElementById('editUserModal');
+            editModal.classList.remove('hidden');
+            editModal.classList.add('flex');
+        }
+
+        async function openWarehouseManage(userId) {
+            currentWarehouseUserId = userId;
+            const list = document.getElementById('warehouseManageList');
+            list.innerHTML = '<div class="text-sm text-gray-500">加载中...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/users/${userId}/warehouses`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('获取用户仓库失败');
+                }
+
+                currentWarehouseAssignments = await response.json();
+                const assignedIds = new Set(currentWarehouseAssignments.map(item => item.id));
+
+                list.innerHTML = '';
+                warehouses.forEach(warehouse => {
+                    const label = document.createElement('label');
+                    label.className = 'flex items-center space-x-2 text-sm text-gray-700';
+                    label.innerHTML = `
+                        <input type="checkbox" value="${warehouse.id}" class="rounded border-gray-300 text-primary focus:ring-primary" ${assignedIds.has(warehouse.id) ? 'checked' : ''}>
+                        <span>${warehouse.name}</span>
+                    `;
+                    list.appendChild(label);
+                });
+
+                const modal = document.getElementById('warehouseModal');
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            } catch (error) {
+                console.error('加载用户仓库失败:', error);
+                showToast(error.message, 'error');
+            }
         }
     </script>
 </body>

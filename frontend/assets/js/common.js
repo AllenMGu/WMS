@@ -34,9 +34,18 @@ function initCommon() {
 
 // 检查登录状态
 function checkLoginStatus() {
-    const token = localStorage.getItem('access_token');
+    let token = localStorage.getItem('access_token');
     const userInfo = localStorage.getItem('user');
     const expiry = localStorage.getItem('token_expiry');
+
+    if (!token) {
+        const legacyToken = localStorage.getItem('token');
+        if (legacyToken) {
+            localStorage.setItem('access_token', legacyToken);
+            localStorage.removeItem('token');
+            token = legacyToken;
+        }
+    }
     
     if (!token || !userInfo) {
         // 未登录，跳转到登录页
@@ -267,7 +276,7 @@ function logout() {
 
 // 获取请求头
 function getHeaders() {
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
     return {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
