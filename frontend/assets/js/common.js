@@ -34,12 +34,27 @@ function initCommon() {
 
 // 检查登录状态
 function checkLoginStatus() {
-    const token = localStorage.getItem('token');
+    let token = localStorage.getItem('access_token');
     const userInfo = localStorage.getItem('user');
+    const expiry = localStorage.getItem('token_expiry');
+
+    if (!token) {
+        const legacyToken = localStorage.getItem('token');
+        if (legacyToken) {
+            localStorage.setItem('access_token', legacyToken);
+            localStorage.removeItem('token');
+            token = legacyToken;
+        }
+    }
     
     if (!token || !userInfo) {
         // 未登录，跳转到登录页
         window.location.href = 'index.html';
+        return;
+    }
+
+    if (expiry && new Date() >= new Date(expiry)) {
+        logout();
         return;
     }
     
@@ -251,8 +266,9 @@ function setupLogout() {
 // 退出登录
 function logout() {
     // 清除本地存储
-    localStorage.removeItem('token');
+    localStorage.removeItem('access_token');
     localStorage.removeItem('user');
+    localStorage.removeItem('token_expiry');
     
     // 跳转到登录页
     window.location.href = 'index.html';
@@ -260,7 +276,7 @@ function logout() {
 
 // 获取请求头
 function getHeaders() {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
     return {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
