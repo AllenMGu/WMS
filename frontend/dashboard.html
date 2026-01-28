@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>仪表盘 - 多仓库管理系统</title>
+    <!-- Tailwind CSS v3 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    <!-- 统一的 Tailwind 配置 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#1a56db',
+                        secondary: '#4f46e5',
+                        success: '#10b981',
+                        danger: '#ef4444',
+                        warning: '#f59e0b',
+                        info: '#3b82f6',
+                        light: '#f3f4f6',
+                        dark: '#1f2937'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .transition-all-300 {
+                transition: all 0.3s ease;
+            }
+            .sidebar-active {
+                @apply bg-primary text-white;
+            }
+            .sidebar-icon {
+                @apply mr-3 text-lg;
+            }
+            .card-hover {
+                @apply hover:shadow-lg transition-all-300;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+    <!-- 顶部状态栏 -->
+    <header class="bg-white shadow-sm z-10">
+        <div class="flex items-center justify-between px-4 py-3">
+            <!-- 左侧：Logo和菜单按钮 -->
+            <div class="flex items-center">
+                <button id="sidebarToggle" class="mr-4 text-gray-600 focus:outline-none lg:hidden">
+                    <i class="fa fa-bars text-xl"></i>
+                </button>
+                <div class="flex items-center">
+                    <img src="https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/pc/super_tool/42dae0766d5c4bed86158de65b7663d3~tplv-a9rns2rl98-image.image?lk3s=8e244e95&rcl=2026012817265511D2C99A3202991DF1E7&rrcfp=f06b921b&x-expires=1772184452&x-signature=UFRTLlawHtw%2BeVOnI%2FLmg5r131g%3D" alt="Logo" class="h-8 w-8">
+                    <span class="ml-2 text-lg font-semibold text-gray-800 hidden sm:block">多仓库管理系统</span>
+                </div>
+            </div>
+            
+            <!-- 右侧：仓库选择、通知和用户信息 -->
+            <div class="flex items-center space-x-4">
+                <!-- 仓库选择 -->
+                <div class="relative" id="warehouseSelector">
+                    <button class="flex items-center text-gray-700 hover:text-primary focus:outline-none">
+                        <i class="fa fa-building-o mr-2"></i>
+                        <span id="currentWarehouse">加载中...</span>
+                        <i class="fa fa-chevron-down ml-1 text-xs"></i>
+                    </button>
+                    <div id="warehouseDropdown" class="absolute right-0 mt-2 w-64 bg-white rounded-md shadow-lg hidden z-20">
+                        <div class="py-1">
+                            <div class="px-4 py-2 text-sm text-gray-400">选择仓库</div>
+                            <div id="warehouseList" class="max-h-64 overflow-y-auto">
+                                <!-- 仓库列表将通过JS动态生成 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 通知 -->
+                <div class="relative">
+                    <button class="text-gray-600 hover:text-primary focus:outline-none">
+                        <i class="fa fa-bell-o text-xl"></i>
+                        <span class="absolute top-0 right-0 h-2 w-2 bg-red-500 rounded-full"></span>
+                    </button>
+                </div>
+                
+                <!-- 用户信息 -->
+                <div class="relative" id="userMenu">
+                    <button class="flex items-center focus:outline-none">
+                        <div class="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center">
+                            <span id="userInitials">U</span>
+                        </div>
+                        <span class="ml-2 text-sm font-medium text-gray-700 hidden md:block" id="userName">加载中...</span>
+                        <i class="fa fa-chevron-down ml-1 text-xs text-gray-500 hidden md:block"></i>
+                    </button>
+                    <div id="userDropdown" class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg hidden z-20">
+                        <div class="py-1">
+                            <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                <i class="fa fa-user-circle mr-2"></i> 个人资料
+                            </a>
+                            <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                <i class="fa fa-cog mr-2"></i> 设置
+                            </a>
+                            <hr class="my-1">
+                            <a href="#" id="logoutButton" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                <i class="fa fa-sign-out mr-2"></i> 退出登录
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden">
+        <!-- 侧边导航栏 -->
+        <aside id="sidebar" class="bg-white w-64 shadow-md hidden lg:block flex-shrink-0 transition-all-300">
+            <nav class="mt-5 px-2">
+                <a href="dashboard.html" class="sidebar-active flex items-center px-4 py-3 rounded-md mb-1">
+                    <i class="fa fa-dashboard sidebar-icon"></i>
+                    <span>仪表盘</span>
+                </a>
+                <a href="warehouse.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
+                    <i class="fa fa-building sidebar-icon"></i>
+                    <span>仓库管理</span>
+                </a>
+                <a href="location.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
+                    <i class="fa fa-map-marker sidebar-icon"></i>
+                    <span>库位管理</span>
+                </a>
+                <a href="goods.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
+                    <i class="fa fa-cubes sidebar-icon"></i>
+                    <span>货物管理</span>
+                </a>
+                <a href="stock.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
+                    <i class="fa fa-list sidebar-icon"></i>
+                    <span>库存查询</span>
+                </a>
+                <a href="scan.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
+                    <i class="fa fa-qrcode sidebar-icon"></i>
+                    <span>扫码出入库</span>
+                </a>
+                <a href="inbound.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
+                    <i class="fa fa-arrow-down sidebar-icon"></i>
+                    <span>入库单管理</span>
+                </a>
+                <a href="outbound.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
+                    <i class="fa fa-arrow-up sidebar-icon"></i>
+                    <span>出库单管理</span>
+                </a>
+                <a href="check.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
+                    <i class="fa fa-check-square-o sidebar-icon"></i>
+                    <span>盘点管理</span>
+                </a>
+                <a href="user.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
+                    <i class="fa fa-users sidebar-icon"></i>
+                    <span>用户管理</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="flex-1 overflow-y-auto p-6">
+            <!-- 页面标题 -->
+            <div class="mb-6">
+                <h1 class="text-2xl font-bold text-gray-800">仪表盘</h1>
+                <p class="text-gray-600">欢迎回来，<span id="welcomeUser">用户</span>！以下是您的库存概况。</p>
+            </div>
+            
+            <!-- 统计卡片 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+                <!-- 总货物种类 -->
+                <div class="bg-white rounded-lg shadow p-6 card-hover">
+                    <div class="flex items-center">
+                        <div class="p-3 rounded-full bg-blue-100 text-primary">
+                            <i class="fa fa-cubes fa-2x"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-600">总货物种类</p>
+                            <p class="text-2xl font-semibold text-gray-800" id="totalGoods">0</p>
+                        </div>
+                    </div>
+                    <div class="mt-4 flex items-center text-sm">
+                        <span class="text-green-500 flex items-center">
+                            <i class="fa fa-arrow-up mr-1"></i> 12%
+                        </span>
+                        <span class="text-gray-500 ml-2">较上月</span>
+                    </div>
+                </div>
+                
+                <!-- 总库存量 -->
+                <div class="bg-white rounded-lg shadow p-6 card-hover">
+                    <div class="flex items-center">
+                        <div class="p-3 rounded-full bg-green-100 text-success">
+                            <i class="fa fa-cubes fa-2x"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-600">总库存量</p>
+                            <p class="text-2xl font-semibold text-gray-800" id="totalStock">0</p>
+                        </div>
+                    </div>
+                    <div class="mt-4 flex items-center text-sm">
+                        <span class="text-green-500 flex items-center">
+                            <i class="fa fa-arrow-up mr-1"></i> 5%
+                        </span>
+                        <span class="text-gray-500 ml-2">较上月</span>
+                    </div>
+                </div>
+                
+                <!-- 本月入库量 -->
+                <div class="bg-white rounded-lg shadow p-6 card-hover">
+                    <div class="flex items-center">
+                        <div class="p-3 rounded-full bg-purple-100 text-purple-600">
+                            <i class="fa fa-arrow-down fa-2x"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-600">本月入库量</p>
+                            <p class="text-2xl font-semibold text-gray-800" id="monthlyInbound">0</p>
+                        </div>
+                    </div>
+                    <div class="mt-4 flex items-center text-sm">
+                        <span class="text-red-500 flex items-center">
+                            <i class="fa fa-arrow-down mr-1"></i> 3%
+                        </span>
+                        <span class="text-gray-500 ml-2">较上月</span>
+                    </div>
+                </div>
+                
+                <!-- 本月出库量 -->
+                <div class="bg-white rounded-lg shadow p-6 card-hover">
+                    <div class="flex items-center">
+                        <div class="p-3 rounded-full bg-orange-100 text-orange-600">
+                            <i class="fa fa-arrow-up fa-2x"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-600">本月出库量</p>
+                            <p class="text-2xl font-semibold text-gray-800" id="monthlyOutbound">0</p>
+                        </div>
+                    </div>
+                    <div class="mt-4 flex items-center text-sm">
+                        <span class="text-green-500 flex items-center">
+                            <i class="fa fa-arrow-up mr-1"></i> 8%
+                        </span>
+                        <span class="text-gray-500 ml-2">较上月</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 图表区域 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <!-- 出入库趋势图 -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">出入库趋势</h2>
+                    <div class="h-80">
+                        <canvas id="inventoryTrendChart"></canvas>
+                    </div>
+                </div>
+                
+                <!-- 库存分类统计图 -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">库存分类统计</h2>
+                    <div class="h-80">
+                        <canvas id="inventoryCategoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 库存预警和快速操作 -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 库存预警 -->
+                <div class="bg-white rounded-lg shadow p-6 lg:col-span-2">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold text-gray-800">库存预警</h2>
+                        <a href="stock.html" class="text-primary hover:text-secondary text-sm">查看全部</a>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead>
+                                <tr>
+                                    <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">货物名称</th>
+                                    <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">库存数量</th>
+                                    <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">库位</th>
+                                    <th class="px-4 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200" id="stockAlertTable">
+                                <!-- 库存预警数据将通过JS动态生成 -->
+                                <tr>
+                                    <td colspan="4" class="px-4 py-4 text-center text-gray-500">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- 快速操作 -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">快速操作</h2>
+                    <div class="grid grid-cols-2 gap-4">
+                        <a href="scan.html?type=in" class="flex flex-col items-center justify-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-all-300">
+                            <i class="fa fa-arrow-down text-primary text-2xl mb-2"></i>
+                            <span class="text-sm font-medium text-gray-800">扫码入库</span>
+                        </a>
+                        <a href="scan.html?type=out" class="flex flex-col items-center justify-center p-4 bg-orange-50 rounded-lg hover:bg-orange-100 transition-all-300">
+                            <i class="fa fa-arrow-up text-orange-500 text-2xl mb-2"></i>
+                            <span class="text-sm font-medium text-gray-800">扫码出库</span>
+                        </a>
+                        <a href="inbound.html?action=create" class="flex flex-col items-center justify-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-all-300">
+                            <i class="fa fa-file-text-o text-green-600 text-2xl mb-2"></i>
+                            <span class="text-sm font-medium text-gray-800">创建入库单</span>
+                        </a>
+                        <a href="outbound.html?action=create" class="flex flex-col items-center justify-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition-all-300">
+                            <i class="fa fa-file-text-o text-purple-600 text-2xl mb-2"></i>
+                            <span class="text-sm font-medium text-gray-800">创建出库单</span>
+                        </a>
+                        <a href="check.html" class="flex flex-col items-center justify-center p-4 bg-red-50 rounded-lg hover:bg-red-100 transition-all-300">
+                            <i class="fa fa-check-square-o text-red-500 text-2xl mb-2"></i>
+                            <span class="text-sm font-medium text-gray-800">库存盘点</span>
+                        </a>
+                        <a href="goods.html?action=create" class="flex flex-col items-center justify-center p-4 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition-all-300">
+                            <i class="fa fa-plus text-yellow-600 text-2xl mb-2"></i>
+                            <span class="text-sm font-medium text-gray-800">新增货物</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // API基础URL
+        const API_BASE_URL = 'http://localhost:8000';
+        
+        // 用户信息和认证
+        let currentUser = null;
+        let accessToken = null;
+        let warehouses = [];
+        let currentWarehouseId = null;
+        
+        // DOM元素
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebar = document.getElementById('sidebar');
+        const warehouseSelector = document.getElementById('warehouseSelector');
+        const warehouseDropdown = document.getElementById('warehouseDropdown');
+        const warehouseList = document.getElementById('warehouseList');
+        const currentWarehouse = document.getElementById('currentWarehouse');
+        const userMenu = document.getElementById('userMenu');
+        const userDropdown = document.getElementById('userDropdown');
+        const userName = document.getElementById('userName');
+        const userInitials = document.getElementById('userInitials');
+        const welcomeUser = document.getElementById('welcomeUser');
+        const logoutButton = document.getElementById('logoutButton');
+        
+        // 初始化函数
+        async function init() {
+            // 检查登录状态
+            if (!checkAuth()) {
+                window.location.href = 'index.html';
+                return;
+            }
+            
+            // 加载用户信息
+            await loadUserInfo();
+            
+            // 加载仓库列表
+            await loadWarehouses();
+            
+            // 加载仪表盘数据
+            await loadDashboardData();
+            
+            // 初始化图表
+            initCharts();
+            
+            // 设置事件监听器
+            setupEventListeners();
+        }
+        
+        // 检查认证状态
+        function checkAuth() {
+            accessToken = localStorage.getItem('access_token');
+            const userStr = localStorage.getItem('user');
+            
+            if (!accessToken || !userStr) {
+                return false;
+            }
+            
+            try {
+                currentUser = JSON.parse(userStr);
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+        
+        // 加载用户信息
+        function loadUserInfo() {
+            if (currentUser) {
+                userName.textContent = currentUser.full_name || currentUser.username;
+                welcomeUser.textContent = currentUser.full_name || currentUser.username;
+                userInitials.textContent = (currentUser.full_name || currentUser.username).charAt(0).toUpperCase();
+                
+                if (currentUser.current_warehouse_id) {
+                    currentWarehouseId = currentUser.current_warehouse_id;
+                }
+            }
+        }
+        
+        // 加载仓库列表
+        async function loadWarehouses() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/users/${currentUser.id}/warehouses`, {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('获取仓库列表失败');
+                }
+                
+                warehouses = await response.json();
+                
+                // 更新当前仓库显示
+                if (warehouses.length > 0) {
+                    let selectedWarehouse = null;
+                    
+                    if (currentWarehouseId) {
+                        selectedWarehouse = warehouses.find(w => w.id === currentWarehouseId);
+                    }
+                    
+                    if (!selectedWarehouse && warehouses.length > 0) {
+                        selectedWarehouse = warehouses.find(w => w.is_current) || warehouses[0];
+                        currentWarehouseId = selectedWarehouse.id;
+                    }
+                    
+                    if (selectedWarehouse) {
+                        currentWarehouse.textContent = selectedWarehouse.name;
+                    }
+                    
+                    // 填充仓库下拉列表
+                    warehouseList.innerHTML = '';
+                    warehouses.forEach(warehouse => {
+                        const item = document.createElement('a');
+                        item.href = '#';
+                        item.className = `block px-4 py-2 text-sm ${warehouse.id === currentWarehouseId ? 'bg-primary text-white' : 'text-gray-700 hover:bg-gray-100'}`;
+                        item.textContent = warehouse.name;
+                        item.dataset.warehouseId = warehouse.id;
+                        item.dataset.warehouseName = warehouse.name;
+                        
+                        item.addEventListener('click', async function(e) {
+                            e.preventDefault();
+                            const warehouseId = parseInt(this.dataset.warehouseId);
+                            const warehouseName = this.dataset.warehouseName;
+                            
+                            // 更新当前仓库
+                            await switchWarehouse(warehouseId, warehouseName);
+                            
+                            // 更新UI
+                            warehouseList.querySelectorAll('a').forEach(a => {
+                                a.className = a.dataset.warehouseId == warehouseId ? 
+                                    'block px-4 py-2 text-sm bg-primary text-white' : 
+                                    'block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100';
+                            });
+                            
+                            // 隐藏下拉菜单
+                            warehouseDropdown.classList.add('hidden');
+                        });
+                        
+                        warehouseList.appendChild(item);
+                    });
+                } else {
+                    currentWarehouse.textContent = '无可用仓库';
+                    warehouseList.innerHTML = '<div class="px-4 py-2 text-sm text-gray-500">无可用仓库</div>';
+                }
+            } catch (error) {
+                console.error('加载仓库列表失败:', error);
+                currentWarehouse.textContent = '加载失败';
+            }
+        }
+        
+        // 切换仓库
+        async function switchWarehouse(warehouseId, warehouseName) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/users/${currentUser.id}/switch-warehouse`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({ warehouse_id: warehouseId })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('切换仓库失败');
+                }
+                
+                // 更新UI
+                currentWarehouse.textContent = warehouseName;
+                currentWarehouseId = warehouseId;
+                
+                // 更新本地存储的用户信息
+                currentUser.current_warehouse_id = warehouseId;
+                localStorage.setItem('user', JSON.stringify(currentUser));
+                
+                // 重新加载仪表盘数据
+                await loadDashboardData();
+            } catch (error) {
+                console.error('切换仓库失败:', error);
+                alert('切换仓库失败，请重试');
+            }
+        }
+        
+        // 加载仪表盘数据
+        async function loadDashboardData() {
+            if (!currentWarehouseId) {
+                return;
+            }
+            
+            try {
+                // 模拟数据 - 在实际应用中，这些数据应该从API获取
+                // 总货物种类
+                document.getElementById('totalGoods').textContent = '1,248';
+                
+                // 总库存量
+                document.getElementById('totalStock').textContent = '15,720';
+                
+                // 本月入库量
+                document.getElementById('monthlyInbound').textContent = '1,245';
+                
+                // 本月出库量
+                document.getElementById('monthlyOutbound').textContent = '980';
+                
+                // 库存预警表格
+                const stockAlertTable = document.getElementById('stockAlertTable');
+                stockAlertTable.innerHTML = `
+                    <tr>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="text-sm font-medium text-gray-900">iPhone 13 Pro</div>
+                            <div class="text-xs text-gray-500">SKU: IP13P-256-BK</div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">5</div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">A1-01-01</div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
+                                库存不足
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="text-sm font-medium text-gray-900">MacBook Pro 14"</div>
+                            <div class="text-xs text-gray-500">SKU: MBP14-1TB-SV</div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">3</div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">B2-03-02</div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
+                                库存不足
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="text-sm font-medium text-gray-900">AirPods Pro</div>
+                            <div class="text-xs text-gray-500">SKU: APP-2ND-GN</div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">0</div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">C1-02-05</div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
+                                缺货
+                            </span>
+                        </td>
+                    </tr>
+                `;
+            } catch (error) {
+                console.error('加载仪表盘数据失败:', error);
+            }
+        }
+        
+        // 初始化图表
+        function initCharts() {
+            // 出入库趋势图
+            const trendCtx = document.getElementById('inventoryTrendChart').getContext('2d');
+            const trendChart = new Chart(trendCtx, {
+                type: 'line',
+                data: {
+                    labels: ['1月', '2月', '3月', '4月', '5月', '6月'],
+                    datasets: [
+                        {
+                            label: '入库量',
+                            data: [1200, 1900, 1500, 1700, 1400, 1600],
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        },
+                        {
+                            label: '出库量',
+                            data: [900, 1500, 1300, 1600, 1200, 1400],
+                            borderColor: '#f97316',
+                            backgroundColor: 'rgba(249, 115, 22, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+            
+            // 库存分类统计图
+            const categoryCtx = document.getElementById('inventoryCategoryChart').getContext('2d');
+            const categoryChart = new Chart(categoryCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['电子产品', '服装', '家居用品', '食品', '其他'],
+                    datasets: [{
+                        data: [45, 25, 15, 10, 5],
+                        backgroundColor: [
+                            '#3b82f6',
+                            '#10b981',
+                            '#f59e0b',
+                            '#ef4444',
+                            '#8b5cf6'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                        }
+                    }
+                }
+            });
+        }
+        
+        // 设置事件监听器
+        function setupEventListeners() {
+            // 侧边栏切换
+            sidebarToggle.addEventListener('click', function() {
+                sidebar.classList.toggle('hidden');
+            });
+            
+            // 仓库选择器下拉菜单
+            warehouseSelector.addEventListener('click', function(e) {
+                e.stopPropagation();
+                warehouseDropdown.classList.toggle('hidden');
+                userDropdown.classList.add('hidden');
+            });
+            
+            // 用户菜单下拉
+            userMenu.addEventListener('click', function(e) {
+                e.stopPropagation();
+                userDropdown.classList.toggle('hidden');
+                warehouseDropdown.classList.add('hidden');
+            });
+            
+            // 点击页面其他地方关闭下拉菜单
+            document.addEventListener('click', function() {
+                warehouseDropdown.classList.add('hidden');
+                userDropdown.classList.add('hidden');
+            });
+            
+            // 退出登录
+            logoutButton.addEventListener('click', function(e) {
+                e.preventDefault();
+                localStorage.removeItem('access_token');
+                localStorage.removeItem('user');
+                localStorage.removeItem('token_expiry');
+                window.location.href = 'index.html';
+            });
+        }
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
