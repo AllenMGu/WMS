@@ -470,16 +470,11 @@
         
         // 模拟扫码
         function simulateScan(type) {
+            showToast('请使用实际扫码设备或手动输入', 'info');
             if (type === 'goods') {
-                const mockBarcodes = ['1001', '1002', '1003', '1004', '1005'];
-                const randomBarcode = mockBarcodes[Math.floor(Math.random() * mockBarcodes.length)];
-                document.getElementById('goodsBarcode').value = randomBarcode;
-                validateGoods(randomBarcode);
+                document.getElementById('goodsBarcode').focus();
             } else {
-                const mockLocations = ['A-01-01', 'A-01-02', 'B-01-01', 'B-01-02', 'C-01-01'];
-                const randomLocation = mockLocations[Math.floor(Math.random() * mockLocations.length)];
-                document.getElementById('locationCode').value = randomLocation;
-                validateLocation(randomLocation);
+                document.getElementById('locationCode').focus();
             }
         }
         
@@ -700,8 +695,19 @@
         // 加载盘点统计
         async function loadCheckStatistics() {
             try {
-                // 这里应该调用API获取统计数据，现在使用模拟数据
-                const stats = getMockCheckStatistics();
+                const params = new URLSearchParams();
+                if (currentWarehouse && currentWarehouse.id) {
+                    params.append('warehouse_id', currentWarehouse.id);
+                }
+                const response = await fetch(`${API_BASE_URL}/check/stats?${params.toString()}`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('获取盘点统计失败');
+                }
+
+                const stats = await response.json();
                 
                 document.getElementById('todayChecks').textContent = stats.todayChecks;
                 document.getElementById('matchedChecks').textContent = stats.matchedChecks;
@@ -709,17 +715,30 @@
                 document.getElementById('checkedGoods').textContent = stats.checkedGoods;
             } catch (error) {
                 console.error('加载盘点统计失败:', error);
+                showToast('加载盘点统计失败', 'error');
             }
         }
         
         // 加载盘点记录
         async function loadCheckRecords() {
             try {
-                // 这里应该调用API获取盘点记录，现在使用模拟数据
-                checkRecords = getMockCheckRecords();
+                const params = new URLSearchParams();
+                if (currentWarehouse && currentWarehouse.id) {
+                    params.append('warehouse_id', currentWarehouse.id);
+                }
+                const response = await fetch(`${API_BASE_URL}/check/records?${params.toString()}`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('获取盘点记录失败');
+                }
+
+                checkRecords = await response.json();
                 updateCheckRecords();
             } catch (error) {
                 console.error('加载盘点记录失败:', error);
+                showToast('加载盘点记录失败', 'error');
             }
         }
         
@@ -782,12 +801,26 @@
         async function loadDiffReport() {
             try {
                 const reportDate = document.getElementById('reportDate').value;
-                
-                // 这里应该调用API获取差异报表，现在使用模拟数据
-                const diffs = getMockDiffReport(reportDate);
+                const params = new URLSearchParams();
+                if (reportDate) {
+                    params.append('date', reportDate);
+                }
+                if (currentWarehouse && currentWarehouse.id) {
+                    params.append('warehouse_id', currentWarehouse.id);
+                }
+                const response = await fetch(`${API_BASE_URL}/check/diffs?${params.toString()}`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('获取差异报表失败');
+                }
+
+                const diffs = await response.json();
                 updateDiffReport(diffs);
             } catch (error) {
                 console.error('加载差异报表失败:', error);
+                showToast('加载差异报表失败', 'error');
             }
         }
         
@@ -858,98 +891,6 @@
             currentStock = 0;
         }
         
-        // 获取模拟盘点统计
-        function getMockCheckStatistics() {
-            return {
-                todayChecks: 24,
-                matchedChecks: 18,
-                diffChecks: 6,
-                checkedGoods: 15
-            };
-        }
-        
-        // 获取模拟盘点记录
-        function getMockCheckRecords() {
-            const now = new Date();
-            return [
-                {
-                    id: 1,
-                    goods_name: 'iPhone 15 Pro',
-                    goods_barcode: '1001',
-                    location_code: 'A-01-01',
-                    location_name: '主货架A区',
-                    actual_quantity: 50,
-                    check_quantity: 50,
-                    diff: 0,
-                    check_time: new Date(now.getTime() - 1000 * 60 * 5).toISOString()
-                },
-                {
-                    id: 2,
-                    goods_name: 'MacBook Air M3',
-                    goods_barcode: '1002',
-                    location_code: 'B-01-02',
-                    location_name: '笔记本区',
-                    actual_quantity: 20,
-                    check_quantity: 18,
-                    diff: -2,
-                    check_time: new Date(now.getTime() - 1000 * 60 * 15).toISOString()
-                },
-                {
-                    id: 3,
-                    goods_name: 'AirPods Pro 2',
-                    goods_barcode: '1003',
-                    location_code: 'C-01-01',
-                    location_name: '配件区',
-                    actual_quantity: 100,
-                    check_quantity: 105,
-                    diff: 5,
-                    check_time: new Date(now.getTime() - 1000 * 60 * 30).toISOString()
-                }
-            ];
-        }
-        
-        // 获取模拟差异报表
-        function getMockDiffReport(date) {
-            const now = new Date();
-            return [
-                {
-                    id: 1,
-                    goods_name: 'MacBook Air M3',
-                    goods_barcode: '1002',
-                    location_code: 'B-01-02',
-                    location_name: '笔记本区',
-                    actual_quantity: 20,
-                    check_quantity: 18,
-                    diff: -2,
-                    check_time: new Date(now.getTime() - 1000 * 60 * 15).toISOString(),
-                    operator_name: '张三'
-                },
-                {
-                    id: 2,
-                    goods_name: 'AirPods Pro 2',
-                    goods_barcode: '1003',
-                    location_code: 'C-01-01',
-                    location_name: '配件区',
-                    actual_quantity: 100,
-                    check_quantity: 105,
-                    diff: 5,
-                    check_time: new Date(now.getTime() - 1000 * 60 * 30).toISOString(),
-                    operator_name: '李四'
-                },
-                {
-                    id: 3,
-                    goods_name: 'iPad Pro 12.9',
-                    goods_barcode: '1004',
-                    location_code: 'D-01-01',
-                    location_name: '平板区',
-                    actual_quantity: 30,
-                    check_quantity: 27,
-                    diff: -3,
-                    check_time: new Date(now.getTime() - 1000 * 60 * 45).toISOString(),
-                    operator_name: '王五'
-                }
-            ];
-        }
     </script>
 </body>
 </html>

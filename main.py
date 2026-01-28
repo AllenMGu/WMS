@@ -1219,6 +1219,179 @@ async def scan_check(
         "message": "库存一致" if actual_quantity == check.check_quantity else "库存不符"
     }
 
+# 获取盘点记录
+@app.get("/check/records", summary="获取盘点记录")
+async def get_check_records(
+    warehouse_id: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    query = db.query(CheckRecord).join(
+        Goods, CheckRecord.goods_id == Goods.id
+    ).join(
+        Location, CheckRecord.location_id == Location.id
+    ).join(
+        Warehouse, CheckRecord.warehouse_id == Warehouse.id
+    ).join(
+        User, CheckRecord.operator_id == User.id
+    )
+
+    if current_user.role != UserRole.ADMIN:
+        user_warehouse_ids = [
+            uw.warehouse_id for uw in
+            db.query(UserWarehouse).filter(UserWarehouse.user_id == current_user.id).all()
+        ]
+        if user_warehouse_ids:
+            query = query.filter(CheckRecord.warehouse_id.in_(user_warehouse_ids))
+        else:
+            query = query.filter(CheckRecord.warehouse_id == -1)
+
+    if warehouse_id:
+        query = query.filter(CheckRecord.warehouse_id == warehouse_id)
+
+    if start_date:
+        start_datetime = datetime.strptime(start_date, "%Y-%m-%d")
+        query = query.filter(CheckRecord.check_time >= start_datetime)
+
+    if end_date:
+        end_datetime = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+        query = query.filter(CheckRecord.check_time < end_datetime)
+
+    records = query.order_by(CheckRecord.check_time.desc()).all()
+
+    result = []
+    for record in records:
+        diff = record.check_quantity - record.actual_quantity
+        result.append({
+            "id": record.id,
+            "warehouse_id": record.warehouse_id,
+            "warehouse_name": record.warehouse.name,
+            "goods_name": record.goods.name,
+            "goods_barcode": record.goods.barcode,
+            "location_code": record.location.location_code,
+            "location_name": record.location.name,
+            "actual_quantity": record.actual_quantity,
+            "check_quantity": record.check_quantity,
+            "diff": diff,
+            "check_time": record.check_time,
+            "operator_name": record.operator.full_name
+        })
+    return result
+
+
+# 获取盘点统计
+@app.get("/check/stats", summary="获取盘点统计")
+async def get_check_stats(
+    warehouse_id: Optional[int] = None,
+    date: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if date:
+        start_datetime = datetime.strptime(date, "%Y-%m-%d")
+    else:
+        start_datetime = datetime.combine(datetime.now().date(), datetime.min.time())
+    end_datetime = start_datetime + timedelta(days=1)
+
+    query = db.query(CheckRecord).filter(
+        CheckRecord.check_time >= start_datetime,
+        CheckRecord.check_time < end_datetime
+    )
+
+    if current_user.role != UserRole.ADMIN:
+        user_warehouse_ids = [
+            uw.warehouse_id for uw in
+            db.query(UserWarehouse).filter(UserWarehouse.user_id == current_user.id).all()
+        ]
+        if user_warehouse_ids:
+            query = query.filter(CheckRecord.warehouse_id.in_(user_warehouse_ids))
+        else:
+            query = query.filter(CheckRecord.warehouse_id == -1)
+
+    if warehouse_id:
+        query = query.filter(CheckRecord.warehouse_id == warehouse_id)
+
+    records = query.all()
+    matched = sum(1 for record in records if abs(record.check_quantity - record.actual_quantity) < 0.0001)
+    diff_checks = len(records) - matched
+    checked_goods = len({record.goods_id for record in records})
+
+    return {
+        "todayChecks": len(records),
+        "matchedChecks": matched,
+        "diffChecks": diff_checks,
+        "checkedGoods": checked_goods
+    }
+
+
+# 获取盘点差异报表
+@app.get("/check/diffs", summary="获取盘点差异报表")
+async def get_check_diffs(
+    warehouse_id: Optional[int] = None,
+    date: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if date:
+        start_datetime = datetime.strptime(date, "%Y-%m-%d")
+        end_datetime = start_datetime + timedelta(days=1)
+    else:
+        start_datetime = None
+        end_datetime = None
+
+    query = db.query(CheckRecord).join(
+        Goods, CheckRecord.goods_id == Goods.id
+    ).join(
+        Location, CheckRecord.location_id == Location.id
+    ).join(
+        Warehouse, CheckRecord.warehouse_id == Warehouse.id
+    ).join(
+        User, CheckRecord.operator_id == User.id
+    )
+
+    if current_user.role != UserRole.ADMIN:
+        user_warehouse_ids = [
+            uw.warehouse_id for uw in
+            db.query(UserWarehouse).filter(UserWarehouse.user_id == current_user.id).all()
+        ]
+        if user_warehouse_ids:
+            query = query.filter(CheckRecord.warehouse_id.in_(user_warehouse_ids))
+        else:
+            query = query.filter(CheckRecord.warehouse_id == -1)
+
+    if warehouse_id:
+        query = query.filter(CheckRecord.warehouse_id == warehouse_id)
+
+    if start_datetime and end_datetime:
+        query = query.filter(
+            CheckRecord.check_time >= start_datetime,
+            CheckRecord.check_time < end_datetime
+        )
+
+    records = query.order_by(CheckRecord.check_time.desc()).all()
+    result = []
+    for record in records:
+        diff = record.check_quantity - record.actual_quantity
+        if abs(diff) < 0.0001:
+            continue
+        result.append({
+            "id": record.id,
+            "warehouse_id": record.warehouse_id,
+            "warehouse_name": record.warehouse.name,
+            "goods_name": record.goods.name,
+            "goods_barcode": record.goods.barcode,
+            "location_code": record.location.location_code,
+            "location_name": record.location.name,
+            "actual_quantity": record.actual_quantity,
+            "check_quantity": record.check_quantity,
+            "diff": diff,
+            "check_time": record.check_time,
+            "operator_name": record.operator.full_name
+        })
+    return result
+
 # ------------------- 入库单管理接口 -------------------
 @app.post("/inbound-orders/", response_model=InboundOrderHeaderResponse, summary="创建入库单")
 async def create_inbound_order(

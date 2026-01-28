@@ -705,26 +705,24 @@
         function updateTrendChart() {
             const ctx = document.getElementById('stockTrendChart').getContext('2d');
             
-            // 生成模拟的趋势数据
+            // 基于当前库存生成趋势数据
             const dates = [];
             const quantities = [];
             const values = [];
             
             const today = new Date();
+            const baseQuantity = filteredStocks.reduce((sum, stock) => sum + stock.quantity, 0);
+            const baseValue = filteredStocks.reduce((sum, stock) => {
+                const goods = getGoodsById(stock.goods_id);
+                return sum + (goods ? goods.price * stock.quantity : 0);
+            }, 0);
             for (let i = 6; i >= 0; i--) {
                 const date = new Date(today);
                 date.setDate(date.getDate() - i);
                 dates.push(date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }));
-                
-                // 模拟数据
-                const baseQuantity = filteredStocks.reduce((sum, stock) => sum + stock.quantity, 0);
-                const baseValue = filteredStocks.reduce((sum, stock) => {
-                    const goods = getGoodsById(stock.goods_id);
-                    return sum + (goods ? goods.price * stock.quantity : 0);
-                }, 0);
-                
-                quantities.push((baseQuantity * (0.9 + Math.random() * 0.2)).toFixed(2));
-                values.push((baseValue * (0.9 + Math.random() * 0.2)).toFixed(2));
+
+                quantities.push(Number(baseQuantity.toFixed(2)));
+                values.push(Number(baseValue.toFixed(2)));
             }
             
             // 销毁旧图表

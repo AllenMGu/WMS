@@ -900,16 +900,11 @@
         
         // 模拟扫码
         function simulateScan(type) {
+            showToast('请使用实际扫码设备或手动输入', 'info');
             if (type === 'goods') {
-                const mockBarcodes = ['1001', '1002', '1003', '1004', '1005'];
-                const randomBarcode = mockBarcodes[Math.floor(Math.random() * mockBarcodes.length)];
-                document.getElementById('goodsBarcode').value = randomBarcode;
-                validateGoods(randomBarcode);
+                document.getElementById('goodsBarcode').focus();
             } else {
-                const mockLocations = ['A-01-01', 'A-01-02', 'B-01-01', 'B-01-02', 'C-01-01'];
-                const randomLocation = mockLocations[Math.floor(Math.random() * mockLocations.length)];
-                document.getElementById('locationCode').value = randomLocation;
-                validateLocation(randomLocation);
+                document.getElementById('locationCode').focus();
             }
         }
         
