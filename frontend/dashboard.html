@@ -263,9 +263,9 @@
                     </div>
                 </div>
                 
-                <!-- 库存分类统计图 -->
+                <!-- 库存价值分布图 -->
                 <div class="bg-white rounded-lg shadow p-6">
-                    <h2 class="text-lg font-semibold text-gray-800 mb-4">库存分类统计</h2>
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">库存价值Top5货物</h2>
                     <div class="h-80">
                         <canvas id="inventoryCategoryChart"></canvas>
                     </div>
@@ -343,6 +343,14 @@
         let accessToken = null;
         let warehouses = [];
         let currentWarehouseId = null;
+        let currentWarehouseName = null;
+        let trendChart = null;
+        let categoryChart = null;
+        let trendLabels = [];
+        let inboundSeries = [];
+        let outboundSeries = [];
+        let categoryLabels = [];
+        let categoryValues = [];
         
         // DOM元素
         const sidebarToggle = document.getElementById('sidebarToggle');
@@ -409,6 +417,9 @@
                 if (currentUser.current_warehouse_id) {
                     currentWarehouseId = currentUser.current_warehouse_id;
                 }
+                if (currentUser.current_warehouse_name) {
+                    currentWarehouseName = currentUser.current_warehouse_name;
+                }
             }
         }
         
@@ -442,6 +453,7 @@
                     
                     if (selectedWarehouse) {
                         currentWarehouse.textContent = selectedWarehouse.name;
+                        currentWarehouseName = selectedWarehouse.name;
                     }
                     
                     // 填充仓库下拉列表
@@ -477,11 +489,13 @@
                     });
                 } else {
                     currentWarehouse.textContent = '无可用仓库';
+                    currentWarehouseName = null;
                     warehouseList.innerHTML = '<div class="px-4 py-2 text-sm text-gray-500">无可用仓库</div>';
                 }
             } catch (error) {
                 console.error('加载仓库列表失败:', error);
                 currentWarehouse.textContent = '加载失败';
+                currentWarehouseName = null;
             }
         }
         
@@ -504,6 +518,7 @@
                 // 更新UI
                 currentWarehouse.textContent = warehouseName;
                 currentWarehouseId = warehouseId;
+                currentWarehouseName = warehouseName;
                 
                 // 更新本地存储的用户信息
                 currentUser.current_warehouse_id = warehouseId;
@@ -524,74 +539,90 @@
             }
             
             try {
-                // 模拟数据 - 在实际应用中，这些数据应该从API获取
-                // 总货物种类
-                document.getElementById('totalGoods').textContent = '1,248';
+                const headers = { 'Authorization': `Bearer ${accessToken}` };
+                const [stocks, goods, inboundOrders, outboundOrders] = await Promise.all([
+                    fetch(`${API_BASE_URL}/stock/`, { headers }).then(handleResponse),
+                    fetch(`${API_BASE_URL}/goods/`, { headers }).then(handleResponse),
+                    fetch(`${API_BASE_URL}/inbound-orders/`, { headers }).then(handleResponse),
+                    fetch(`${API_BASE_URL}/outbound-orders/`, { headers }).then(handleResponse)
+                ]);
                 
-                // 总库存量
-                document.getElementById('totalStock').textContent = '15,720';
+                const warehouseStocks = currentWarehouseName
+                    ? stocks.filter(stock => stock.warehouse_name === currentWarehouseName)
+                    : stocks;
                 
-                // 本月入库量
-                document.getElementById('monthlyInbound').textContent = '1,245';
+                const uniqueGoods = new Set(warehouseStocks.map(stock => stock.goods_barcode));
+                const totalStock = warehouseStocks.reduce((sum, stock) => sum + stock.quantity, 0);
                 
-                // 本月出库量
-                document.getElementById('monthlyOutbound').textContent = '980';
+                document.getElementById('totalGoods').textContent = uniqueGoods.size.toLocaleString();
+                document.getElementById('totalStock').textContent = totalStock.toLocaleString();
                 
-                // 库存预警表格
+                const now = new Date();
+                const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+                const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+                
+                const inboundMonthly = inboundOrders.filter(order => {
+                    const orderTime = new Date(order.create_time);
+                    return order.warehouse_id === currentWarehouseId &&
+                        orderTime >= monthStart && orderTime < monthEnd;
+                });
+                
+                const outboundMonthly = outboundOrders.filter(order => {
+                    const orderTime = new Date(order.create_time);
+                    return order.warehouse_id === currentWarehouseId &&
+                        orderTime >= monthStart && orderTime < monthEnd;
+                });
+                
+                const inboundCount = inboundMonthly.reduce((sum, order) => sum + order.item_count, 0);
+                const outboundCount = outboundMonthly.reduce((sum, order) => sum + order.item_count, 0);
+                
+                document.getElementById('monthlyInbound').textContent = inboundCount.toLocaleString();
+                document.getElementById('monthlyOutbound').textContent = outboundCount.toLocaleString();
+                
+                const alertThreshold = 5;
+                const alertStocks = warehouseStocks
+                    .filter(stock => stock.quantity <= alertThreshold)
+                    .sort((a, b) => a.quantity - b.quantity)
+                    .slice(0, 5);
+                
                 const stockAlertTable = document.getElementById('stockAlertTable');
-                stockAlertTable.innerHTML = `
-                    <tr>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <div class="text-sm font-medium text-gray-900">iPhone 13 Pro</div>
-                            <div class="text-xs text-gray-500">SKU: IP13P-256-BK</div>
-                        </td>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <div class="text-sm text-gray-900">5</div>
-                        </td>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <div class="text-sm text-gray-900">A1-01-01</div>
-                        </td>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
-                                库存不足
-                            </span>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <div class="text-sm font-medium text-gray-900">MacBook Pro 14"</div>
-                            <div class="text-xs text-gray-500">SKU: MBP14-1TB-SV</div>
-                        </td>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <div class="text-sm text-gray-900">3</div>
-                        </td>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <div class="text-sm text-gray-900">B2-03-02</div>
-                        </td>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
-                                库存不足
-                            </span>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <div class="text-sm font-medium text-gray-900">AirPods Pro</div>
-                            <div class="text-xs text-gray-500">SKU: APP-2ND-GN</div>
-                        </td>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <div class="text-sm text-gray-900">0</div>
-                        </td>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <div class="text-sm text-gray-900">C1-02-05</div>
-                        </td>
-                        <td class="px-4 py-3 whitespace-nowrap">
-                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
-                                缺货
-                            </span>
-                        </td>
-                    </tr>
-                `;
+                if (alertStocks.length === 0) {
+                    stockAlertTable.innerHTML = `
+                        <tr>
+                            <td colspan="4" class="px-4 py-6 text-center text-gray-500">
+                                当前暂无库存预警
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    stockAlertTable.innerHTML = alertStocks.map(stock => {
+                        const status = stock.quantity === 0 ? '缺货' : '库存不足';
+                        const statusClass = stock.quantity === 0 ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800';
+                        return `
+                            <tr>
+                                <td class="px-4 py-3 whitespace-nowrap">
+                                    <div class="text-sm font-medium text-gray-900">${stock.goods_name}</div>
+                                    <div class="text-xs text-gray-500">SKU: ${stock.goods_barcode}</div>
+                                </td>
+                                <td class="px-4 py-3 whitespace-nowrap">
+                                    <div class="text-sm text-gray-900">${stock.quantity}</div>
+                                </td>
+                                <td class="px-4 py-3 whitespace-nowrap">
+                                    <div class="text-sm text-gray-900">${stock.location_code}</div>
+                                </td>
+                                <td class="px-4 py-3 whitespace-nowrap">
+                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">
+                                        ${status}
+                                    </span>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+                
+                updateTrendSeries(inboundOrders, outboundOrders);
+                updateCategorySeries(warehouseStocks, goods);
+                renderCharts();
             } catch (error) {
                 console.error('加载仪表盘数据失败:', error);
             }
@@ -599,16 +630,88 @@
         
         // 初始化图表
         function initCharts() {
-            // 出入库趋势图
+            renderCharts();
+        }
+
+        function updateTrendSeries(inboundOrders, outboundOrders) {
+            const labels = [];
+            const inboundData = [];
+            const outboundData = [];
+            const now = new Date();
+
+            for (let i = 5; i >= 0; i--) {
+                const monthDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const label = `${monthDate.getMonth() + 1}月`;
+                labels.push(label);
+
+                const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+                const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1);
+
+                const inboundSum = inboundOrders
+                    .filter(order => order.warehouse_id === currentWarehouseId)
+                    .filter(order => {
+                        const orderTime = new Date(order.create_time);
+                        return orderTime >= monthStart && orderTime < monthEnd;
+                    })
+                    .reduce((sum, order) => sum + order.item_count, 0);
+
+                const outboundSum = outboundOrders
+                    .filter(order => order.warehouse_id === currentWarehouseId)
+                    .filter(order => {
+                        const orderTime = new Date(order.create_time);
+                        return orderTime >= monthStart && orderTime < monthEnd;
+                    })
+                    .reduce((sum, order) => sum + order.item_count, 0);
+
+                inboundData.push(inboundSum);
+                outboundData.push(outboundSum);
+            }
+
+            trendLabels = labels;
+            inboundSeries = inboundData;
+            outboundSeries = outboundData;
+        }
+
+        function updateCategorySeries(warehouseStocks, goodsList) {
+            const goodsMap = new Map(goodsList.map(goods => [goods.barcode, goods]));
+            const valueByGoods = {};
+
+            warehouseStocks.forEach(stock => {
+                const goods = goodsMap.get(stock.goods_barcode);
+                const value = goods ? goods.price * stock.quantity : 0;
+                if (!valueByGoods[stock.goods_name]) {
+                    valueByGoods[stock.goods_name] = 0;
+                }
+                valueByGoods[stock.goods_name] += value;
+            });
+
+            const sorted = Object.entries(valueByGoods)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5);
+
+            categoryLabels = sorted.map(item => item[0]);
+            categoryValues = sorted.map(item => Number(item[1].toFixed(2)));
+        }
+
+        function renderCharts() {
             const trendCtx = document.getElementById('inventoryTrendChart').getContext('2d');
-            const trendChart = new Chart(trendCtx, {
+            const categoryCtx = document.getElementById('inventoryCategoryChart').getContext('2d');
+
+            if (trendChart) {
+                trendChart.destroy();
+            }
+            if (categoryChart) {
+                categoryChart.destroy();
+            }
+
+            trendChart = new Chart(trendCtx, {
                 type: 'line',
                 data: {
-                    labels: ['1月', '2月', '3月', '4月', '5月', '6月'],
+                    labels: trendLabels,
                     datasets: [
                         {
                             label: '入库量',
-                            data: [1200, 1900, 1500, 1700, 1400, 1600],
+                            data: inboundSeries,
                             borderColor: '#3b82f6',
                             backgroundColor: 'rgba(59, 130, 246, 0.1)',
                             tension: 0.4,
@@ -616,7 +719,7 @@
                         },
                         {
                             label: '出库量',
-                            data: [900, 1500, 1300, 1600, 1200, 1400],
+                            data: outboundSeries,
                             borderColor: '#f97316',
                             backgroundColor: 'rgba(249, 115, 22, 0.1)',
                             tension: 0.4,
@@ -643,15 +746,13 @@
                     }
                 }
             });
-            
-            // 库存分类统计图
-            const categoryCtx = document.getElementById('inventoryCategoryChart').getContext('2d');
-            const categoryChart = new Chart(categoryCtx, {
+
+            categoryChart = new Chart(categoryCtx, {
                 type: 'doughnut',
                 data: {
-                    labels: ['电子产品', '服装', '家居用品', '食品', '其他'],
+                    labels: categoryLabels,
                     datasets: [{
-                        data: [45, 25, 15, 10, 5],
+                        data: categoryValues,
                         backgroundColor: [
                             '#3b82f6',
                             '#10b981',
@@ -672,6 +773,13 @@
                     }
                 }
             });
+        }
+
+        function handleResponse(response) {
+            if (!response.ok) {
+                throw new Error('请求失败');
+            }
+            return response.json();
         }
         
         // 设置事件监听器
