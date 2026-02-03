@@ -68,3 +68,22 @@ WMS/
 1. 系统需要与后端 API 配合使用，确保 API 地址正确配置（默认 `http://localhost:8000`）。
 2. 部分功能需要管理员权限才能使用（如用户管理）。
 3. 建议使用现代浏览器（Chrome、Firefox、Edge 等）访问系统。
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/0e1ef5ed-5436-44ce-81d3-2135918ededb" />
+
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/7d197729-09d5-4875-bbd1-faaa65e2583c" />
+
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/2635a119-277f-4673-9936-17d75ef557bc" />
+
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/89ae0998-8b9f-4f81-a11a-006a9ea07dab" />
+
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/44d89f5a-c62c-4a78-801a-e5f2b39e9341" />
+
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/6eedd286-55c4-4cd7-a0ae-cfd08155a723" />
+
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/ef27b20f-3e72-4776-96e3-881e7be9344f" />
+
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/800a0fdc-1ef3-4ab8-874a-fa5766c7f6e4" />
+
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/b5d2d2ba-3df5-4464-a975-b4919c69ddbe" />
+
+<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/ca534d23-cf1e-4955-aa67-aa4d3eb70290" />
