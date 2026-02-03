@@ -1,7 +1,7 @@
 // 多仓库管理系统通用脚本
 
 // API基础URL
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'api';
 
 // 当前用户信息
 let currentUser = null;
@@ -61,16 +61,24 @@ function checkLoginStatus() {
     try {
         currentUser = JSON.parse(userInfo);
         userWarehouses = currentUser.warehouses || [];
-        
+
         // 更新用户信息显示
         updateUserDisplay();
-        
+
         // 设置当前仓库
         if (currentUser.current_warehouse_id) {
             currentWarehouse = userWarehouses.find(w => w.id === currentUser.current_warehouse_id);
             updateWarehouseDisplay();
         }
-        
+
+        // 根据用户角色隐藏或显示仓库管理导航链接
+        if (getCurrentUserRole() !== 'admin') {
+            const warehouseNavLinks = document.querySelectorAll('a[href="warehouse.html"]');
+            warehouseNavLinks.forEach(link => {
+                link.style.display = 'none';
+            });
+        }
+
         // 页面特定初始化
         if (typeof pageInit === 'function') {
             pageInit();

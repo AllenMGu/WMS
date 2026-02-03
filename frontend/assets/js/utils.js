@@ -1,7 +1,7 @@
 // 统一的工具函数文件
 
 // API基础URL
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'api';
 
 // 全局变量
 let currentUser = null;
