@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>出库单管理 - 多仓库管理系统</title>
+    <title>出库单管理 - 备件管理系统</title>
     <!-- Tailwind CSS v3 -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/assets/js/tailwind.config.js"></script>
     <!-- Font Awesome -->
-    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <link href="/assets/css/all.min.css" rel="stylesheet">
     <!-- 统一的 Tailwind 配置 -->
     <script>
         tailwind.config = {
@@ -58,7 +58,7 @@
                 </button>
                 <div class="flex items-center">
                     <img src="https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/pc/super_tool/42dae0766d5c4bed86158de65b7663d3~tplv-a9rns2rl98-image.image?lk3s=8e244e95&rcl=2026012817265511D2C99A3202991DF1E7&rrcfp=f06b921b&x-expires=1772184452&x-signature=UFRTLlawHtw%2BeVOnI%2FLmg5r131g%3D" alt="Logo" class="h-8 w-8">
-                    <span class="ml-2 text-lg font-semibold text-gray-800 hidden sm:block">多仓库管理系统</span>
+                    <span class="ml-2 text-lg font-semibold text-gray-800 hidden sm:block">备件管理系统</span>
                 </div>
             </div>
             
@@ -324,12 +324,16 @@
             
             <form id="itemForm" class="space-y-4">
                 <div>
-                    <label for="goodsBarcode" class="block text-sm font-medium text-gray-700 mb-1">货物条码 <span class="text-red-500">*</span></label>
+                    <label for="goodsBarcode" class="block text-sm font-medium text-gray-700 mb-1">货物名称/条码 <span class="text-red-500">*</span></label>
                     <div class="flex">
-                        <input type="text" id="goodsBarcode" name="goodsBarcode" class="flex-1 px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="扫描或输入货物条码" required>
+                        <input type="text" id="goodsBarcode" name="goodsBarcode" class="flex-1 px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="输入货物名称、条码或规格搜索" required>
                         <button type="button" id="scanGoodsBtn" class="px-4 py-2 bg-primary text-white rounded-r-md hover:bg-secondary">
                             <i class="fa fa-qrcode"></i>
                         </button>
+                    </div>
+                    <!-- 货物搜索结果 -->
+                    <div id="goodsSearchResults" class="mt-2 hidden max-h-40 overflow-y-auto border border-gray-300 rounded-md bg-white">
+                        <div id="goodsResultsList"></div>
                     </div>
                     <div id="goodsInfo" class="mt-2 hidden">
                         <div class="p-3 bg-green-50 border border-green-200 rounded-md">
@@ -343,11 +347,13 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <div>
                     <label for="locationCode" class="block text-sm font-medium text-gray-700 mb-1">库位编码 <span class="text-red-500">*</span></label>
                     <div class="flex">
-                        <input type="text" id="locationCode" name="locationCode" class="flex-1 px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" placeholder="扫描或输入库位编码" required>
+                        <select id="locationCode" name="locationCode" class="flex-1 px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" required>
+                            <option value="">请选择库位</option>
+                        </select>
                         <button type="button" id="scanLocationBtn" class="px-4 py-2 bg-primary text-white rounded-r-md hover:bg-secondary">
                             <i class="fa fa-qrcode"></i>
                         </button>
@@ -409,6 +415,13 @@
         function pageInit() {
             loadOutboundOrders();
             setupOutboundEventListeners();
+
+            // 检查URL参数是否有orderId，如果有则直接显示订单详情
+            const urlParams = new URLSearchParams(window.location.search);
+            const orderId = urlParams.get('orderId');
+            if (orderId) {
+                viewOrderDetail(parseInt(orderId));
+            }
         }
         
         // 加载出库单列表
@@ -519,8 +532,11 @@
                                 <i class="fa fa-eye"></i> 查看
                             </button>
                             ${order.status === 'DRAFT' ? `
-                                <button onclick="editOrder(${order.id})" class="text-green-600 hover:text-green-700">
+                                <button onclick="editOrder(${order.id})" class="text-green-600 hover:text-green-700 mr-3">
                                     <i class="fa fa-edit"></i> 编辑
+                                </button>
+                                <button onclick="deleteOrder(${order.id})" class="text-red-600 hover:text-red-700">
+                                    <i class="fa fa-trash"></i> 删除
                                 </button>
                             ` : ''}
                         </td>
@@ -580,20 +596,50 @@
             }
         }
         
+        // 编辑订单（直接调用查看详情，因为详情页面已经包含编辑功能）
+        function editOrder(orderId) {
+            viewOrderDetail(orderId);
+        }
+
+        // 删除订单
+        async function deleteOrder(orderId) {
+            if (!confirm('确定要删除此出库单吗？删除后将无法恢复。')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/outbound-orders/${orderId}`, {
+                    method: 'DELETE',
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || '删除出库单失败');
+                }
+
+                showToast('出库单删除成功', 'success');
+                loadOutboundOrders();
+            } catch (error) {
+                console.error('删除出库单失败:', error);
+                showToast(error.message, 'error');
+            }
+        }
+
         // 查看订单详情
         async function viewOrderDetail(orderId) {
             try {
                 const response = await fetch(`${API_BASE_URL}/outbound-orders/${orderId}`, {
                     headers: getHeaders()
                 });
-                
+
                 if (!response.ok) {
                     throw new Error('获取订单详情失败');
                 }
-                
+
                 const order = await response.json();
                 currentOrderId = orderId;
-                
+
                 // 显示订单详情
                 showOrderDetail(order);
             } catch (error) {
@@ -607,11 +653,11 @@
             const modal = document.getElementById('orderDetailModal');
             const content = document.getElementById('orderDetailContent');
             const actions = document.getElementById('orderDetailActions');
-            
+
             // 构建详情内容
             const statusClass = order.status === 'DRAFT' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800';
             const statusText = order.status === 'DRAFT' ? '草稿' : '已完成';
-            
+
             content.innerHTML = `
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <div>
@@ -624,7 +670,11 @@
                     </div>
                     <div>
                         <p class="text-sm text-gray-500">客户</p>
-                        <p class="font-medium text-gray-900">${order.customer || '-'}</p>
+                        ${order.status === 'DRAFT' ? `
+                            <input type="text" id="editCustomer" value="${order.customer || ''}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent">
+                        ` : `
+                            <p class="font-medium text-gray-900">${order.customer || '-'}</p>
+                        `}
                     </div>
                     <div>
                         <p class="text-sm text-gray-500">操作员</p>
@@ -650,10 +700,14 @@
                     </div>
                     <div class="md:col-span-2">
                         <p class="text-sm text-gray-500">备注</p>
-                        <p class="font-medium text-gray-900">${order.remark || '-'}</p>
+                        ${order.status === 'DRAFT' ? `
+                            <textarea id="editRemark" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent">${order.remark || ''}</textarea>
+                        ` : `
+                            <p class="font-medium text-gray-900">${order.remark || '-'}</p>
+                        `}
                     </div>
                 </div>
-                
+
                 <div class="mt-6">
                     <h4 class="text-md font-semibold text-gray-800 mb-3">出库明细</h4>
                     <div class="overflow-x-auto">
@@ -666,6 +720,7 @@
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">单价</th>
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">金额</th>
                                     <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">备注</th>
+                                    ${order.status === 'DRAFT' ? `<th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>` : ''}
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
@@ -690,10 +745,20 @@
                                         <td class="px-4 py-3">
                                             <div class="text-sm text-gray-900">${item.remark || '-'}</div>
                                         </td>
+                                        ${order.status === 'DRAFT' ? `
+                                            <td class="px-4 py-3 text-sm font-medium">
+                                                <button onclick="editOrderItem(${item.id})" class="text-blue-600 hover:text-blue-700 mr-3">
+                                                    <i class="fa fa-edit"></i> 编辑
+                                                </button>
+                                                <button onclick="deleteOrderItem(${item.id})" class="text-red-600 hover:text-red-700">
+                                                    <i class="fa fa-trash"></i> 删除
+                                                </button>
+                                            </td>
+                                        ` : ''}
                                     </tr>
                                 `).join('') : `
                                     <tr>
-                                        <td colspan="6" class="px-4 py-4 text-center text-gray-500">
+                                        <td colspan="${order.status === 'DRAFT' ? '7' : '6'}" class="px-4 py-4 text-center text-gray-500">
                                             暂无明细数据
                                         </td>
                                     </tr>
@@ -703,10 +768,13 @@
                     </div>
                 </div>
             `;
-            
+
             // 构建操作按钮
             if (order.status === 'DRAFT') {
                 actions.innerHTML = `
+                    <button onclick="saveOrderHeader()" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 mr-3">
+                        <i class="fa fa-save mr-1"></i> 保存表头
+                    </button>
                     <button onclick="showAddItemModal()" class="px-4 py-2 bg-primary text-white rounded-md hover:bg-secondary mr-3">
                         <i class="fa fa-plus mr-1"></i> 添加明细
                     </button>
@@ -717,10 +785,163 @@
             } else {
                 actions.innerHTML = '';
             }
-            
+
             modal.classList.remove('hidden');
         }
         
+        // 保存出库单表头
+        async function saveOrderHeader() {
+            const customer = document.getElementById('editCustomer').value.trim();
+            const remark = document.getElementById('editRemark').value.trim();
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/outbound-orders/${currentOrderId}`, {
+                    method: 'PUT',
+                    headers: getHeaders(),
+                    body: JSON.stringify({
+                        customer: customer,
+                        remark: remark
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || '保存出库单表头失败');
+                }
+
+                showToast('出库单表头保存成功', 'success');
+                viewOrderDetail(currentOrderId); // 重新加载订单详情
+            } catch (error) {
+                console.error('保存出库单表头失败:', error);
+                showToast(error.message, 'error');
+            }
+        }
+
+        // 编辑出库单明细
+        async function editOrderItem(itemId) {
+            try {
+                // 获取订单详情
+                const response = await fetch(`${API_BASE_URL}/outbound-orders/${currentOrderId}`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('获取订单详情失败');
+                }
+
+                const order = await response.json();
+                const item = order.items.find(i => i.id === itemId);
+
+                if (!item) {
+                    throw new Error('未找到明细项');
+                }
+
+                // 填充表单
+                document.getElementById('goodsBarcode').value = item.goods_barcode;
+                document.getElementById('locationCode').value = item.location_code;
+                document.getElementById('quantity').value = item.quantity;
+                document.getElementById('unitPrice').value = item.unit_price;
+                document.getElementById('itemRemark').value = item.remark || '';
+
+                // 显示货物信息
+                await validateGoods(item.goods_barcode);
+
+                // 显示库位信息
+                if (locationCache.has(item.location_code)) {
+                    showLocationInfo(locationCache.get(item.location_code));
+                } else {
+                    // 如果库位信息未缓存，尝试从API获取
+                    const locationResponse = await fetch(`${API_BASE_URL}/locations/`, {
+                        headers: getHeaders()
+                    });
+
+                    if (locationResponse.ok) {
+                        const locations = await locationResponse.json();
+                        const location = locations.find(l => l.location_code === item.location_code);
+                        if (location) {
+                            locationCache.set(item.location_code, location);
+                            showLocationInfo(location);
+                        }
+                    }
+                }
+
+                // 显示编辑模式
+                document.getElementById('orderDetailModal').classList.add('hidden');
+                document.getElementById('addItemModal').classList.remove('hidden');
+
+                // 保存当前编辑的明细项ID
+                document.getElementById('addItemModal').dataset.editItemId = itemId;
+                document.querySelector('#addItemModal h3').textContent = '编辑出库明细';
+                document.getElementById('submitItem').textContent = '保存修改';
+            } catch (error) {
+                console.error('编辑出库单明细失败:', error);
+                showToast(error.message, 'error');
+            }
+        }
+
+        // 删除出库单明细
+        async function deleteOrderItem(itemId) {
+            if (!confirm('确定要删除此出库明细吗？')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/outbound-orders/${currentOrderId}/items/${itemId}`, {
+                    method: 'DELETE',
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || '删除出库单明细失败');
+                }
+
+                showToast('出库单明细删除成功', 'success');
+                viewOrderDetail(currentOrderId); // 重新加载订单详情
+            } catch (error) {
+                console.error('删除出库单明细失败:', error);
+                showToast(error.message, 'error');
+            }
+        }
+
+        // 加载当前仓库下的库位数据
+        async function loadLocationsByWarehouse(warehouseId) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/locations/?warehouse_id=${warehouseId}`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('获取库位信息失败');
+                }
+
+                const locationList = await response.json();
+                const locationSelect = document.getElementById('locationCode');
+
+                // 清空下拉框
+                locationSelect.innerHTML = '<option value="">请选择库位</option>';
+
+                // 填充库位数据
+                locationList.forEach(location => {
+                    const option = document.createElement('option');
+                    option.value = location.location_code;
+                    option.textContent = `${location.location_code} - ${location.name}`;
+                    locationSelect.appendChild(option);
+                });
+
+                // 缓存库位信息
+                locationList.forEach(location => {
+                    locationCache.set(location.location_code, location);
+                });
+
+                return locationList;
+            } catch (error) {
+                console.error('加载库位数据失败:', error);
+                showToast('加载库位数据失败', 'error');
+                return [];
+            }
+        }
+
         // 显示添加明细模态框
         function showAddItemModal() {
             document.getElementById('orderDetailModal').classList.add('hidden');
@@ -728,56 +949,122 @@
             document.getElementById('itemForm').reset();
             document.getElementById('goodsInfo').classList.add('hidden');
             document.getElementById('locationInfo').classList.add('hidden');
+            document.getElementById('addItemModal').dataset.editItemId = '';
+            document.querySelector('#addItemModal h3').textContent = '添加出库明细';
+            document.getElementById('submitItem').textContent = '添加';
+
+            // 加载当前仓库下的库位数据
+            if (currentWarehouse) {
+                loadLocationsByWarehouse(currentWarehouse.id);
+            } else {
+                showToast('未选择仓库', 'error');
+            }
+        }
+
+        // 自动填充库位编码
+        async function autoFillLocationCode() {
+            try {
+                // 调用API获取库位列表
+                const response = await fetch(`${API_BASE_URL}/locations/?warehouse_id=${currentWarehouse.id}`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('获取库位信息失败');
+                }
+
+                const locationList = await response.json();
+
+                if (locationList.length > 0) {
+                    // 选择第一个可用库位
+                    const defaultLocation = locationList[0];
+                    document.getElementById('locationCode').value = defaultLocation.location_code;
+                    locationCache.set(defaultLocation.location_code, defaultLocation);
+                    showLocationInfo(defaultLocation);
+                }
+            } catch (error) {
+                console.error('自动填充库位失败:', error);
+                // 库位自动填充失败不显示错误，允许用户手动选择
+            }
         }
         
-        // 添加明细项
+        // 添加或更新明细项
         async function addOrderItem() {
             const goodsBarcode = document.getElementById('goodsBarcode').value.trim();
             const locationCode = document.getElementById('locationCode').value.trim();
             const quantity = parseFloat(document.getElementById('quantity').value);
             const unitPrice = parseFloat(document.getElementById('unitPrice').value) || null;
             const remark = document.getElementById('itemRemark').value.trim();
-            
+
             // 验证输入
             if (!goodsBarcode || !locationCode || !quantity || quantity <= 0) {
                 showToast('请填写完整的信息', 'error');
                 return;
             }
-            
+
             // 验证货物和库位是否已确认
-            if (document.getElementById('goodsInfo').classList.contains('hidden') || 
+            if (document.getElementById('goodsInfo').classList.contains('hidden') ||
                 document.getElementById('locationInfo').classList.contains('hidden')) {
                 showToast('请先确认货物和库位信息', 'error');
                 return;
             }
-            
+
+            // 验证出库数量不大于可用库存
+            const availableStock = await getAvailableStock(goodsBarcode);
+            if (quantity > availableStock) {
+                showToast(`出库数量不能大于可用库存(${availableStock})`, 'error');
+                return;
+            }
+
+            const editItemId = document.getElementById('addItemModal').dataset.editItemId;
+
             try {
-                const response = await fetch(`${API_BASE_URL}/outbound-orders/${currentOrderId}/items`, {
-                    method: 'POST',
-                    headers: getHeaders(),
-                    body: JSON.stringify({
-                        goods_barcode: goodsBarcode,
-                        location_code: locationCode,
-                        quantity: quantity,
-                        unit_price: unitPrice,
-                        remark: remark
-                    })
-                });
-                
+                let response;
+                if (editItemId) {
+                    // 更新明细
+                    response = await fetch(`${API_BASE_URL}/outbound-orders/${currentOrderId}/items/${editItemId}`, {
+                        method: 'PUT',
+                        headers: getHeaders(),
+                        body: JSON.stringify({
+                            goods_barcode: goodsBarcode,
+                            location_code: locationCode,
+                            quantity: quantity,
+                            unit_price: unitPrice,
+                            remark: remark
+                        })
+                    });
+                    showToast('明细更新成功', 'success');
+                } else {
+                    // 添加明细
+                    response = await fetch(`${API_BASE_URL}/outbound-orders/${currentOrderId}/items`, {
+                        method: 'POST',
+                        headers: getHeaders(),
+                        body: JSON.stringify({
+                            goods_barcode: goodsBarcode,
+                            location_code: locationCode,
+                            quantity: quantity,
+                            unit_price: unitPrice,
+                            remark: remark
+                        })
+                    });
+                    showToast('明细添加成功', 'success');
+                }
+
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(errorData.detail || '添加明细失败');
+                    throw new Error(errorData.detail || '操作失败');
                 }
-                
-                showToast('明细添加成功', 'success');
-                
+
                 // 关闭模态框
                 document.getElementById('addItemModal').classList.add('hidden');
-                
+                document.getElementById('addItemModal').dataset.editItemId = '';
+                document.querySelector('#addItemModal h3').textContent = '添加出库明细';
+                document.getElementById('submitItem').textContent = '添加';
+
                 // 重新查看订单详情
                 viewOrderDetail(currentOrderId);
             } catch (error) {
-                console.error('添加明细失败:', error);
+                console.error('操作失败:', error);
                 showToast(error.message, 'error');
             }
         }
@@ -812,50 +1099,177 @@
             }
         }
         
-        // 验证货物
-        async function validateGoods(barcode) {
+        // 搜索货物
+        async function searchGoods(keyword) {
             try {
+                // 调用API搜索货物
+                const response = await fetch(`${API_BASE_URL}/goods/?keyword=${encodeURIComponent(keyword)}`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('搜索货物失败');
+                }
+
+                const goodsList = await response.json();
+
+                if (goodsList.length > 0) {
+                    await showGoodsSearchResults(goodsList);
+                } else {
+                    await showGoodsSearchResults([]);
+                    showToast('未找到匹配的货物', 'info');
+                }
+            } catch (error) {
+                console.error('搜索货物失败:', error);
+                showToast('搜索货物失败', 'error');
+            }
+        }
+
+        // 显示货物搜索结果
+        async function showGoodsSearchResults(goodsList) {
+            const resultsContainer = document.getElementById('goodsResultsList');
+            const resultsDiv = document.getElementById('goodsSearchResults');
+
+            if (goodsList.length === 0) {
+                resultsContainer.innerHTML = '<div class="px-3 py-2 text-gray-500">未找到匹配的货物</div>';
+                resultsDiv.classList.remove('hidden');
+                return;
+            }
+
+            // 异步获取所有货物的可用库存
+            const goodsWithStock = await Promise.all(
+                goodsList.map(async goods => {
+                    const availableStock = await getAvailableStock(goods.barcode);
+                    return { ...goods, availableStock };
+                })
+            );
+
+            resultsContainer.innerHTML = goodsWithStock.map(goods => `
+                <div class="px-3 py-2 hover:bg-gray-100 cursor-pointer" data-goods='${JSON.stringify(goods).replace(/'/g, "&apos;")}'>
+                    <div class="font-medium text-gray-900">${goods.name}</div>
+                    <div class="text-sm text-gray-500">条码: ${goods.barcode} | 规格: ${goods.spec || '无'} | 单位: ${goods.unit}</div>
+                    <div class="text-sm text-blue-600 mt-1">可用库存: ${goods.availableStock}</div>
+                </div>
+            `).join('');
+
+            // 为搜索结果添加点击事件监听器
+            resultsContainer.querySelectorAll('[data-goods]').forEach(item => {
+                item.addEventListener('click', async function() {
+                    const goods = JSON.parse(this.dataset.goods.replace(/&apos;/g, "'"));
+                    await selectGoods(goods);
+                });
+            });
+
+            resultsDiv.classList.remove('hidden');
+        }
+
+        // 选择货物
+        async function selectGoods(goods) {
+            // 填充货物条码输入框
+            document.getElementById('goodsBarcode').value = goods.barcode;
+            // 显示货物信息
+            await showGoodsInfo(goods);
+            // 隐藏搜索结果
+            document.getElementById('goodsSearchResults').classList.add('hidden');
+            // 缓存货物信息
+            goodsCache.set(goods.barcode, goods);
+        }
+
+        // 验证货物
+        async function validateGoods(keyword) {
+            // 如果输入内容较短，可能是条码，直接查找
+            if (keyword.length <= 10) {
                 // 检查缓存
-                if (goodsCache.has(barcode)) {
-                    showGoodsInfo(goodsCache.get(barcode));
+                if (goodsCache.has(keyword)) {
+                    await showGoodsInfo(goodsCache.get(keyword));
+                    document.getElementById('goodsSearchResults').classList.add('hidden');
                     return;
                 }
-                
+
                 // 调用API获取货物信息
                 const response = await fetch(`${API_BASE_URL}/goods/`, {
                     headers: getHeaders()
                 });
-                
+
                 if (!response.ok) {
                     throw new Error('获取货物信息失败');
                 }
-                
+
                 const goodsList = await response.json();
-                const goods = goodsList.find(g => g.barcode === barcode);
-                
+                const goods = goodsList.find(g => g.barcode === keyword);
+
                 if (goods) {
-                    goodsCache.set(barcode, goods);
-                    showGoodsInfo(goods);
+                    goodsCache.set(keyword, goods);
+                    await showGoodsInfo(goods);
+                    document.getElementById('goodsSearchResults').classList.add('hidden');
                 } else {
-                    showToast('货物不存在', 'error');
-                    document.getElementById('goodsInfo').classList.add('hidden');
+                    // 未找到，尝试搜索
+                    await searchGoods(keyword);
                 }
-            } catch (error) {
-                console.error('验证货物失败:', error);
-                showToast('验证货物失败', 'error');
+            } else {
+                // 输入内容较长，直接搜索
+                await searchGoods(keyword);
             }
         }
         
+        // 获取货物在当前仓库的可用库存
+        async function getAvailableStock(goodsBarcode) {
+            try {
+                console.log('正在查询货物条码:', goodsBarcode, '在仓库:', currentWarehouse.id, '的库存');
+
+                // 首先获取所有库存数据
+                const response = await fetch(`${API_BASE_URL}/stock/`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    throw new Error('获取库存数据失败');
+                }
+
+                const stockData = await response.json();
+                console.log('所有库存数据:', stockData);
+
+                if (Array.isArray(stockData) && stockData.length > 0) {
+                    // 过滤出指定货物条码和仓库的库存记录
+                    const filteredStock = stockData.filter(stock => {
+                        return stock.goods_barcode === goodsBarcode;
+                    });
+                    console.log('过滤后的库存数据:', filteredStock);
+
+                    // 计算该货物在当前仓库的总库存
+                    const totalStock = filteredStock.reduce((sum, stock) => sum + (parseFloat(stock.quantity) || 0), 0);
+                    console.log('计算出的总库存:', totalStock);
+
+                    return totalStock;
+                }
+
+                console.log('未找到库存信息');
+                return 0; // 未找到库存信息
+            } catch (error) {
+                console.error('获取可用库存失败:', error);
+                // 不显示错误提示，避免影响用户体验
+                return 0;
+            }
+        }
+
         // 显示货物信息
-        function showGoodsInfo(goods) {
+        async function showGoodsInfo(goods) {
             document.getElementById('goodsName').textContent = goods.name;
-            document.getElementById('goodsSpec').textContent = `${goods.spec || '无规格'} | ${goods.unit} | ¥${goods.price}`;
+            document.getElementById('goodsSpec').textContent = `${goods.spec || ''}${goods.spec && goods.unit ? ' | ' : ''}${goods.unit} | ¥${goods.price}`;
             document.getElementById('goodsInfo').classList.remove('hidden');
-            
+
+            // 显示可用库存
+            const availableStock = await getAvailableStock(goods.barcode);
+            document.getElementById('goodsSpec').textContent += ` | 可用库存: ${availableStock}`;
+
             // 如果没有输入单价，自动填充
             if (!document.getElementById('unitPrice').value) {
                 document.getElementById('unitPrice').value = goods.price;
             }
+
+            // 自动填充库位编码（这里可以根据业务逻辑设置默认库位）
+            // 目前设置为自动填充第一个可用库位
+            autoFillLocationCode();
         }
         
         // 验证库位
@@ -1001,8 +1415,19 @@
                 }
             });
             
-            // 库位编码输入
-            document.getElementById('locationCode').addEventListener('input', function() {
+            // 点击页面其他地方隐藏搜索结果
+            document.addEventListener('click', function(event) {
+                const goodsBarcodeInput = document.getElementById('goodsBarcode');
+                const goodsSearchResults = document.getElementById('goodsSearchResults');
+
+                if (!goodsBarcodeInput.contains(event.target) &&
+                    !goodsSearchResults.contains(event.target)) {
+                    goodsSearchResults.classList.add('hidden');
+                }
+            });
+
+            // 库位编码选择
+            document.getElementById('locationCode').addEventListener('change', function() {
                 if (this.value.trim()) {
                     validateLocation(this.value.trim());
                 } else {

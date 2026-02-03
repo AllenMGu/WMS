@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>用户管理 - 多仓库管理系统</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <title>用户管理 - 备件管理系统</title>
+    <script src="/assets/js/tailwind.config.js"></script>
+    <link href="/assets/css/all.min.css" rel="stylesheet">
     <script>
         tailwind.config = {
             theme: {
@@ -53,7 +53,7 @@
                 </button>
                 <div class="flex items-center">
                     <img src="https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/pc/super_tool/42dae0766d5c4bed86158de65b7663d3~tplv-a9rns2rl98-image.image?lk3s=8e244e95&rcl=2026012817265511D2C99A3202991DF1E7&rrcfp=f06b921b&x-expires=1772184452&x-signature=UFRTLlawHtw%2BeVOnI%2FLmg5r131g%3D" alt="Logo" class="h-8 w-8">
-                    <span class="ml-2 text-lg font-semibold text-gray-800 hidden sm:block">多仓库管理系统</span>
+                    <span class="ml-2 text-lg font-semibold text-gray-800 hidden sm:block">备件管理系统</span>
                 </div>
             </div>
             <div class="flex items-center space-x-4">
@@ -144,11 +144,26 @@
                     <h1 class="text-2xl font-bold text-gray-800">用户管理</h1>
                     <p class="text-gray-600">查看与创建系统用户</p>
                 </div>
-                <div class="mt-4 md:mt-0">
+                <div class="mt-4 md:mt-0 flex flex-wrap gap-3">
                     <button id="addUserBtn" class="bg-primary text-white px-4 py-2 rounded-md hover:bg-secondary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-all-300 flex items-center">
                         <i class="fa fa-plus mr-2"></i>
                         <span>新增用户</span>
                     </button>
+                    <button id="importLdapUsersBtn" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all-300 flex items-center">
+                        <i class="fa fa-upload mr-2"></i>
+                        <span>导入LDAP用户</span>
+                    </button>
+                    <button id="ldapConfigBtn" class="bg-purple-600 text-white px-4 py-2 rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all-300 flex items-center">
+                        <i class="fa fa-cog mr-2"></i>
+                        <span>LDAP配置</span>
+                    </button>
+                    <div class="relative">
+                        <select id="userTypeFilter" class="pl-3 pr-10 py-2 border border-gray-300 rounded-md bg-white text-sm focus:outline-none focus:ring-primary focus:border-primary">
+                            <option value="all">所有用户</option>
+                            <option value="local">本地用户</option>
+                            <option value="ldap">LDAP用户</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
@@ -161,6 +176,7 @@
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">角色</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用户类型</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                             </tr>
                         </thead>
@@ -246,6 +262,13 @@
                         <option value="inactive">禁用</option>
                     </select>
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">用户类型</label>
+                    <select id="editUserType" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary">
+                        <option value="local">本地用户</option>
+                        <option value="ldap">LDAP用户</option>
+                    </select>
+                </div>
                 <div class="flex justify-end space-x-3 pt-2">
                     <button type="button" id="cancelEditUser" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300">取消</button>
                     <button type="submit" class="px-4 py-2 bg-primary text-white rounded-md hover:bg-secondary">保存</button>
@@ -273,6 +296,80 @@
         </div>
     </div>
 
+    <div id="ldapModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-30">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-800">导入LDAP用户</h2>
+                <button id="closeLdapModal" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa fa-times"></i>
+                </button>
+            </div>
+            <form id="ldapForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">LDAP服务器地址</label>
+                    <input type="text" id="ldapServer" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" placeholder="ldap://192.168.1.100:389" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Base DN</label>
+                    <input type="text" id="ldapBaseDn" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" placeholder="dc=example,dc=com" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">管理员DN</label>
+                    <input type="text" id="ldapAdminDn" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" placeholder="cn=admin,dc=example,dc=com" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">管理员密码</label>
+                    <input type="password" id="ldapAdminPassword" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">用户搜索过滤器</label>
+                    <input type="text" id="ldapUserFilter" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" placeholder="(uid={})" required>
+                </div>
+                <div class="flex justify-end space-x-3 pt-2">
+                    <button type="button" id="cancelLdap" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300">取消</button>
+                    <button type="submit" class="px-4 py-2 bg-primary text-white rounded-md hover:bg-secondary">测试并导入</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="ldapConfigModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-30">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-800">LDAP配置</h2>
+                <button id="closeLdapConfigModal" class="text-gray-400 hover:text-gray-600">
+                    <i class="fa fa-times"></i>
+                </button>
+            </div>
+            <form id="ldapConfigForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">LDAP服务器地址</label>
+                    <input type="text" id="ldapConfigServer" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" placeholder="ldap://192.168.1.100:389" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Base DN</label>
+                    <input type="text" id="ldapConfigBaseDn" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" placeholder="dc=example,dc=com" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">管理员DN</label>
+                    <input type="text" id="ldapConfigAdminDn" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" placeholder="cn=admin,dc=example,dc=com" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">管理员密码</label>
+                    <input type="password" id="ldapConfigAdminPassword" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">用户搜索过滤器</label>
+                    <input type="text" id="ldapConfigUserFilter" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" placeholder="(uid={})" required>
+                </div>
+                <div class="flex justify-end space-x-3 pt-2">
+                    <button type="button" id="cancelLdapConfig" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300">取消</button>
+                    <button type="submit" class="px-4 py-2 bg-primary text-white rounded-md hover:bg-secondary">保存配置</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="assets/js/common.js"></script>
     <script>
         let users = [];
@@ -282,6 +379,26 @@
         let currentWarehouseAssignments = [];
 
         function pageInit() {
+            // 权限检查：只有管理员可以访问用户管理页面
+            if (currentUser.role !== 'admin') {
+                // 隐藏页面内容，显示无权限信息
+                document.querySelector('main').innerHTML = `
+                    <div class="flex items-center justify-center h-64">
+                        <div class="text-center">
+                            <i class="fa fa-lock text-6xl text-gray-400 mb-4"></i>
+                            <h1 class="text-2xl font-bold text-gray-800 mb-2">无权限访问</h1>
+                            <p class="text-gray-600">只有系统管理员才能访问用户管理页面</p>
+                        </div>
+                    </div>
+                `;
+                // 隐藏侧边栏中的用户管理菜单项
+                const userMenuLink = document.querySelector('a[href="user.html"]');
+                if (userMenuLink) {
+                    userMenuLink.style.display = 'none';
+                }
+                return;
+            }
+
             loadUsers();
             loadWarehouseOptions();
             setupUserEvents();
@@ -324,30 +441,41 @@
 
         function renderUserTable(errorMessage = '') {
             const tbody = document.getElementById('userTableBody');
+            const filterType = document.getElementById('userTypeFilter').value;
 
             if (errorMessage) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="5" class="px-6 py-6 text-center text-red-500">${errorMessage}</td>
+                        <td colspan="6" class="px-6 py-6 text-center text-red-500">${errorMessage}</td>
                     </tr>
                 `;
                 return;
             }
 
-            if (users.length === 0) {
+            // 应用用户类型筛选
+            let filteredUsers = users;
+            if (filterType === 'local') {
+                filteredUsers = users.filter(user => !user.is_ldap_user);
+            } else if (filterType === 'ldap') {
+                filteredUsers = users.filter(user => user.is_ldap_user);
+            }
+
+            if (filteredUsers.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="5" class="px-6 py-6 text-center text-gray-500">暂无用户数据</td>
+                        <td colspan="6" class="px-6 py-6 text-center text-gray-500">暂无用户数据</td>
                     </tr>
                 `;
                 return;
             }
 
-            tbody.innerHTML = users.map(user => {
+            tbody.innerHTML = filteredUsers.map(user => {
                 const roleLabel = user.role === 'admin' ? '管理员' : '操作员';
                 const roleClass = user.role === 'admin' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800';
                 const statusLabel = user.is_active ? '启用' : '禁用';
                 const statusClass = user.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600';
+                const userTypeLabel = user.is_ldap_user ? 'LDAP用户' : '本地用户';
+                const userTypeClass = user.is_ldap_user ? 'bg-purple-100 text-purple-800' : 'bg-yellow-100 text-yellow-800';
 
                 return `
                     <tr class="hover:bg-gray-50">
@@ -363,9 +491,13 @@
                         <td class="px-6 py-4">
                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">${statusLabel}</span>
                         </td>
+                        <td class="px-6 py-4">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${userTypeClass}">${userTypeLabel}</span>
+                        </td>
                         <td class="px-6 py-4 text-sm font-medium space-x-3">
                             <button class="text-primary hover:text-secondary edit-user" data-id="${user.id}">编辑</button>
                             <button class="text-indigo-600 hover:text-indigo-800 manage-warehouse" data-id="${user.id}">仓库权限</button>
+                            <button class="text-red-600 hover:text-red-800 delete-user" data-id="${user.id}">删除</button>
                         </td>
                     </tr>
                 `;
@@ -408,10 +540,74 @@
             const closeWarehouseModal = document.getElementById('closeWarehouseModal');
             const cancelWarehouseManage = document.getElementById('cancelWarehouseManage');
             const saveWarehouseManage = document.getElementById('saveWarehouseManage');
+            const ldapModal = document.getElementById('ldapModal');
+            const importLdapUsersBtn = document.getElementById('importLdapUsersBtn');
+            const closeLdapModal = document.getElementById('closeLdapModal');
+            const cancelLdap = document.getElementById('cancelLdap');
+            const ldapForm = document.getElementById('ldapForm');
+            const ldapConfigModal = document.getElementById('ldapConfigModal');
+            const ldapConfigBtn = document.getElementById('ldapConfigBtn');
+            const closeLdapConfigModal = document.getElementById('closeLdapConfigModal');
+            const cancelLdapConfig = document.getElementById('cancelLdapConfig');
+            const ldapConfigForm = document.getElementById('ldapConfigForm');
+            const userTypeFilter = document.getElementById('userTypeFilter');
 
             addUserBtn.addEventListener('click', () => {
                 modal.classList.remove('hidden');
                 modal.classList.add('flex');
+            });
+
+            importLdapUsersBtn.addEventListener('click', async () => {
+                try {
+                    // 加载当前LDAP配置并填充到表单中
+                    const response = await fetch(`${API_BASE_URL}/ldap/config`, {
+                        headers: getHeaders()
+                    });
+
+                    if (response.ok) {
+                        const config = await response.json();
+                        document.getElementById('ldapServer').value = config.ldap_server || '';
+                        document.getElementById('ldapBaseDn').value = config.ldap_base_dn || '';
+                        document.getElementById('ldapAdminDn').value = config.ldap_admin_dn || '';
+                        document.getElementById('ldapAdminPassword').value = config.ldap_admin_password || '';
+                        document.getElementById('ldapUserFilter').value = config.ldap_user_search_filter || '(uid={})';
+                    }
+                } catch (error) {
+                    console.error('加载LDAP配置失败:', error);
+                    showToast('加载LDAP配置失败', 'error');
+                }
+
+                ldapModal.classList.remove('hidden');
+                ldapModal.classList.add('flex');
+            });
+
+            ldapConfigBtn.addEventListener('click', async () => {
+                try {
+                    // 加载当前LDAP配置
+                    const response = await fetch(`${API_BASE_URL}/ldap/config`, {
+                        headers: getHeaders()
+                    });
+
+                    if (response.ok) {
+                        const config = await response.json();
+                        document.getElementById('ldapConfigServer').value = config.ldap_server || '';
+                        document.getElementById('ldapConfigBaseDn').value = config.ldap_base_dn || '';
+                        document.getElementById('ldapConfigAdminDn').value = config.ldap_admin_dn || '';
+                        document.getElementById('ldapConfigAdminPassword').value = config.ldap_admin_password || '';
+                        document.getElementById('ldapConfigUserFilter').value = config.ldap_user_search_filter || '(uid={})';
+                    }
+                } catch (error) {
+                    console.error('加载LDAP配置失败:', error);
+                    showToast('加载LDAP配置失败', 'error');
+                }
+
+                ldapConfigModal.classList.remove('hidden');
+                ldapConfigModal.classList.add('flex');
+            });
+
+            // 用户类型筛选
+            userTypeFilter.addEventListener('change', () => {
+                renderUserTable();
             });
 
             function closeModal() {
@@ -421,14 +617,105 @@
                 warehouseSelect.classList.remove('hidden');
             }
 
+            function closeLdapModalFunc() {
+                ldapModal.classList.add('hidden');
+                ldapModal.classList.remove('flex');
+                ldapForm.reset();
+            }
+
             closeUserModal.addEventListener('click', closeModal);
             cancelUser.addEventListener('click', closeModal);
+            closeLdapModal.addEventListener('click', closeLdapModalFunc);
+            cancelLdap.addEventListener('click', closeLdapModalFunc);
+
+            function closeLdapConfigModalFunc() {
+                ldapConfigModal.classList.add('hidden');
+                ldapConfigModal.classList.remove('flex');
+                ldapConfigForm.reset();
+            }
+
+            closeLdapConfigModal.addEventListener('click', closeLdapConfigModalFunc);
+            cancelLdapConfig.addEventListener('click', closeLdapConfigModalFunc);
 
             roleSelect.addEventListener('change', () => {
                 if (roleSelect.value === 'admin') {
                     warehouseSelect.classList.add('hidden');
                 } else {
                     warehouseSelect.classList.remove('hidden');
+                }
+            });
+
+            ldapForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+
+                const ldapServer = document.getElementById('ldapServer').value.trim();
+                const ldapBaseDn = document.getElementById('ldapBaseDn').value.trim();
+                const ldapAdminDn = document.getElementById('ldapAdminDn').value.trim();
+                const ldapAdminPassword = document.getElementById('ldapAdminPassword').value.trim();
+                const ldapUserFilter = document.getElementById('ldapUserFilter').value.trim();
+
+                try {
+                    // 发送LDAP用户导入请求
+                    const response = await fetch(`${API_BASE_URL}/ldap/import-users`, {
+                        method: 'POST',
+                        headers: getHeaders(),
+                        body: JSON.stringify({
+                            ldap_server: ldapServer,
+                            base_dn: ldapBaseDn,
+                            admin_dn: ldapAdminDn,
+                            admin_password: ldapAdminPassword,
+                            user_filter: ldapUserFilter
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || '导入LDAP用户失败');
+                    }
+
+                    const result = await response.json();
+                    showToast(`成功导入 ${result.imported} 个用户`, 'success');
+                    closeLdapModalFunc();
+                    loadUsers();
+                } catch (error) {
+                    console.error('导入LDAP用户失败:', error);
+                    showToast(error.message, 'error');
+                }
+            });
+
+            ldapConfigForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+
+                const ldapServer = document.getElementById('ldapConfigServer').value.trim();
+                const ldapBaseDn = document.getElementById('ldapConfigBaseDn').value.trim();
+                const ldapAdminDn = document.getElementById('ldapConfigAdminDn').value.trim();
+                const ldapAdminPassword = document.getElementById('ldapConfigAdminPassword').value.trim();
+                const ldapUserFilter = document.getElementById('ldapConfigUserFilter').value.trim();
+
+                try {
+                    // 发送LDAP配置保存请求
+                    const response = await fetch(`${API_BASE_URL}/ldap/config`, {
+                        method: 'PUT',
+                        headers: getHeaders(),
+                        body: JSON.stringify({
+                            ldap_server: ldapServer,
+                            ldap_base_dn: ldapBaseDn,
+                            ldap_admin_dn: ldapAdminDn,
+                            ldap_admin_password: ldapAdminPassword,
+                            ldap_user_search_filter: ldapUserFilter
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || '保存LDAP配置失败');
+                    }
+
+                    showToast('LDAP配置保存成功', 'success');
+                    closeLdapConfigModalFunc();
+                } catch (error) {
+                    console.error('保存LDAP配置失败:', error);
+                    showToast(error.message, 'error');
                 }
             });
 
@@ -493,11 +780,13 @@
                 const password = document.getElementById('editPassword').value.trim();
                 const role = document.getElementById('editRole').value;
                 const status = document.getElementById('editStatus').value;
+                const userType = document.getElementById('editUserType').value;
 
                 const payload = {
                     full_name: fullName,
                     role,
-                    is_active: status === 'active'
+                    is_active: status === 'active',
+                    is_ldap_user: userType === 'ldap'
                 };
 
                 if (password) {
@@ -583,6 +872,7 @@
             document.getElementById('userTableBody').addEventListener('click', (event) => {
                 const editButton = event.target.closest('.edit-user');
                 const manageButton = event.target.closest('.manage-warehouse');
+                const deleteButton = event.target.closest('.delete-user');
 
                 if (editButton) {
                     const userId = Number(editButton.dataset.id);
@@ -596,7 +886,36 @@
                     const userId = Number(manageButton.dataset.id);
                     openWarehouseManage(userId);
                 }
+
+                if (deleteButton) {
+                    const userId = Number(deleteButton.dataset.id);
+                    deleteUser(userId);
+                }
             });
+
+            async function deleteUser(userId) {
+                if (!confirm('确定要删除该用户吗？此操作不可恢复。')) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`${API_BASE_URL}/users/${userId}`, {
+                        method: 'DELETE',
+                        headers: getHeaders()
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || '删除用户失败');
+                    }
+
+                    showToast('用户删除成功', 'success');
+                    loadUsers();
+                } catch (error) {
+                    console.error('删除用户失败:', error);
+                    showToast(error.message, 'error');
+                }
+            }
         }
 
         function openEditUser(user) {
@@ -606,6 +925,7 @@
             document.getElementById('editPassword').value = '';
             document.getElementById('editRole').value = user.role;
             document.getElementById('editStatus').value = user.is_active ? 'active' : 'inactive';
+            document.getElementById('editUserType').value = user.is_ldap_user ? 'ldap' : 'local';
 
             const editModal = document.getElementById('editUserModal');
             editModal.classList.remove('hidden');

@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>多仓库管理系统 - 登录</title>
+    <title>备件管理系统 - 登录</title>
     <!-- Tailwind CSS v3 -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/assets/js/tailwind.config.js"></script>
     <!-- Font Awesome -->
-    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <link href="/assets/css/all.min.css" rel="stylesheet">
     <!-- 统一的 Tailwind 配置 -->
     <script>
         tailwind.config = {
@@ -52,8 +52,8 @@
                 <!-- Logo 和标题 -->
                 <div class="bg-gradient-blue p-6 text-center">
                     <img src="https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/pc/super_tool/42dae0766d5c4bed86158de65b7663d3~tplv-a9rns2rl98-image.image?lk3s=8e244e95&rcl=2026012817265511D2C99A3202991DF1E7&rrcfp=f06b921b&x-expires=1772184452&x-signature=UFRTLlawHtw%2BeVOnI%2FLmg5r131g%3D" alt="Logo" class="w-20 h-20 mx-auto mb-4">
-                    <h1 class="text-2xl font-bold text-white text-shadow">多仓库管理系统</h1>
-                    <p class="text-blue-100 mt-1">专业的库存管理解决方案</p>
+                    <h1 class="text-2xl font-bold text-white text-shadow">备件管理系统</h1>
+                    <p class="text-blue-100 mt-1">库存管理解决方案</p>
                 </div>
                 
                 <!-- 登录表单 -->
@@ -114,14 +114,14 @@
             
             <!-- 版权信息 -->
             <div class="mt-6 text-center text-white text-shadow">
-                <p class="text-sm">&copy; 2026 多仓库管理系统. 保留所有权利.</p>
+                <p class="text-sm">&copy; 2026 备件管理系统. Cutia Wuxi 保留所有权利.</p>
             </div>
         </div>
     </div>
 
     <script>
         // API基础URL
-        const API_BASE_URL = 'http://localhost:8000';
+        const API_BASE_URL = 'api';
         
         // DOM元素
         const loginForm = document.getElementById('loginForm');
