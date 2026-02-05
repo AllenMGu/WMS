@@ -31,7 +31,7 @@ LDAP_USER_SEARCH_FILTER = "(sAMAccountName={})"  # 根据实际LDAP属性修改
 router = APIRouter()
 
 # 数据库配置
-DATABASE_URL = "postgresql://warehouse_user:cuwxwms@localhost:5432/warehouse_db"
+DATABASE_URL = "postgresql://warehouse_user:wmsusers@localhost:5432/warehouse_db"
 
 # 密码加密上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -3932,3 +3932,4 @@ app.include_router(router, prefix="/api")
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
