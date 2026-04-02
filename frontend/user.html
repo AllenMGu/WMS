@@ -4,45 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>用户管理 - 备件管理系统</title>
-    <script src="/assets/js/tailwind.config.js"></script>
-    <link href="/assets/css/all.min.css" rel="stylesheet">
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        primary: '#1a56db',
-                        secondary: '#4f46e5',
-                        success: '#10b981',
-                        danger: '#ef4444',
-                        warning: '#f59e0b',
-                        info: '#3b82f6',
-                        light: '#f3f4f6',
-                        dark: '#1f2937'
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'system-ui', 'sans-serif']
-                    }
-                }
-            }
-        }
-    </script>
-    <style type="text/tailwindcss">
-        @layer utilities {
-            .transition-all-300 {
-                transition: all 0.3s ease;
-            }
-            .sidebar-active {
-                @apply bg-primary text-white;
-            }
-            .sidebar-icon {
-                @apply mr-3 text-lg;
-            }
-            .card-hover {
-                @apply hover:shadow-lg transition-all-300;
-            }
-        }
-    </style>
+    <link href="assets/css/tailwind.css" rel="stylesheet">
+    <link href="assets/css/font-awesome.min.css" rel="stylesheet">
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col">
     <header class="bg-white shadow-sm z-10">
@@ -52,7 +15,7 @@
                     <i class="fa fa-bars text-xl"></i>
                 </button>
                 <div class="flex items-center">
-                    <img src="https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/pc/super_tool/42dae0766d5c4bed86158de65b7663d3~tplv-a9rns2rl98-image.image?lk3s=8e244e95&rcl=2026012817265511D2C99A3202991DF1E7&rrcfp=f06b921b&x-expires=1772184452&x-signature=UFRTLlawHtw%2BeVOnI%2FLmg5r131g%3D" alt="Logo" class="h-8 w-8">
+                    <img src="assets/images/logo.png" alt="Logo" class="h-8 w-8">
                     <span class="ml-2 text-lg font-semibold text-gray-800 hidden sm:block">备件管理系统</span>
                 </div>
             </div>
@@ -70,18 +33,32 @@
                         </div>
                     </div>
                 </div>
+                <div class="relative">
+                    <button class="text-gray-600 hover:text-primary focus:outline-none">
+                        <i class="fa fa-bell-o text-xl"></i>
+                        <span class="absolute top-0 right-0 h-2 w-2 bg-red-500 rounded-full"></span>
+                    </button>
+                </div>
                 <div class="relative" id="userMenu">
-                    <button class="flex items-center text-gray-700 hover:text-primary focus:outline-none">
-                        <div class="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center mr-2">
+                    <button class="flex items-center focus:outline-none">
+                        <div class="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center">
                             <span id="userInitials">U</span>
                         </div>
-                        <span id="userName" class="hidden sm:block">用户名</span>
-                        <i class="fa fa-chevron-down ml-1 text-xs"></i>
+                        <span class="ml-2 text-sm font-medium text-gray-700 hidden md:block" id="userName">加载中...</span>
+                        <i class="fa fa-chevron-down ml-1 text-xs text-gray-500 hidden md:block"></i>
                     </button>
                     <div id="userDropdown" class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg hidden z-20">
                         <div class="py-1">
-                            <a href="user.html" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">用户管理</a>
-                            <a href="#" id="logoutButton" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">退出登录</a>
+                            <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                <i class="fa fa-user-circle mr-2"></i> 个人资料
+                            </a>
+                            <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                <i class="fa fa-cog mr-2"></i> 设置
+                            </a>
+                            <hr class="my-1">
+                            <a href="#" id="logoutButton" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                <i class="fa fa-sign-out mr-2"></i> 退出登录
+                            </a>
                         </div>
                     </div>
                 </div>
@@ -90,11 +67,8 @@
     </header>
 
     <div class="flex flex-1 overflow-hidden">
-        <aside id="sidebar" class="w-64 bg-white shadow-md hidden lg:block overflow-y-auto">
-            <nav class="p-4">
-                <div class="mb-4">
-                    <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">主菜单</p>
-                </div>
+        <aside id="sidebar" class="bg-white w-64 shadow-md hidden lg:block flex-shrink-0 transition-all-300">
+            <nav class="mt-5 px-2">
                 <a href="dashboard.html" class="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 rounded-md mb-1 transition-all-300">
                     <i class="fa fa-dashboard sidebar-icon"></i>
                     <span>仪表盘</span>
