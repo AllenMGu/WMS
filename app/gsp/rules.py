@@ -49,6 +49,8 @@ def evaluate_product(
     *,
     status: str,
     registration_valid_to: Optional[date],
+    registration_document_ref: Optional[str] = None,
+    nmpa_verification_ref: Optional[str] = None,
     on_date: Optional[date] = None,
 ) -> QualificationResult:
     today = on_date or date.today()
@@ -57,6 +59,10 @@ def evaluate_product(
         findings.append(Finding("PRODUCT_NOT_APPROVED", "经营品种尚未通过质量审批"))
     if registration_valid_to is not None and registration_valid_to < today:
         findings.append(Finding("REGISTRATION_EXPIRED", "药品注册批准文件已过期"))
+    if not registration_document_ref:
+        findings.append(Finding("REGISTRATION_DOCUMENT_MISSING", "缺少药品注册批准档案引用"))
+    if not nmpa_verification_ref:
+        findings.append(Finding("NMPA_VERIFICATION_MISSING", "缺少NMPA或企业批准档案核验引用"))
     return QualificationResult(not findings, tuple(findings))
 
 

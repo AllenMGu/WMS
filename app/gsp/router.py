@@ -9,20 +9,27 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.time import utc_now
 from app.gsp.access_control import grant_gsp_role, review_gsp_role, revoke_gsp_role
-from app.gsp.audit import verify_audit_chain, write_audit_event
+from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event
 from app.gsp.dependencies import require_gsp_roles, require_quality_manager_or_bootstrap
 from app.gsp.maintenance.models import GspMaintenancePlan, GspMaintenancePlanItem
 from app.gsp.models import (
     GspAuditEvent,
+    GspAuditVerification,
     GspBatchStock,
     GspBusinessPartner,
     GspDrugBatch,
     GspDrugProfile,
     GspIntegrationMessage,
+    GspPartnerDocument,
     GspQualityHold,
     GspRoleAssignment,
 )
 from app.gsp.outbox import enqueue_integration_message
+from app.gsp.qualification import (
+    AUTHORIZED_DOCUMENTS,
+    PARTNER_DOCUMENT_TYPES,
+    evaluate_partner_evidence,
+)
 from app.gsp.quality_disposition.models import (
     GspNonconformingRecord,
     GspPurchaseReturn,
@@ -37,10 +44,12 @@ from app.gsp.returns_recalls.models import (
     GspRecallTarget,
     GspSalesReturnItem,
 )
-from app.gsp.rules import evaluate_partner, evaluate_product
+from app.gsp.rules import evaluate_product
 from app.gsp.sales_shipping.models import GspSalesOrder, GspShipment
 from app.gsp.schemas import (
     AuditEventResponse,
+    AuditVerificationCreate,
+    AuditVerificationResponse,
     BatchAcceptance,
     BatchCreate,
     BatchResponse,
@@ -49,6 +58,8 @@ from app.gsp.schemas import (
     DrugProfileResponse,
     DrugProfileUpsert,
     PartnerCreate,
+    PartnerDocumentCreate,
+    PartnerDocumentResponse,
     PartnerResponse,
     QualityHoldCreate,
     QualityHoldRelease,
@@ -96,6 +107,12 @@ async def compliance_summary(
         .count(),
         "expired_partner_licenses": db.query(GspBusinessPartner)
         .filter(GspBusinessPartner.license_valid_to < today)
+        .count(),
+        "expired_partner_documents": db.query(GspPartnerDocument)
+        .filter(
+            GspPartnerDocument.status == "VERIFIED",
+            GspPartnerDocument.valid_to < today,
+        )
         .count(),
         "near_expiry_batches": db.query(GspDrugBatch)
         .filter(
@@ -196,6 +213,9 @@ async def compliance_summary(
             GspRoleAssignment.is_active.is_(True),
             User.is_active.is_(False),
         )
+        .count(),
+        "failed_audit_verifications": db.query(GspAuditVerification)
+        .filter(GspAuditVerification.valid.is_(False))
         .count(),
         "pending_stocktake_plans": db.query(GspStocktakePlan)
         .filter(GspStocktakePlan.status.in_(["SUBMITTED", "COUNTING", "COUNTED"]))
@@ -409,11 +429,7 @@ async def approve_partner(
     partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == partner_id).first()
     if not partner:
         raise HTTPException(404, "合作方不存在")
-    result = evaluate_partner(
-        status="APPROVED",
-        license_valid_to=partner.license_valid_to,
-        quality_agreement_valid_to=partner.quality_agreement_valid_to,
-    )
+    result = evaluate_partner_evidence(db, partner, status="APPROVED")
     if not result.qualified:
         raise HTTPException(
             409, {"message": "合作方资质不满足审批条件", "findings": _findings_detail(result)}
@@ -445,6 +461,106 @@ async def approve_partner(
     db.commit()
     db.refresh(partner)
     return partner
+
+
+@router.post(
+    "/partners/{partner_id}/documents",
+    response_model=PartnerDocumentResponse,
+    status_code=201,
+)
+async def create_partner_document(
+    partner_id: int,
+    payload: PartnerDocumentCreate,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES, "PROCUREMENT", "SALES")),
+    db: Session = Depends(get_db),
+):
+    partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == partner_id).first()
+    if partner is None:
+        raise HTTPException(404, "合作方不存在")
+    document_type = payload.document_type.upper()
+    if document_type not in PARTNER_DOCUMENT_TYPES:
+        raise HTTPException(422, "资质文件类型不在批准清单中")
+    if payload.valid_to < date.today():
+        raise HTTPException(422, "不能录入已过期的资质文件")
+    if document_type in AUTHORIZED_DOCUMENTS and (
+        not payload.person_name or not payload.person_role
+    ):
+        raise HTTPException(422, "授权文件必须填写授权人员姓名和岗位")
+    if partner.status == "APPROVED":
+        partner.status = "PENDING"
+        partner.approved_by = None
+        partner.approved_at = None
+    document = GspPartnerDocument(
+        partner_id=partner.id,
+        document_type=document_type,
+        document_no=payload.document_no,
+        valid_from=payload.valid_from,
+        valid_to=payload.valid_to,
+        file_ref=payload.file_ref,
+        person_name=payload.person_name,
+        person_role=payload.person_role,
+        status="PENDING",
+    )
+    db.add(document)
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=current_user.id,
+        action="PARTNER_DOCUMENT_CREATED",
+        entity_type="GspPartnerDocument",
+        entity_id=str(document.id),
+        reason=payload.reason,
+        after_data=_snapshot(document),
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    db.refresh(document)
+    return document
+
+
+@router.post(
+    "/partners/{partner_id}/documents/{document_id}/verify",
+    response_model=PartnerDocumentResponse,
+)
+async def verify_partner_document(
+    partner_id: int,
+    document_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    document = (
+        db.query(GspPartnerDocument)
+        .filter(
+            GspPartnerDocument.id == document_id,
+            GspPartnerDocument.partner_id == partner_id,
+        )
+        .first()
+    )
+    if document is None:
+        raise HTTPException(404, "合作方资质文件不存在")
+    if document.valid_to < date.today():
+        raise HTTPException(409, "已过期资质文件不能核验通过")
+    before = _snapshot(document)
+    document.status = "VERIFIED"
+    document.verified_by = current_user.id
+    document.verified_at = utc_now()
+    write_audit_event(
+        db,
+        actor_user_id=current_user.id,
+        action="PARTNER_DOCUMENT_VERIFIED",
+        entity_type="GspPartnerDocument",
+        entity_id=str(document.id),
+        reason=payload.reason,
+        before_data=before,
+        after_data=_snapshot(document),
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    db.refresh(document)
+    return document
 
 
 @router.post("/partners/{partner_id}/suspend", response_model=PartnerResponse)
@@ -496,12 +612,18 @@ async def upsert_drug_profile(
         for key, value in values.items():
             setattr(profile, key, value)
         profile.status = "PENDING"
+        profile.approved_by = None
+        profile.approved_at = None
+        profile.nmpa_verified_by = None
+        profile.nmpa_verified_at = None
+        profile.updated_by = current_user.id
     else:
         profile = GspDrugProfile(
             goods_id=goods_id,
             **values,
             status="PENDING",
             created_by=current_user.id,
+            updated_by=current_user.id,
         )
         db.add(profile)
     db.flush()
@@ -532,13 +654,22 @@ async def approve_drug_profile(
     profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == goods_id).first()
     if not profile:
         raise HTTPException(404, "药品质量主数据不存在")
-    result = evaluate_product(status="APPROVED", registration_valid_to=profile.registration_valid_to)
+    if profile.updated_by == current_user.id:
+        raise HTTPException(409, "质量档案维护人与批准核验人必须分离")
+    result = evaluate_product(
+        status="APPROVED",
+        registration_valid_to=profile.registration_valid_to,
+        registration_document_ref=profile.registration_document_ref,
+        nmpa_verification_ref=profile.nmpa_verification_ref,
+    )
     if not result.qualified:
         raise HTTPException(409, {"message": "品种不满足审批条件", "findings": _findings_detail(result)})
     before = _snapshot(profile)
     profile.status = "APPROVED"
     profile.approved_by = current_user.id
     profile.approved_at = utc_now()
+    profile.nmpa_verified_by = current_user.id
+    profile.nmpa_verified_at = profile.approved_at
     enqueue_integration_message(
         db,
         destination="JZT",
@@ -578,14 +709,12 @@ async def create_batch(
         raise HTTPException(409, "缺少已建档的供货方或药品质量主数据")
     if partner.partner_type not in {"SUPPLIER", "BOTH"}:
         raise HTTPException(409, "所选合作方不是合格供货方")
-    partner_result = evaluate_partner(
-        status=partner.status,
-        license_valid_to=partner.license_valid_to,
-        quality_agreement_valid_to=partner.quality_agreement_valid_to,
-    )
+    partner_result = evaluate_partner_evidence(db, partner)
     product_result = evaluate_product(
         status=profile.status,
         registration_valid_to=profile.registration_valid_to,
+        registration_document_ref=profile.registration_document_ref,
+        nmpa_verification_ref=profile.nmpa_verification_ref,
     )
     findings = _findings_detail(partner_result) + _findings_detail(product_result)
     if findings:
@@ -635,14 +764,12 @@ async def accept_batch(
     partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == batch.supplier_id).first()
     if not profile or not partner:
         raise HTTPException(409, "供货方或药品质量主数据缺失")
-    partner_result = evaluate_partner(
-        status=partner.status,
-        license_valid_to=partner.license_valid_to,
-        quality_agreement_valid_to=partner.quality_agreement_valid_to,
-    )
+    partner_result = evaluate_partner_evidence(db, partner)
     product_result = evaluate_product(
         status=profile.status,
         registration_valid_to=profile.registration_valid_to,
+        registration_document_ref=profile.registration_document_ref,
+        nmpa_verification_ref=profile.nmpa_verification_ref,
     )
     findings = _findings_detail(partner_result) + _findings_detail(product_result)
     if findings:
@@ -1007,3 +1134,37 @@ async def verify_audit_events(
 ):
     valid, broken_event_id = verify_audit_chain(db)
     return {"valid": valid, "broken_event_id": broken_event_id}
+
+
+@router.post("/audit-verifications", response_model=AuditVerificationResponse, status_code=201)
+async def create_audit_verification(
+    payload: AuditVerificationCreate,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    verification = record_audit_verification(
+        db,
+        actor_user_id=current_user.id,
+        trigger_source=payload.trigger_source,
+        evidence_ref=payload.evidence_ref,
+        reason=payload.reason,
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    db.refresh(verification)
+    return verification
+
+
+@router.get("/audit-verifications", response_model=list[AuditVerificationResponse])
+async def list_audit_verifications(
+    limit: int = Query(100, ge=1, le=500),
+    current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(GspAuditVerification)
+        .order_by(GspAuditVerification.verified_at.desc())
+        .limit(limit)
+        .all()
+    )

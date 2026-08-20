@@ -179,6 +179,8 @@ def _validate_return_batch_for_restock(
     product_result = evaluate_product(
         status=profile.status,
         registration_valid_to=profile.registration_valid_to,
+        registration_document_ref=profile.registration_document_ref,
+        nmpa_verification_ref=profile.nmpa_verification_ref,
     )
     batch_result = evaluate_batch(
         status=batch.status,

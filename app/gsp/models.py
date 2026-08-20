@@ -62,10 +62,15 @@ class GspDrugProfile(Base):
     is_special_controlled = Column(Boolean, nullable=False, default=False)
     traceability_required = Column(Boolean, nullable=False, default=True)
     registration_valid_to = Column(Date, nullable=True)
+    registration_document_ref = Column(String(500), nullable=True)
+    nmpa_verification_ref = Column(String(500), nullable=True)
+    nmpa_verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    nmpa_verified_at = Column(DateTime, nullable=True)
     status = Column(String(30), nullable=False, default="PENDING", index=True)
     approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     approved_at = Column(DateTime, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=utc_now)
     updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
 
@@ -100,6 +105,8 @@ class GspPartnerDocument(Base):
     valid_from = Column(Date, nullable=True)
     valid_to = Column(Date, nullable=False, index=True)
     file_ref = Column(String(500), nullable=True)
+    person_name = Column(String(200), nullable=True)
+    person_role = Column(String(50), nullable=True)
     verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     verified_at = Column(DateTime, nullable=True)
     status = Column(String(30), nullable=False, default="PENDING")
@@ -204,3 +211,16 @@ class GspAuditEvent(Base):
     previous_hash = Column(String(64), nullable=True)
     event_hash = Column(String(64), nullable=False, unique=True)
     occurred_at = Column(DateTime, nullable=False, default=utc_now, index=True)
+
+
+class GspAuditVerification(Base):
+    __tablename__ = "gsp_audit_verifications"
+
+    id = Column(Integer, primary_key=True)
+    requested_by = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    trigger_source = Column(String(50), nullable=False, default="MANUAL")
+    evidence_ref = Column(String(500), nullable=False)
+    checked_event_count = Column(Integer, nullable=False)
+    valid = Column(Boolean, nullable=False, index=True)
+    broken_event_id = Column(Integer, ForeignKey("gsp_audit_events.id"), nullable=True)
+    verified_at = Column(DateTime, nullable=False, default=utc_now, index=True)

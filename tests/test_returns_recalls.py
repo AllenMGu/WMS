@@ -63,6 +63,7 @@ from app.gsp.sales_shipping.service import (
     submit_sales_order,
 )
 from app.legacy import Goods, Location, User, UserRole, Warehouse
+from tests.gsp_seed_helpers import add_verified_partner_evidence
 
 
 def _seed_dispatched_batch(db):
@@ -137,12 +138,20 @@ def _seed_dispatched_batch(db):
         storage_condition="NORMAL",
         traceability_required=True,
         registration_valid_to=date.today() + timedelta(days=365),
+        registration_document_ref="test://registration/returns",
+        nmpa_verification_ref="test://nmpa/returns",
         status="APPROVED",
         approved_by=users[1].id,
         created_by=users[1].id,
     )
     db.add_all([location, supplier, customer, profile])
     db.flush()
+    add_verified_partner_evidence(
+        db,
+        partner=customer,
+        verifier_id=users[1].id,
+        valid_to=date.today() + timedelta(days=365),
+    )
     batch = GspDrugBatch(
         goods_id=goods.id,
         batch_no=f"RR-BATCH-{suffix}",

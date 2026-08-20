@@ -31,6 +31,7 @@ from app.gsp.sales_shipping.service import (
     submit_sales_order,
 )
 from app.legacy import Goods, Location, User, UserRole, Warehouse
+from tests.gsp_seed_helpers import add_verified_partner_evidence
 
 
 def _seed_sales_data(db):
@@ -107,12 +108,20 @@ def _seed_sales_data(db):
         storage_condition="NORMAL",
         traceability_required=True,
         registration_valid_to=date.today() + timedelta(days=365),
+        registration_document_ref="test://registration/sales",
+        nmpa_verification_ref="test://nmpa/sales",
         status="APPROVED",
         approved_by=users[1].id,
         created_by=users[1].id,
     )
     db.add_all([early_location, later_location, supplier, customer, profile])
     db.flush()
+    add_verified_partner_evidence(
+        db,
+        partner=customer,
+        verifier_id=users[1].id,
+        valid_to=date.today() + timedelta(days=365),
+    )
     early_batch = GspDrugBatch(
         goods_id=goods.id,
         batch_no=f"EARLY-{suffix}",
@@ -241,6 +250,25 @@ def test_fefo_sales_allocation_review_and_dispatch():
         assert early_stock.reserved_quantity == Decimal("5.000")
         assert later_stock.reserved_quantity == Decimal("3.000")
 
+        picking_hold = GspQualityHold(
+            batch_id=early_batch.id,
+            reason_code="PICKING_HOLD",
+            reason="拣货前质量锁定测试",
+            status="ACTIVE",
+            initiated_by=quality.id,
+        )
+        db.add(picking_hold)
+        db.flush()
+        with pytest.raises(WorkflowError, match="不满足出库条件"):
+            mark_sales_order_picked(
+                db,
+                order_id=order.id,
+                actor_id=picker.id,
+                reason="锁定批次不得拣货",
+                source_ip="127.0.0.1",
+            )
+        picking_hold.status = "RELEASED"
+        db.flush()
         mark_sales_order_picked(
             db,
             order_id=order.id,

@@ -9,7 +9,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.gsp.models import GspAuditEvent
+from app.gsp.models import GspAuditEvent, GspAuditVerification
 
 
 def _event_hash(
@@ -113,3 +113,42 @@ def verify_audit_chain(db: Session) -> tuple[bool, int | None]:
             return False, event.id
         expected_previous_hash = event.event_hash
     return True, None
+
+
+def record_audit_verification(
+    db: Session,
+    *,
+    actor_user_id: int,
+    trigger_source: str,
+    evidence_ref: str,
+    reason: str,
+    source_ip: str | None = None,
+) -> GspAuditVerification:
+    valid, broken_event_id = verify_audit_chain(db)
+    verification = GspAuditVerification(
+        requested_by=actor_user_id,
+        trigger_source=trigger_source,
+        evidence_ref=evidence_ref,
+        checked_event_count=db.query(GspAuditEvent).count(),
+        valid=valid,
+        broken_event_id=broken_event_id,
+    )
+    db.add(verification)
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_user_id,
+        action="AUDIT_CHAIN_VERIFIED" if valid else "AUDIT_CHAIN_VERIFICATION_FAILED",
+        entity_type="GspAuditVerification",
+        entity_id=str(verification.id),
+        reason=reason,
+        after_data={
+            "trigger_source": trigger_source,
+            "evidence_ref": evidence_ref,
+            "checked_event_count": verification.checked_event_count,
+            "valid": valid,
+            "broken_event_id": broken_event_id,
+        },
+        source_ip=source_ip,
+    )
+    return verification

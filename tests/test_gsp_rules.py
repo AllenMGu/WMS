@@ -26,6 +26,18 @@ def test_unapproved_product_is_blocked():
     assert result.findings[0].code == "PRODUCT_NOT_APPROVED"
 
 
+def test_product_requires_registration_archive_and_nmpa_verification():
+    result = evaluate_product(
+        status="APPROVED",
+        registration_valid_to=date(2027, 1, 1),
+        on_date=date(2026, 8, 20),
+    )
+    assert {item.code for item in result.findings} == {
+        "REGISTRATION_DOCUMENT_MISSING",
+        "NMPA_VERIFICATION_MISSING",
+    }
+
+
 def test_quality_hold_blocks_released_batch():
     result = evaluate_batch(
         status="RELEASED",

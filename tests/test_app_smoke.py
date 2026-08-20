@@ -9,10 +9,14 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/gsp/compliance/summary" in paths
     assert "/api/gsp/roles/{assignment_id}/review" in paths
     assert "/api/gsp/roles/{assignment_id}/revoke" in paths
+    assert "/api/gsp/partners/{partner_id}/documents" in paths
+    assert "/api/gsp/partners/{partner_id}/documents/{document_id}/verify" in paths
     assert "/api/gsp/quality-holds" in paths
     assert "/api/gsp/stocktaking/plans" in paths
     assert "/api/gsp/procurement/orders" in paths
     assert "/api/gsp/receiving/receipts" in paths
+    assert "/api/gsp/receiving/receipts/{receipt_id}/items/{item_id}/sample" in paths
+    assert "/api/gsp/receiving/receipts/{receipt_id}/print-records" in paths
     assert "/api/gsp/sales/orders" in paths
     assert "/api/gsp/shipping/shipments" in paths
     assert "/api/gsp/returns/sales" in paths
@@ -22,13 +26,19 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/gsp/maintenance/plans" in paths
     assert "/api/gsp/quality/nonconforming" in paths
     assert "/api/gsp/procurement/returns" in paths
+    assert "/api/gsp/audit-verifications" in paths
     assert "/health" in paths
 
 
 def test_audit_and_outbox_accept_json_safe_regulated_snapshot():
     from app.core.database import SessionLocal
-    from app.gsp.audit import verify_audit_chain, write_audit_event
-    from app.gsp.models import GspAuditEvent, GspBusinessPartner, GspIntegrationMessage
+    from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event
+    from app.gsp.models import (
+        GspAuditEvent,
+        GspAuditVerification,
+        GspBusinessPartner,
+        GspIntegrationMessage,
+    )
     from app.gsp.outbox import enqueue_integration_message
     from app.gsp.router import _snapshot
     from app.legacy import User, UserRole, get_password_hash
@@ -79,6 +89,17 @@ def test_audit_and_outbox_accept_json_safe_regulated_snapshot():
         db.commit()
         assert db.query(GspAuditEvent).count() == audit_count_before + 1
         assert db.query(GspIntegrationMessage).count() == outbox_count_before + 1
+        assert verify_audit_chain(db) == (True, None)
+        verification = record_audit_verification(
+            db,
+            actor_user_id=user.id,
+            trigger_source="SCHEDULED",
+            evidence_ref="test://audit-verification/run-1",
+            reason="计划任务校验审计链",
+        )
+        db.commit()
+        assert verification.valid is True
+        assert db.query(GspAuditVerification).filter_by(id=verification.id).one()
         assert verify_audit_chain(db) == (True, None)
     finally:
         db.close()

@@ -12,23 +12,29 @@ from app.gsp.models import (
     GspBusinessPartner,
     GspDrugBatch,
     GspDrugProfile,
+    GspPartnerDocument,
 )
 from app.gsp.procurement_receiving.models import GspPurchaseOrderItem, GspReceiptItem
 from app.gsp.procurement_receiving.schemas import (
+    ControlledPrintCreate,
     PurchaseOrderCreate,
     PurchaseOrderLineCreate,
     ReceiptCreate,
     ReceiptInspection,
     ReceiptLineCreate,
+    ReceiptSampling,
 )
 from app.gsp.procurement_receiving.service import (
     approve_purchase_order,
     create_purchase_order,
     create_receipt,
+    create_receipt_print_record,
     inspect_receipt_item,
+    record_receipt_sampling,
     submit_purchase_order,
 )
 from app.legacy import Goods, Location, User, UserRole, Warehouse, ensure_not_gsp_managed_goods
+from tests.gsp_seed_helpers import add_verified_partner_evidence
 
 
 def _seed_qualified_purchase_data(db):
@@ -80,12 +86,20 @@ def _seed_qualified_purchase_data(db):
         storage_condition="NORMAL",
         traceability_required=True,
         registration_valid_to=date.today() + timedelta(days=365),
+        registration_document_ref="test://registration/purchase",
+        nmpa_verification_ref="test://nmpa/purchase",
         status="APPROVED",
         approved_by=users[1].id,
         created_by=users[1].id,
     )
     db.add_all([location, supplier, profile])
     db.flush()
+    add_verified_partner_evidence(
+        db,
+        partner=supplier,
+        verifier_id=users[1].id,
+        valid_to=date.today() + timedelta(days=365),
+    )
     return users, warehouse, location, goods, supplier
 
 
@@ -174,6 +188,20 @@ def test_controlled_purchase_receipt_and_inspection_flow():
         receipt_item = (
             db.query(GspReceiptItem).filter(GspReceiptItem.receipt_id == receipt.id).one()
         )
+        record_receipt_sampling(
+            db,
+            receipt_id=receipt.id,
+            item_id=receipt_item.id,
+            payload=ReceiptSampling(
+                sampling_plan_ref="SOP-SAMPLE-001",
+                sampling_method="按批随机抽样",
+                sample_quantity=Decimal("1.000"),
+                sampling_record_no=f"SAMPLE-{uuid4().hex[:10]}",
+                reason="按批准抽样方案完成抽样",
+            ),
+            actor_id=inspector.id,
+            source_ip="127.0.0.1",
+        )
         inspection = ReceiptInspection(
             accepted_quantity=Decimal("12.000"),
             rejected_quantity=Decimal("0"),
@@ -200,11 +228,39 @@ def test_controlled_purchase_receipt_and_inspection_flow():
                 source_ip="127.0.0.1",
             )
         supplier.license_valid_to = date.today() + timedelta(days=365)
+        partner_document = (
+            db.query(GspPartnerDocument)
+            .filter(GspPartnerDocument.partner_id == supplier.id)
+            .first()
+        )
+        partner_document.valid_to = date.today() - timedelta(days=1)
+        with pytest.raises(WorkflowError, match="不满足 GSP"):
+            inspect_receipt_item(
+                db,
+                receipt_id=receipt.id,
+                item_id=receipt_item.id,
+                payload=inspection,
+                actor_id=inspector.id,
+                source_ip="127.0.0.1",
+            )
+        partner_document.valid_to = date.today() + timedelta(days=365)
         inspect_receipt_item(
             db,
             receipt_id=receipt.id,
             item_id=receipt_item.id,
             payload=inspection,
+            actor_id=inspector.id,
+            source_ip="127.0.0.1",
+        )
+        print_record = create_receipt_print_record(
+            db,
+            receipt_id=receipt.id,
+            payload=ControlledPrintCreate(
+                template_version="RCV-1.0",
+                copy_no=f"COPY-{uuid4().hex[:10]}",
+                purpose="质量验收归档",
+                reason="打印受控验收记录归档副本",
+            ),
             actor_id=inspector.id,
             source_ip="127.0.0.1",
         )
@@ -221,19 +277,34 @@ def test_controlled_purchase_receipt_and_inspection_flow():
         assert batch.status == "RELEASED"
         assert stock.quantity == Decimal("12.000")
         assert stock.stock_status == "AVAILABLE"
+        assert print_record.document_type == "RECEIPT_INSPECTION"
     finally:
         db.close()
 
 
 def test_gsp_managed_product_cannot_use_legacy_stock_mutation():
     import main  # noqa: F401
+    from app.legacy import Stock, gsp_managed_goods_query
 
     db = SessionLocal()
     try:
-        _, _, _, goods, _ = _seed_qualified_purchase_data(db)
+        _, warehouse, location, goods, _ = _seed_qualified_purchase_data(db)
+        db.add(
+            Stock(
+                warehouse_id=warehouse.id,
+                goods_id=goods.id,
+                location_id=location.id,
+                quantity=99,
+            )
+        )
+        db.flush()
         with pytest.raises(HTTPException, match="旧版无批号") as error:
             ensure_not_gsp_managed_goods(db, [goods.id])
         assert error.value.status_code == 409
+        visible_legacy_stock = db.query(Stock).filter(
+            Stock.goods_id.notin_(gsp_managed_goods_query(db))
+        )
+        assert visible_legacy_stock.count() == 0
     finally:
         db.rollback()
         db.close()

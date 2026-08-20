@@ -17,7 +17,8 @@ from app.gsp.models import (
     GspQualityHold,
 )
 from app.gsp.outbox import enqueue_integration_message
-from app.gsp.rules import evaluate_batch, evaluate_partner, evaluate_product
+from app.gsp.qualification import evaluate_partner_evidence
+from app.gsp.rules import evaluate_batch, evaluate_product
 from app.gsp.sales_shipping.models import (
     GspSalesOrder,
     GspSalesOrderItem,
@@ -79,11 +80,7 @@ def _qualified_customer_and_products(
     )
     if not customer or customer.partner_type not in {"CUSTOMER", "BOTH"}:
         raise WorkflowError(409, "销售订单必须关联已建档的购货方")
-    customer_result = evaluate_partner(
-        status=customer.status,
-        license_valid_to=customer.license_valid_to,
-        quality_agreement_valid_to=customer.quality_agreement_valid_to,
-    )
+    customer_result = evaluate_partner_evidence(db, customer)
     profiles = {
         profile.goods_id: profile
         for profile in db.query(GspDrugProfile)
@@ -106,6 +103,8 @@ def _qualified_customer_and_products(
                 evaluate_product(
                     status=profile.status,
                     registration_valid_to=profile.registration_valid_to,
+                    registration_document_ref=profile.registration_document_ref,
+                    nmpa_verification_ref=profile.nmpa_verification_ref,
                 )
             )
         )
@@ -376,6 +375,12 @@ def mark_sales_order_picked(
     allocations = _allocations(db, order.id)
     if not allocations:
         raise WorkflowError(409, "销售订单没有批次分配记录")
+    _validate_allocations(
+        db,
+        order=order,
+        lock_stock=False,
+        expected_status="ALLOCATED",
+    )
     before = sales_order_payload(db, order)
     picked_at = utc_now()
     for allocation in allocations:
@@ -412,6 +417,12 @@ def prepare_shipment(
         raise WorkflowError(404, "销售订单不存在")
     if order.status != "PICKED":
         raise WorkflowError(409, "只有完成拣货的销售订单可以准备发运")
+    _validate_allocations(
+        db,
+        order=order,
+        lock_stock=False,
+        expected_status="PICKED",
+    )
     if payload.transport_mode not in {"NORMAL", "COLD", "FROZEN"}:
         raise WorkflowError(422, "transport_mode 只能是 NORMAL、COLD 或 FROZEN")
     _, profiles = _revalidate_order(db, order)

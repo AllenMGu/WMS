@@ -9,19 +9,24 @@ from app.gsp.dependencies import require_gsp_roles
 from app.gsp.errors import WorkflowError
 from app.gsp.procurement_receiving.models import GspPurchaseOrder, GspReceipt
 from app.gsp.procurement_receiving.schemas import (
+    ControlledPrintCreate,
+    ControlledPrintResponse,
     PurchaseOrderCreate,
     PurchaseOrderResponse,
     ReceiptCreate,
     ReceiptInspection,
     ReceiptResponse,
+    ReceiptSampling,
 )
 from app.gsp.procurement_receiving.service import (
     approve_purchase_order,
     create_purchase_order,
     create_receipt,
+    create_receipt_print_record,
     inspect_receipt_item,
     order_payload,
     receipt_payload,
+    record_receipt_sampling,
     submit_purchase_order,
 )
 from app.gsp.schemas import ChangeReason
@@ -185,5 +190,58 @@ async def inspect_item(
         )
         db.commit()
         return receipt_payload(db, receipt)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post(
+    "/receiving/receipts/{receipt_id}/items/{item_id}/sample",
+    response_model=ReceiptResponse,
+)
+async def sample_item(
+    receipt_id: int,
+    item_id: int,
+    payload: ReceiptSampling,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles("INSPECTOR", *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        receipt = record_receipt_sampling(
+            db,
+            receipt_id=receipt_id,
+            item_id=item_id,
+            payload=payload,
+            actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return receipt_payload(db, receipt)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post(
+    "/receiving/receipts/{receipt_id}/print-records",
+    response_model=ControlledPrintResponse,
+    status_code=201,
+)
+async def record_controlled_print(
+    receipt_id: int,
+    payload: ControlledPrintCreate,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles("INSPECTOR", *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        record = create_receipt_print_record(
+            db,
+            receipt_id=receipt_id,
+            payload=payload,
+            actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return record
     except (WorkflowError, IntegrityError) as error:
         _rollback_and_raise(db, error)

@@ -18,18 +18,22 @@ from app.gsp.models import (
 )
 from app.gsp.outbox import enqueue_integration_message
 from app.gsp.procurement_receiving.models import (
+    GspControlledPrintRecord,
     GspPurchaseOrder,
     GspPurchaseOrderItem,
     GspReceipt,
     GspReceiptItem,
 )
 from app.gsp.procurement_receiving.schemas import (
+    ControlledPrintCreate,
     PurchaseOrderCreate,
     ReceiptCreate,
     ReceiptInspection,
+    ReceiptSampling,
 )
+from app.gsp.qualification import evaluate_partner_evidence
 from app.gsp.quality_disposition.service import register_rejected_material
-from app.gsp.rules import evaluate_partner, evaluate_product
+from app.gsp.rules import evaluate_product
 from app.gsp.snapshots import model_snapshot
 from app.legacy import Location, Warehouse
 
@@ -82,11 +86,7 @@ def _qualified_master_data(
     if not supplier or supplier.partner_type not in {"SUPPLIER", "BOTH"}:
         raise WorkflowError(409, "采购订单必须关联已建档的供货方")
 
-    supplier_result = evaluate_partner(
-        status=supplier.status,
-        license_valid_to=supplier.license_valid_to,
-        quality_agreement_valid_to=supplier.quality_agreement_valid_to,
-    )
+    supplier_result = evaluate_partner_evidence(db, supplier)
     profiles = {
         profile.goods_id: profile
         for profile in db.query(GspDrugProfile)
@@ -107,6 +107,8 @@ def _qualified_master_data(
         result = evaluate_product(
             status=profile.status,
             registration_valid_to=profile.registration_valid_to,
+            registration_document_ref=profile.registration_document_ref,
+            nmpa_verification_ref=profile.nmpa_verification_ref,
         )
         findings.extend(_finding_dicts(result))
     if findings:
@@ -418,6 +420,14 @@ def inspect_receipt_item(
         raise WorkflowError(404, "收货明细不存在")
     if item.inspection_status != "PENDING":
         raise WorkflowError(409, "该收货明细已经完成验收")
+    if (
+        not item.sampling_plan_ref
+        or not item.sampling_method
+        or not item.sampling_record_no
+        or item.sample_quantity is None
+        or item.sampled_by is None
+    ):
+        raise WorkflowError(409, "必须先按批准的抽样方案完成抽样记录")
     if payload.accepted_quantity + payload.rejected_quantity != item.received_quantity:
         raise WorkflowError(422, "合格数量与拒收数量之和必须等于收货数量")
 
@@ -583,3 +593,85 @@ def inspect_receipt_item(
         source_ip=source_ip,
     )
     return receipt
+
+
+def record_receipt_sampling(
+    db: Session,
+    *,
+    receipt_id: int,
+    item_id: int,
+    payload: ReceiptSampling,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspReceipt:
+    receipt = db.query(GspReceipt).filter(GspReceipt.id == receipt_id).first()
+    if receipt is None:
+        raise WorkflowError(404, "收货单不存在")
+    if receipt.received_by == actor_id:
+        raise WorkflowError(409, "收货人与抽样人员必须分离")
+    item = (
+        db.query(GspReceiptItem)
+        .filter(GspReceiptItem.id == item_id, GspReceiptItem.receipt_id == receipt.id)
+        .with_for_update()
+        .first()
+    )
+    if item is None:
+        raise WorkflowError(404, "收货明细不存在")
+    if item.inspection_status != "PENDING":
+        raise WorkflowError(409, "已完成验收的明细不能补录抽样")
+    if payload.sample_quantity > item.received_quantity:
+        raise WorkflowError(422, "抽样数量不能超过收货数量")
+    before = model_snapshot(item)
+    item.sampling_plan_ref = payload.sampling_plan_ref
+    item.sampling_method = payload.sampling_method
+    item.sample_quantity = payload.sample_quantity
+    item.sampling_record_no = payload.sampling_record_no
+    item.sampled_by = actor_id
+    item.sampled_at = utc_now()
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="RECEIPT_ITEM_SAMPLED",
+        entity_type="GspReceiptItem",
+        entity_id=str(item.id),
+        reason=payload.reason,
+        before_data=before,
+        after_data=model_snapshot(item),
+        source_ip=source_ip,
+    )
+    return receipt
+
+
+def create_receipt_print_record(
+    db: Session,
+    *,
+    receipt_id: int,
+    payload: ControlledPrintCreate,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspControlledPrintRecord:
+    receipt = db.query(GspReceipt).filter(GspReceipt.id == receipt_id).first()
+    if receipt is None:
+        raise WorkflowError(404, "收货单不存在")
+    record = GspControlledPrintRecord(
+        document_type="RECEIPT_INSPECTION",
+        entity_id=receipt.id,
+        template_version=payload.template_version,
+        copy_no=payload.copy_no,
+        purpose=payload.purpose,
+        printed_by=actor_id,
+    )
+    db.add(record)
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="CONTROLLED_COPY_PRINTED",
+        entity_type="GspControlledPrintRecord",
+        entity_id=str(record.id),
+        reason=payload.reason,
+        after_data=model_snapshot(record),
+        source_ip=source_ip,
+    )
+    return record
