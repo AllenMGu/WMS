@@ -106,6 +106,12 @@ class GspReceiptItem(Base):
     transport_temperature_min = Column(Numeric(8, 2), nullable=True)
     transport_temperature_max = Column(Numeric(8, 2), nullable=True)
     temperature_record_ref = Column(String(500), nullable=True)
+    sampling_plan_ref = Column(String(500), nullable=True)
+    sampling_method = Column(String(100), nullable=True)
+    sample_quantity = Column(Numeric(18, 3), nullable=True)
+    sampling_record_no = Column(String(100), nullable=True, unique=True, index=True)
+    sampled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    sampled_at = Column(DateTime, nullable=True)
     inspected_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     inspected_at = Column(DateTime, nullable=True)
     __table_args__ = (
@@ -122,4 +128,21 @@ class GspReceiptItem(Base):
             "accepted_quantity + rejected_quantity <= received_quantity",
             name="ck_gsp_receipt_inspected_not_over",
         ),
+        CheckConstraint(
+            "sample_quantity IS NULL OR sample_quantity > 0",
+            name="ck_gsp_receipt_sample_positive",
+        ),
     )
+
+
+class GspControlledPrintRecord(Base):
+    __tablename__ = "gsp_controlled_print_records"
+
+    id = Column(Integer, primary_key=True)
+    document_type = Column(String(50), nullable=False, index=True)
+    entity_id = Column(Integer, nullable=False, index=True)
+    template_version = Column(String(50), nullable=False)
+    copy_no = Column(String(100), nullable=False, unique=True, index=True)
+    purpose = Column(String(500), nullable=False)
+    printed_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    printed_at = Column(DateTime, nullable=False, default=utc_now)

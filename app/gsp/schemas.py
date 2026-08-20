@@ -45,6 +45,8 @@ class DrugProfileUpsert(ChangeReason):
     is_special_controlled: bool = False
     traceability_required: bool = True
     registration_valid_to: Optional[date] = None
+    registration_document_ref: str = Field(..., min_length=3, max_length=500)
+    nmpa_verification_ref: str = Field(..., min_length=3, max_length=500)
 
 
 class DrugProfileResponse(OrmModel):
@@ -57,6 +59,10 @@ class DrugProfileResponse(OrmModel):
     storage_condition: str
     status: str
     registration_valid_to: Optional[date]
+    registration_document_ref: Optional[str]
+    nmpa_verification_ref: Optional[str]
+    nmpa_verified_by: Optional[int]
+    nmpa_verified_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
 
@@ -86,6 +92,31 @@ class PartnerResponse(OrmModel):
     suspension_reason: Optional[str]
     created_at: datetime
     updated_at: datetime
+
+
+class PartnerDocumentCreate(ChangeReason):
+    document_type: str = Field(..., min_length=3, max_length=50)
+    document_no: str = Field(..., min_length=1, max_length=100)
+    valid_from: Optional[date] = None
+    valid_to: date
+    file_ref: str = Field(..., min_length=3, max_length=500)
+    person_name: Optional[str] = Field(None, min_length=2, max_length=200)
+    person_role: Optional[str] = Field(None, min_length=2, max_length=50)
+
+
+class PartnerDocumentResponse(OrmModel):
+    id: int
+    partner_id: int
+    document_type: str
+    document_no: Optional[str]
+    valid_from: Optional[date]
+    valid_to: date
+    file_ref: Optional[str]
+    person_name: Optional[str]
+    person_role: Optional[str]
+    verified_by: Optional[int]
+    verified_at: Optional[datetime]
+    status: str
 
 
 class BatchCreate(ChangeReason):
@@ -167,3 +198,19 @@ class AuditEventResponse(OrmModel):
     previous_hash: Optional[str]
     event_hash: str
     occurred_at: datetime
+
+
+class AuditVerificationCreate(ChangeReason):
+    trigger_source: str = Field("MANUAL", pattern="^(MANUAL|SCHEDULED)$")
+    evidence_ref: str = Field(..., min_length=3, max_length=500)
+
+
+class AuditVerificationResponse(OrmModel):
+    id: int
+    requested_by: int
+    trigger_source: str
+    evidence_ref: str
+    checked_event_count: int
+    valid: bool
+    broken_event_id: Optional[int]
+    verified_at: datetime

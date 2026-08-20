@@ -72,6 +72,30 @@ class ReceiptInspection(ChangeReason):
     conclusion: str = Field(..., min_length=2, max_length=500)
 
 
+class ReceiptSampling(ChangeReason):
+    sampling_plan_ref: str = Field(..., min_length=3, max_length=500)
+    sampling_method: str = Field(..., min_length=2, max_length=100)
+    sample_quantity: Decimal = Field(..., gt=0, decimal_places=3)
+    sampling_record_no: str = Field(..., min_length=3, max_length=100)
+
+
+class ControlledPrintCreate(ChangeReason):
+    template_version: str = Field(..., min_length=1, max_length=50)
+    copy_no: str = Field(..., min_length=3, max_length=100)
+    purpose: str = Field(..., min_length=3, max_length=500)
+
+
+class ControlledPrintResponse(OrmModel):
+    id: int
+    document_type: str
+    entity_id: int
+    template_version: str
+    copy_no: str
+    purpose: str
+    printed_by: int
+    printed_at: datetime
+
+
 class ReceiptItemResponse(OrmModel):
     id: int
     purchase_order_item_id: int
@@ -84,6 +108,12 @@ class ReceiptItemResponse(OrmModel):
     inspection_conclusion: str | None
     inspected_by: int | None
     inspected_at: datetime | None
+    sampling_plan_ref: str | None
+    sampling_method: str | None
+    sample_quantity: Decimal | None
+    sampling_record_no: str | None
+    sampled_by: int | None
+    sampled_at: datetime | None
 
 
 class ReceiptResponse(OrmModel):

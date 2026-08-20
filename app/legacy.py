@@ -929,14 +929,23 @@ async def get_ldap_config(
 @router.put("/ldap/config", summary="更新LDAP配置")
 async def update_ldap_config(
     config_data: dict,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="无权限操作")
+    reason = str(config_data.get("reason", "")).strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=400, detail="配置变更必须填写原因")
 
     # 允许更新的配置项
     allowed_keys = ["ldap_server", "ldap_base_dn", "ldap_admin_dn", "ldap_admin_password", "ldap_user_search_filter"]
+    before = {
+        key: ("********" if key == "ldap_admin_password" and value.value else value.value)
+        for key in allowed_keys
+        if (value := db.query(Config).filter(Config.key == key).first()) is not None
+    }
 
     for key, value in config_data.items():
         if key in allowed_keys:
@@ -955,6 +964,23 @@ async def update_ldap_config(
                 )
                 db.add(db_config)
 
+    db.flush()
+    after = {
+        key: ("********" if key == "ldap_admin_password" and value.value else value.value)
+        for key in allowed_keys
+        if (value := db.query(Config).filter(Config.key == key).first()) is not None
+    }
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="LDAP_CONFIG_UPDATED",
+        entity_type="Config",
+        entity_id="LDAP",
+        reason=reason,
+        before_data=before,
+        after_data=after,
+        request=request,
+    )
     db.commit()
 
     return {"message": "LDAP配置更新成功"}
@@ -1704,9 +1730,56 @@ def ensure_not_gsp_managed_goods(db: Session, goods_ids) -> None:
         )
 
 
+def gsp_managed_goods_query(db: Session):
+    """Return the controlled goods ID query used to close legacy read/report paths."""
+    from app.gsp.models import GspDrugProfile
+
+    return db.query(GspDrugProfile.goods_id)
+
+
+def legacy_order_contains_gsp_goods(db: Session, item_model, header_id: int) -> bool:
+    return (
+        db.query(item_model.id)
+        .filter(
+            item_model.header_id == header_id,
+            item_model.goods_id.in_(gsp_managed_goods_query(db)),
+        )
+        .first()
+        is not None
+    )
+
+
+def write_legacy_audit(
+    db: Session,
+    *,
+    actor_id: int,
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    reason: str,
+    before_data: dict | None,
+    after_data: dict | None,
+    request: Request,
+) -> None:
+    from app.gsp.audit import write_audit_event
+
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        reason=reason,
+        before_data=before_data,
+        after_data=after_data,
+        source_ip=request.client.host if request.client else None,
+    )
+
+
 @router.post("/inventory/scan", summary="扫码出入库")
 async def scan_inventory(
     inventory: InventoryCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1736,6 +1809,7 @@ async def scan_inventory(
         Stock.goods_id == goods.id,
         Stock.location_id == location.id
     ).first()
+    quantity_before = stock.quantity if stock else 0
 
     if inventory.type == InventoryType.IN:
         # 入库
@@ -1828,6 +1902,18 @@ async def scan_inventory(
         remark=inventory.remark
     )
     db.add(record)
+    db.flush()
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="LEGACY_INVENTORY_SCANNED",
+        entity_type="InventoryRecord",
+        entity_id=str(record.id),
+        reason=inventory.remark or "旧版扫码库存操作",
+        before_data={"quantity": quantity_before},
+        after_data={"quantity": stock.quantity, "type": inventory.type.value},
+        request=request,
+    )
     db.commit()
 
     return {
@@ -1849,6 +1935,7 @@ async def get_stock(
         .join(Goods, Stock.goods_id == Goods.id)
         .join(Location, Stock.location_id == Location.id)
     )
+    query = query.filter(Stock.goods_id.notin_(gsp_managed_goods_query(db)))
 
     if current_user.role != UserRole.ADMIN:
         # 获取用户有权限的仓库
@@ -1889,6 +1976,7 @@ async def get_stock(
 @router.post("/check/scan", summary="扫码盘点")
 async def scan_check(
     check: CheckCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1898,6 +1986,7 @@ async def scan_check(
 
     if not goods or not location:
         raise HTTPException(status_code=404, detail="货物或库位不存在")
+    ensure_not_gsp_managed_goods(db, [goods.id])
 
     # 权限校验
     user_warehouse = db.query(UserWarehouse).filter(
@@ -1927,6 +2016,18 @@ async def scan_check(
         operator_id=current_user.id
     )
     db.add(record)
+    db.flush()
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="LEGACY_STOCK_CHECK_RECORDED",
+        entity_type="CheckRecord",
+        entity_id=str(record.id),
+        reason="旧版库存盘点记录",
+        before_data={"actual_quantity": actual_quantity},
+        after_data={"check_quantity": check.check_quantity},
+        request=request,
+    )
     db.commit()
 
     return {
@@ -1957,6 +2058,7 @@ async def get_inventory_logs(
     ).join(
         User, InventoryRecord.operator_id == User.id
     )
+    query = query.filter(InventoryRecord.goods_id.notin_(gsp_managed_goods_query(db)))
 
     if current_user.role != UserRole.ADMIN:
         user_warehouse_ids = [
@@ -2024,6 +2126,7 @@ async def get_check_records(
     ).join(
         User, CheckRecord.operator_id == User.id
     )
+    query = query.filter(CheckRecord.goods_id.notin_(gsp_managed_goods_query(db)))
 
     if current_user.role != UserRole.ADMIN:
         user_warehouse_ids = [
@@ -2086,6 +2189,7 @@ async def get_check_stats(
         CheckRecord.check_time >= start_datetime,
         CheckRecord.check_time < end_datetime
     )
+    query = query.filter(CheckRecord.goods_id.notin_(gsp_managed_goods_query(db)))
 
     if current_user.role != UserRole.ADMIN:
         user_warehouse_ids = [
@@ -2137,6 +2241,7 @@ async def get_check_diffs(
     ).join(
         User, CheckRecord.operator_id == User.id
     )
+    query = query.filter(CheckRecord.goods_id.notin_(gsp_managed_goods_query(db)))
 
     if current_user.role != UserRole.ADMIN:
         user_warehouse_ids = [
@@ -2303,6 +2408,10 @@ async def get_check_orders(
     db: Session = Depends(get_db)
 ):
     query = db.query(CheckOrderHeader).join(Warehouse, CheckOrderHeader.warehouse_id == Warehouse.id)
+    controlled_order_ids = db.query(CheckOrderItem.header_id).filter(
+        CheckOrderItem.goods_id.in_(gsp_managed_goods_query(db))
+    )
+    query = query.filter(CheckOrderHeader.id.notin_(controlled_order_ids))
 
     # 权限校验
     if current_user.role != UserRole.ADMIN:
@@ -2384,6 +2493,7 @@ async def get_check_order_detail(
 
     # 查询明细
     items = db.query(CheckOrderItem).filter(CheckOrderItem.header_id == order_id).all()
+    ensure_not_gsp_managed_goods(db, [item.goods_id for item in items])
 
     # 构建响应
     header_response = CheckOrderHeaderResponse(
@@ -2456,6 +2566,7 @@ async def add_check_order_item(
 
     if not goods or not location:
         raise HTTPException(status_code=404, detail="货物或库位不存在")
+    ensure_not_gsp_managed_goods(db, [goods.id])
 
     # 检查货物和库位是否属于同一仓库
     if goods.warehouse_id != order.warehouse_id or location.warehouse_id != order.warehouse_id:
@@ -2566,6 +2677,7 @@ async def complete_check_order(
 
     # 统计信息
     items = db.query(CheckOrderItem).filter(CheckOrderItem.header_id == order_id).all()
+    ensure_not_gsp_managed_goods(db, [item.goods_id for item in items])
     total_items = len(items)
     matched_items = sum(1 for item in items if abs(item.diff_quantity) < 0.0001)
     diff_items = total_items - matched_items
@@ -2603,6 +2715,7 @@ async def export_check_order(
 
     # 查询明细
     items = db.query(CheckOrderItem).filter(CheckOrderItem.header_id == order_id).all()
+    ensure_not_gsp_managed_goods(db, [item.goods_id for item in items])
 
     # 准备导出数据
     data = []
@@ -2800,6 +2913,7 @@ async def add_inbound_order_item(
 @router.post("/inbound-orders/{order_id}/submit", summary="提交入库单")
 async def submit_inbound_order(
     order_id: int,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -2868,6 +2982,18 @@ async def submit_inbound_order(
         order.submit_time = datetime.now()
         order.complete_time = datetime.now()
 
+        write_legacy_audit(
+            db,
+            actor_id=current_user.id,
+            action="LEGACY_INBOUND_ORDER_COMPLETED",
+            entity_type="InboundOrderHeader",
+            entity_id=str(order.id),
+            reason=order.remark or "旧版入库单提交",
+            before_data={"status": "DRAFT"},
+            after_data={"status": order.status, "order_no": order.order_no},
+            request=request,
+        )
+
         db.commit()
 
         return {"message": "入库单提交成功", "order_no": order.order_no}
@@ -2893,6 +3019,10 @@ async def get_inbound_orders(
         ).join(
             User, InboundOrderHeader.operator_id == User.id
         )
+        controlled_order_ids = db.query(InboundOrderItem.header_id).filter(
+            InboundOrderItem.goods_id.in_(gsp_managed_goods_query(db))
+        )
+        query = query.filter(InboundOrderHeader.id.notin_(controlled_order_ids))
 
         # 权限过滤
         if current_user.role != UserRole.ADMIN:
@@ -2970,6 +3100,8 @@ async def get_inbound_order_detail(
 
         if not order:
             raise HTTPException(status_code=404, detail="入库单不存在")
+        if legacy_order_contains_gsp_goods(db, InboundOrderItem, order.id):
+            raise HTTPException(409, "GSP药品历史入库单须通过批号追溯接口查询")
 
         # 获取明细
         items = []
@@ -3442,6 +3574,7 @@ async def add_outbound_order_item(
 @router.post("/outbound-orders/{order_id}/submit", summary="提交出库单")
 async def submit_outbound_order(
     order_id: int,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -3509,6 +3642,18 @@ async def submit_outbound_order(
         order.submit_time = datetime.now()
         order.complete_time = datetime.now()
 
+        write_legacy_audit(
+            db,
+            actor_id=current_user.id,
+            action="LEGACY_OUTBOUND_ORDER_COMPLETED",
+            entity_type="OutboundOrderHeader",
+            entity_id=str(order.id),
+            reason=order.remark or "旧版出库单提交",
+            before_data={"status": "DRAFT"},
+            after_data={"status": order.status, "order_no": order.order_no},
+            request=request,
+        )
+
         db.commit()
 
         return {"message": "出库单提交成功", "order_no": order.order_no}
@@ -3534,6 +3679,10 @@ async def get_outbound_orders(
         ).join(
             User, OutboundOrderHeader.operator_id == User.id
         )
+        controlled_order_ids = db.query(OutboundOrderItem.header_id).filter(
+            OutboundOrderItem.goods_id.in_(gsp_managed_goods_query(db))
+        )
+        query = query.filter(OutboundOrderHeader.id.notin_(controlled_order_ids))
 
         if current_user.role != UserRole.ADMIN:
             # 获取用户有权限的仓库
@@ -3608,6 +3757,8 @@ async def get_outbound_order_detail(
 
         if not order:
             raise HTTPException(status_code=404, detail="出库单不存在")
+        if legacy_order_contains_gsp_goods(db, OutboundOrderItem, order.id):
+            raise HTTPException(409, "GSP药品历史出库单须通过批号追溯接口查询")
 
         items = []
         for item in order.items:
