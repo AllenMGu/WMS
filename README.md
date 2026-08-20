@@ -1,89 +1,85 @@
-# 多仓库管理系统
+# WMS / 药品 GSP 质量管理系统
 
-## 项目简介
+本项目正在从通用多仓库 WMS 演进为“WMS 业务域 + GSP 质量域 + 外部集成域”的模块化系统。
+旧版前端、小程序和 `/api` WMS 接口暂时保持兼容；新增受控功能位于 `/api/gsp`。
 
-多仓库管理系统是一个专业的库存管理解决方案，支持多仓库、多用户、货物、库位、库存、出入库、盘点等全流程管理。
+> 重要：软件功能不能单独证明企业符合 GSP。正式投用还需要经质量部门批准的流程与 SOP、
+> 权限矩阵、主数据、培训、风险评估、计算机化系统验证、备份恢复演练和持续变更控制。
 
-### 主要功能
+## 当前已完成
 
-- **仪表盘**：展示库存概况、出入库统计、库存预警
-- **仓库管理**：多仓库创建与配置
-- **库位管理**：库位创建、编辑、禁用
-- **货物管理**：货物信息维护
-- **库存查询**：多维度库存查询
-- **扫码出入库**：快速扫码出入库操作
-- **入库单管理**：入库单创建、提交、查询
-- **出库单管理**：出库单创建、提交、查询
-- **盘点管理**：库存盘点记录
-- **用户管理**：用户创建、权限分配
+- 将 3935 行单文件入口迁入 `app/legacy.py`，新增独立的应用装配、配置、数据库和 GSP 包。
+- JWT、数据库、LDAP 和跨域配置改为环境变量；生产环境拒绝弱密钥。
+- LDAP 用户不再自动获得全部仓库权限，也不保存其真实 LDAP 口令派生值。
+- 删除用户改为停用账号，保留历史操作人引用。
+- 建立供货方/购货方资质、药品质量主数据、药品批次、批号库存、质量锁定、岗位授权模型。
+- 建立强制填写变更原因的哈希链审计事件。
+- 建立批号、有效期、追溯信息、冷链温度记录和验收放行的首批规则。
+- 建立九州通等外部系统可共用的事务出站箱，避免接口直接修改库存核心表。
+- 增加合规概览、批号追溯、质量锁定和审计查询 API，并为纯规则提供单元测试。
 
-## 技术栈
+尚未完成的关键项请看 [GSP 差距矩阵](docs/GSP_GAP_ANALYSIS.md)。
 
-- 后端：FastAPI + SQLAlchemy + PostgreSQL
-- HTML5/CSS3/JavaScript
-- Tailwind CSS v3
-- Font Awesome
-- Chart.js
+## 目录
 
-## 项目结构
-
-```
+```text
 WMS/
-├── main.py             # 后端入口（FastAPI）
-├── frontend/           # 前端静态页面
-│   ├── index.html      # 登录页面
-│   ├── dashboard.html  # 仪表盘
-│   ├── warehouse.html  # 仓库管理
-│   ├── location.html   # 库位管理
-│   ├── goods.html      # 货物管理
-│   ├── stock.html      # 库存查询
-│   ├── scan.html       # 扫码出入库
-│   ├── inbound.html    # 入库单管理
-│   ├── outbound.html   # 出库单管理
-│   ├── check.html      # 盘点管理
-│   ├── user.html       # 用户管理
-│   └── assets/         # 资源文件（JS/CSS）
-└── README.md           # 项目说明
+├── app/
+│   ├── application.py       # 应用装配
+│   ├── legacy.py            # 兼容期通用 WMS（后续继续按域拆分）
+│   ├── core/                # 配置、数据库等共享基础设施
+│   └── gsp/                 # 独立 GSP 质量域
+│       ├── models.py        # 质量主数据、批次、锁定、审计、集成出站箱
+│       ├── rules.py         # 可评审、可验证的纯质量规则
+│       ├── router.py        # /api/gsp 接口
+│       └── schemas.py       # API 数据契约
+├── frontend/                # 兼容期 Web 前端
+├── wechat-miniprogram/      # 兼容期微信小程序
+├── tests/                   # 自动化测试
+├── docs/                    # 架构、差距、验证和九州通对接说明
+├── scripts/                 # 运维脚本
+└── main.py                  # uvicorn 兼容入口
 ```
 
-## 如何运行
+## 本地运行
 
-### 1. 启动后端
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
+cp .env.example .env
+set -a && source .env && set +a
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
 
-1. 准备 PostgreSQL 数据库，并修改 `main.py` 中的 `DATABASE_URL` 为本地配置。
-2. 安装依赖并运行服务（示例）：
-   ```bash
-   pip install fastapi uvicorn sqlalchemy psycopg2-binary passlib[bcrypt] python-jose
-   uvicorn main:app --host 0.0.0.0 --port 8000
-   ```
+开发时可临时使用 SQLite：
 
-### 2. 使用前端
+```bash
+export DATABASE_URL='sqlite+pysqlite:///./wms-dev.db'
+uvicorn main:app --reload
+```
 
-1. 确保后端服务运行在 `http://localhost:8000`
-2. 打开 `frontend/index.html` 即可访问系统
-3. 使用后端已创建的用户进行登录
+生产环境必须设置 `APP_ENV=production`、至少 32 字符随机 `SECRET_KEY`，并将
+`AUTO_CREATE_SCHEMA=false`；数据库结构变更应使用经过评审的迁移脚本。
 
-## 注意事项
+API 文档：`http://localhost:8000/docs`；健康检查：`GET /health`。
 
-1. 系统需要与后端 API 配合使用，确保 API 地址正确配置（默认 `http://localhost:8000`）。
-2. 部分功能需要管理员权限才能使用（如用户管理）。
-3. 建议使用现代浏览器（Chrome、Firefox、Edge 等）访问系统。
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/0e1ef5ed-5436-44ce-81d3-2135918ededb" />
+## 测试
 
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/7d197729-09d5-4875-bbd1-faaa65e2583c" />
+```bash
+pytest
+python -m compileall -q app main.py tests
+```
 
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/2635a119-277f-4673-9936-17d75ef557bc" />
+## 设计与实施资料
 
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/89ae0998-8b9f-4f81-a11a-006a9ea07dab" />
+- [目标架构](docs/ARCHITECTURE.md)
+- [GSP 差距矩阵](docs/GSP_GAP_ANALYSIS.md)
+- [CSV / 验证计划](docs/VALIDATION_PLAN.md)
+- [九州通接口边界](docs/JZT_INTEGRATION.md)
 
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/44d89f5a-c62c-4a78-801a-e5f2b39e9341" />
+## 许可证与投用声明
 
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/6eedd286-55c4-4cd7-a0ae-cfd08155a723" />
-
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/ef27b20f-3e72-4776-96e3-881e7be9344f" />
-
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/800a0fdc-1ef3-4ab8-874a-fa5766c7f6e4" />
-
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/b5d2d2ba-3df5-4464-a975-b4919c69ddbe" />
-
-<img width="2550" height="1255" alt="image" src="https://github.com/user-attachments/assets/ca534d23-cf1e-4955-aa67-aa4d3eb70290" />
+正式用于药品经营或药品生产企业销售、储存、运输环节前，必须由企业质量部门根据实际经营范围、
+地方监管要求及批准的 URS 对本系统进行确认和验证。本仓库当前版本是可继续开发的 GSP 基础版本，
+不是“开箱即合规”的商业成品。

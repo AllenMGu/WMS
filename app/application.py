@@ -1,0 +1,28 @@
+"""Application composition root.
+
+Legacy WMS routes are preserved while the GSP bounded context evolves behind
+its own router and database tables.
+"""
+
+from app.core.config import settings
+from app.core.database import Base, engine
+from app.gsp import models as gsp_models  # noqa: F401 - registers tables
+from app.gsp.router import router as gsp_router
+from app.legacy import app
+
+app.title = "药品GSP仓储与质量管理系统 API"
+app.version = "0.2.0"
+app.description = (
+    "WMS兼容接口与独立GSP质量域。GSP接口默认位于 /api/gsp；对接九州通等外部平台时通过集成出站箱解耦。"
+)
+app.include_router(gsp_router, prefix="/api")
+
+if settings.auto_create_schema:
+    # Existing deployments keep their current start-up behavior.  Controlled
+    # environments should set AUTO_CREATE_SCHEMA=false and run reviewed migrations.
+    Base.metadata.create_all(bind=engine)
+
+
+@app.get("/health", tags=["系统"])
+async def health():
+    return {"status": "ok", "service": "wms-gsp", "version": app.version}
