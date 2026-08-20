@@ -21,6 +21,11 @@ from app.gsp.models import (
     GspRoleAssignment,
 )
 from app.gsp.outbox import enqueue_integration_message
+from app.gsp.quality_disposition.models import (
+    GspNonconformingRecord,
+    GspPurchaseReturn,
+    GspPurchaseReturnItem,
+)
 from app.gsp.returns_recalls.models import (
     GspRecall,
     GspRecallBatch,
@@ -111,9 +116,32 @@ async def compliance_summary(
         "pending_return_inspections": db.query(GspSalesReturnItem)
         .filter(GspSalesReturnItem.inspection_status == "PENDING")
         .count(),
+        "pending_nonconforming_dispositions": db.query(GspNonconformingRecord)
+        .filter(GspNonconformingRecord.status == "PENDING_APPROVAL")
+        .count(),
+        "approved_nonconforming_pending_execution": db.query(GspNonconformingRecord)
+        .filter(GspNonconformingRecord.status == "APPROVED")
+        .count(),
         "active_recalls": db.query(GspRecall).filter(GspRecall.status == "ACTIVE").count(),
         "pending_recall_notifications": db.query(GspRecallTarget)
         .filter(GspRecallTarget.notification_status == "PENDING")
+        .count(),
+        "overdue_recall_notifications": db.query(GspRecall)
+        .filter(
+            GspRecall.status == "ACTIVE",
+            GspRecall.notification_due_at < utc_now(),
+            GspRecall.id.in_(
+                db.query(GspRecallTarget.recall_id).filter(
+                    GspRecallTarget.notification_status == "PENDING"
+                )
+            ),
+        )
+        .count(),
+        "overdue_recall_progress_reports": db.query(GspRecall)
+        .filter(
+            GspRecall.status == "ACTIVE",
+            GspRecall.next_progress_report_due_at < utc_now(),
+        )
         .count(),
         "outstanding_recall_quantity": float(
             db.query(
@@ -620,6 +648,17 @@ async def release_quality_hold(
         )
         if active_recall:
             raise HTTPException(409, "召回执行期间不能解除对应批次的质量锁定")
+    if hold.reason_code == "NONCONFORMING":
+        active_disposition = (
+            db.query(GspNonconformingRecord)
+            .filter(
+                GspNonconformingRecord.quality_hold_id == hold.id,
+                GspNonconformingRecord.status.in_(["PENDING_APPROVAL", "APPROVED"]),
+            )
+            .count()
+        )
+        if active_disposition:
+            raise HTTPException(409, "不合格品尚未完成批准处置，不能解除对应质量锁定")
     if hold.initiated_by == current_user.id:
         raise HTTPException(409, "质量锁定发起人不能自行解除，需由另一名质量授权人员复核")
     before = _snapshot(hold)
@@ -678,9 +717,34 @@ async def trace_batch(
         recalls = (
             db.query(GspRecallBatch).filter(GspRecallBatch.batch_id == batch.id).all()
         )
+        nonconforming_records = (
+            db.query(GspNonconformingRecord)
+            .filter(GspNonconformingRecord.batch_id == batch.id)
+            .all()
+        )
+        nonconforming_ids = [item.id for item in nonconforming_records]
+        purchase_return_items = (
+            db.query(GspPurchaseReturnItem)
+            .filter(GspPurchaseReturnItem.nonconforming_record_id.in_(nonconforming_ids))
+            .all()
+            if nonconforming_ids
+            else []
+        )
+        purchase_return_ids = {
+            item.purchase_return_id for item in purchase_return_items
+        }
+        purchase_returns = (
+            db.query(GspPurchaseReturn)
+            .filter(GspPurchaseReturn.id.in_(purchase_return_ids))
+            .all()
+            if purchase_return_ids
+            else []
+        )
         hold_ids = [str(item.id) for item in quality_holds]
         return_item_ids = [str(item.id) for item in sales_returns]
         recall_ids = [str(item.recall_id) for item in recalls]
+        nonconforming_audit_ids = [str(item.id) for item in nonconforming_records]
+        purchase_return_audit_ids = [str(item.id) for item in purchase_returns]
         result.append(
             {
                 "batch": _snapshot(batch),
@@ -691,6 +755,12 @@ async def trace_batch(
                 "quality_holds": [_snapshot(item) for item in quality_holds],
                 "sales_returns": [_snapshot(item) for item in sales_returns],
                 "recalls": [_snapshot(item) for item in recalls],
+                "nonconforming_records": [
+                    _snapshot(item) for item in nonconforming_records
+                ],
+                "purchase_returns": [
+                    _snapshot(item) for item in purchase_returns
+                ],
                 "audit_events": [
                     _snapshot(item)
                     for item in db.query(GspAuditEvent)
@@ -711,6 +781,14 @@ async def trace_batch(
                             and_(
                                 GspAuditEvent.entity_type == "GspRecall",
                                 GspAuditEvent.entity_id.in_(recall_ids),
+                            ),
+                            and_(
+                                GspAuditEvent.entity_type == "GspNonconformingRecord",
+                                GspAuditEvent.entity_id.in_(nonconforming_audit_ids),
+                            ),
+                            and_(
+                                GspAuditEvent.entity_type == "GspPurchaseReturn",
+                                GspAuditEvent.entity_id.in_(purchase_return_audit_ids),
                             ),
                         )
                     )

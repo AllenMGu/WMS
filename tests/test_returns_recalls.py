@@ -14,6 +14,7 @@ from app.gsp.models import (
     GspIntegrationMessage,
     GspQualityHold,
 )
+from app.gsp.quality_disposition.models import GspNonconformingRecord
 from app.gsp.returns_recalls.models import (
     GspRecallBatch,
     GspRecallTarget,
@@ -32,6 +33,7 @@ from app.gsp.returns_recalls.service import (
     create_sales_return,
     inspect_sales_return_item,
     notify_recall_target,
+    record_recall_progress,
 )
 from app.gsp.sales_shipping.models import GspStockAllocation
 from app.gsp.sales_shipping.schemas import (
@@ -383,6 +385,20 @@ def test_recall_locks_batch_tracks_recovery_and_requires_notification():
         )
         assert recall_batch.target_shipped_quantity == Decimal("4.000")
         assert stock.stock_status == "HOLD"
+        assert recall.notification_due_at - recall.activated_at == timedelta(days=3)
+        assert recall.next_progress_report_due_at - recall.activated_at == timedelta(days=3)
+        record_recall_progress(
+            db,
+            recall_id=recall.id,
+            report_ref="RECALL-PROGRESS-001",
+            summary="已完成目标识别并开始通知购货方",
+            actor_id=creator.id,
+            reason="按二级召回频次登记进展",
+            source_ip="127.0.0.1",
+        )
+        assert recall.next_progress_report_due_at - recall.last_progress_reported_at == timedelta(
+            days=3
+        )
 
         sales_return = create_sales_return(
             db,
@@ -448,6 +464,16 @@ def test_recall_locks_batch_tracks_recovery_and_requires_notification():
             actor_id=creator.id,
             source_ip="127.0.0.1",
         )
+        nonconforming = (
+            db.query(GspNonconformingRecord)
+            .filter(
+                GspNonconformingRecord.source_entity_type == "GspSalesReturnItem",
+                GspNonconformingRecord.source_entity_id == return_item.id,
+            )
+            .one()
+        )
+        assert nonconforming.quantity == Decimal("1.000")
+        assert nonconforming.proposed_disposition == "QUARANTINE"
         with pytest.raises(WorkflowError, match="未登记召回通知"):
             close_recall(
                 db,
@@ -505,6 +531,11 @@ def test_recall_locks_batch_tracks_recovery_and_requires_notification():
             .filter(GspIntegrationMessage.aggregate_type.like("GspRecall%"))
             .all()
         }
-        assert {"RECALL_ACTIVATED", "RECALL_TARGET_UPDATED", "RECALL_CLOSED"} <= recall_messages
+        assert {
+            "RECALL_ACTIVATED",
+            "RECALL_PROGRESS_REPORTED",
+            "RECALL_TARGET_UPDATED",
+            "RECALL_CLOSED",
+        } <= recall_messages
     finally:
         db.close()

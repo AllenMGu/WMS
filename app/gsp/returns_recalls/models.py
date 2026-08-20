@@ -49,9 +49,26 @@ class GspRecall(Base):
     created_at = Column(DateTime, nullable=False, default=utc_now)
     activated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     activated_at = Column(DateTime, nullable=True)
+    notification_due_at = Column(DateTime, nullable=True, index=True)
+    next_progress_report_due_at = Column(DateTime, nullable=True, index=True)
+    last_progress_reported_at = Column(DateTime, nullable=True)
     closed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     closed_at = Column(DateTime, nullable=True)
     closure_conclusion = Column(String(500), nullable=True)
+
+
+class GspRecallProgressReport(Base):
+    __tablename__ = "gsp_recall_progress_reports"
+
+    id = Column(Integer, primary_key=True)
+    recall_id = Column(Integer, ForeignKey("gsp_recalls.id"), nullable=False, index=True)
+    report_ref = Column(String(200), nullable=False)
+    summary = Column(String(1000), nullable=False)
+    reported_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    reported_at = Column(DateTime, nullable=False, default=utc_now, index=True)
+    __table_args__ = (
+        UniqueConstraint("recall_id", "report_ref", name="uq_gsp_recall_progress_ref"),
+    )
 
 
 class GspRecallBatch(Base):

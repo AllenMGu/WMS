@@ -11,6 +11,7 @@ from app.gsp.returns_recalls.models import GspRecall, GspSalesReturn
 from app.gsp.returns_recalls.schemas import (
     RecallClose,
     RecallCreate,
+    RecallProgressCreate,
     RecallResponse,
     RecallTargetNotification,
     SalesReturnCreate,
@@ -25,6 +26,7 @@ from app.gsp.returns_recalls.service import (
     inspect_sales_return_item,
     notify_recall_target,
     recall_payload,
+    record_recall_progress,
     sales_return_payload,
 )
 from app.gsp.schemas import ChangeReason
@@ -107,6 +109,30 @@ async def inspect_sales_return(
         )
         db.commit()
         return sales_return_payload(db, sales_return)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post("/recalls/{recall_id}/progress", response_model=RecallResponse)
+async def report_recall_progress(
+    recall_id: int,
+    payload: RecallProgressCreate,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        recall = record_recall_progress(
+            db,
+            recall_id=recall_id,
+            report_ref=payload.report_ref,
+            summary=payload.summary,
+            actor_id=current_user.id,
+            reason=payload.reason,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return recall_payload(db, recall)
     except (WorkflowError, IntegrityError) as error:
         _rollback_and_raise(db, error)
 

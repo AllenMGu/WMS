@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 from sqlalchemy import func
@@ -15,9 +16,11 @@ from app.gsp.models import (
     GspQualityHold,
 )
 from app.gsp.outbox import enqueue_integration_message
+from app.gsp.quality_disposition.service import register_rejected_material
 from app.gsp.returns_recalls.models import (
     GspRecall,
     GspRecallBatch,
+    GspRecallProgressReport,
     GspRecallTarget,
     GspSalesReturn,
     GspSalesReturnItem,
@@ -41,6 +44,7 @@ RECALL_LEVELS = {"I", "II", "III"}
 RECALL_SOURCES = {"REGULATOR", "MANUFACTURER", "INTERNAL"}
 NOTIFICATION_STATUSES = {"NOTIFIED", "ACKNOWLEDGED", "UNREACHABLE"}
 REJECTION_DISPOSITIONS = {"RETURN_TO_SUPPLIER", "DESTROY", "QUARANTINE", "OTHER"}
+RECALL_REPORT_INTERVAL_DAYS = {"I": 1, "II": 3, "III": 7}
 
 
 def _finding_dicts(result) -> list[dict]:
@@ -84,6 +88,13 @@ def recall_payload(db: Session, recall: GspRecall) -> dict:
     result = model_snapshot(recall)
     result["batches"] = [model_snapshot(item) for item in _recall_batches(db, recall.id)]
     result["targets"] = [model_snapshot(item) for item in _recall_targets(db, recall.id)]
+    result["progress_reports"] = [
+        model_snapshot(item)
+        for item in db.query(GspRecallProgressReport)
+        .filter(GspRecallProgressReport.recall_id == recall.id)
+        .order_by(GspRecallProgressReport.reported_at)
+        .all()
+    ]
     return result
 
 
@@ -392,6 +403,23 @@ def inspect_sales_return_item(
         item.inspection_status = "ACCEPTED"
     else:
         item.inspection_status = "REJECTED"
+    if payload.rejected_quantity > 0:
+        register_rejected_material(
+            db,
+            record_no=f"NC-SRET-{item.id}",
+            source_type="SALES_RETURN_REJECTION",
+            source_entity_type="GspSalesReturnItem",
+            source_entity_id=item.id,
+            batch_id=item.batch_id,
+            warehouse_id=sales_return.warehouse_id,
+            location_id=None,
+            quantity=payload.rejected_quantity,
+            reason_code="SALES_RETURN_REJECTED",
+            description=payload.conclusion,
+            proposed_disposition=payload.rejection_disposition,
+            actor_id=actor_id,
+            source_ip=source_ip,
+        )
     db.flush()
     pending = any(row.inspection_status == "PENDING" for row in _return_items(db, return_id))
     sales_return.status = "PARTIALLY_INSPECTED" if pending else "COMPLETED"
@@ -578,9 +606,13 @@ def activate_recall(
             stock.stock_status = "HOLD"
             stock.lock_version += 1
 
+    activated_at = utc_now()
+    interval = timedelta(days=RECALL_REPORT_INTERVAL_DAYS[recall.recall_level])
     recall.status = "ACTIVE"
     recall.activated_by = actor_id
-    recall.activated_at = utc_now()
+    recall.activated_at = activated_at
+    recall.notification_due_at = activated_at + interval
+    recall.next_progress_report_due_at = activated_at + interval
     db.flush()
     after = recall_payload(db, recall)
     enqueue_integration_message(
@@ -595,6 +627,64 @@ def activate_recall(
         db,
         actor_user_id=actor_id,
         action="RECALL_ACTIVATED",
+        entity_type="GspRecall",
+        entity_id=str(recall.id),
+        reason=reason,
+        before_data=before,
+        after_data=after,
+        source_ip=source_ip,
+    )
+    return recall
+
+
+def record_recall_progress(
+    db: Session,
+    *,
+    recall_id: int,
+    report_ref: str,
+    summary: str,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+) -> GspRecall:
+    recall = (
+        db.query(GspRecall)
+        .filter(GspRecall.id == recall_id)
+        .with_for_update()
+        .first()
+    )
+    if not recall:
+        raise WorkflowError(404, "召回单不存在")
+    if recall.status != "ACTIVE":
+        raise WorkflowError(409, "只有执行中的召回可以登记进展报告")
+    before = recall_payload(db, recall)
+    reported_at = utc_now()
+    report = GspRecallProgressReport(
+        recall_id=recall.id,
+        report_ref=report_ref,
+        summary=summary,
+        reported_by=actor_id,
+        reported_at=reported_at,
+    )
+    db.add(report)
+    recall.last_progress_reported_at = reported_at
+    recall.next_progress_report_due_at = reported_at + timedelta(
+        days=RECALL_REPORT_INTERVAL_DAYS[recall.recall_level]
+    )
+    db.flush()
+    after = recall_payload(db, recall)
+    enqueue_integration_message(
+        db,
+        destination="JZT",
+        message_type="RECALL_PROGRESS_REPORTED",
+        aggregate_type="GspRecall",
+        aggregate_id=str(recall.id),
+        payload=after,
+    )
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="RECALL_PROGRESS_REPORTED",
         entity_type="GspRecall",
         entity_id=str(recall.id),
         reason=reason,

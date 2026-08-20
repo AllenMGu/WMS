@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wms-gsp"
-version = "0.4.0"
+version = "0.5.0"
 description = "面向药品经营质量管理的模块化 WMS/GSP 后端"
 requires-python = ">=3.10"
 dependencies = [

@@ -27,8 +27,13 @@
 | `INVENTORY_SNAPSHOT` | 本系统→九州通 | 日终或按约定周期 |
 | `SALES_RETURN_RECEIVED` | 本系统→九州通 | 销后退货关联原发运并完成隔离收货后 |
 | `SALES_RETURN_INSPECTED` | 本系统→九州通 | 退货质量检验完成并判定回库/拒收后 |
+| `NONCONFORMING_DISPOSITION_APPROVED` | 本系统→九州通 | 不合格品处置经独立质量批准后 |
+| `NONCONFORMING_DESTROYED` | 本系统→九州通 | 不合格品完成监督销毁并登记证明后 |
+| `PURCHASE_RETURN_APPROVED` | 本系统→九州通 | 购进退出通过独立质量批准后 |
+| `PURCHASE_RETURN_DISPATCHED` | 本系统→九州通 | 购进退出实际发运并完成库存扣减后 |
 | `RECALL_ACTIVATED` | 本系统→九州通 | 召回独立审批并锁定相关批次后 |
 | `RECALL_TARGET_UPDATED` | 本系统→九州通 | 购货方通知或回收进度更新后 |
+| `RECALL_PROGRESS_REPORTED` | 本系统→九州通 | 按召回等级登记阶段进展报告后 |
 | `RECALL_CLOSED` | 本系统→九州通 | 召回数量核对与独立关闭复核后 |
 
 ## 必测场景
