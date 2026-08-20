@@ -10,6 +10,7 @@ from __future__ import annotations
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -136,6 +137,7 @@ class GspBatchStock(Base):
     updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
     __table_args__ = (
         UniqueConstraint("batch_id", "warehouse_id", "location_id", name="uq_gsp_batch_location"),
+        CheckConstraint("quantity >= 0", name="ck_gsp_batch_stock_quantity_nonnegative"),
     )
 
 

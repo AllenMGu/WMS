@@ -26,6 +26,7 @@ flowchart TB
 | 应用装配 | `app/application.py` | 已独立 |
 | 配置与数据库 | `app/core/` | 已独立 |
 | GSP 质量域 | `app/gsp/` | 已建立第一版 |
+| 采购/收货闭环 | `app/gsp/procurement_receiving/` | 已独立，覆盖订单审批、收货与验收 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
 | Web 前端 | `frontend/` | 仅覆盖旧 WMS |
 | 九州通适配器 | 计划为 `app/integrations/jzt/` | 等正式接口规范 |
@@ -51,3 +52,19 @@ flowchart TB
 | 批号库存 | GSP | 通用库存只能作为汇总视图 |
 | 九州通报文状态 | 集成域 | 不反向成为库存事实来源 |
 | 审计事件 | GSP/审计服务 | 只追加，不提供更新或删除 API |
+
+## 受控采购与收货状态
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT
+    DRAFT --> SUBMITTED: 采购提交
+    SUBMITTED --> APPROVED: 质量审批
+    APPROVED --> PARTIALLY_RECEIVED: 分批收货
+    APPROVED --> RECEIVED: 全量收货
+    PARTIALLY_RECEIVED --> RECEIVED: 收货完成
+    RECEIVED --> COMPLETED: 全部验收结束
+```
+
+收货数量先记录在 `gsp_receipt_items`，不直接形成可用库存。验收人与收货人必须不同；
+只有验收合格数量才写入 `gsp_batch_stock`，拒收数量不进入可用库存。
