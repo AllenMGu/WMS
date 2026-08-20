@@ -23,7 +23,7 @@
 | `PARTNER_QUALIFIED` | 本系统→九州通 | 合作方质量批准后 |
 | `PURCHASE_ORDER_RECEIVED` | 九州通→本系统 | 外部采购/配送单通过校验后 |
 | `BATCH_ACCEPTED` | 本系统→九州通 | 收货验收放行后 |
-| `SHIPMENT_CONFIRMED` | 双向 | 出库复核及外部回执后 |
+| `SHIPMENT_CONFIRMED` | 本系统→九州通 | 独立出库复核通过并实际发运扣减库存后 |
 | `INVENTORY_SNAPSHOT` | 本系统→九州通 | 日终或按约定周期 |
 | `RETURN_STATUS_CHANGED` | 双向 | 退货质量判定后 |
 

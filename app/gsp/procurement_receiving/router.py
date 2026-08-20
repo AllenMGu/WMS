@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.errors import WorkflowError
 from app.gsp.procurement_receiving.models import GspPurchaseOrder, GspReceipt
 from app.gsp.procurement_receiving.schemas import (
     PurchaseOrderCreate,
@@ -15,7 +16,6 @@ from app.gsp.procurement_receiving.schemas import (
     ReceiptResponse,
 )
 from app.gsp.procurement_receiving.service import (
-    WorkflowError,
     approve_purchase_order,
     create_purchase_order,
     create_receipt,

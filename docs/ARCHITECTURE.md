@@ -27,6 +27,7 @@ flowchart TB
 | 配置与数据库 | `app/core/` | 已独立 |
 | GSP 质量域 | `app/gsp/` | 已建立第一版 |
 | 采购/收货闭环 | `app/gsp/procurement_receiving/` | 已独立，覆盖订单审批、收货与验收 |
+| 销售/出库闭环 | `app/gsp/sales_shipping/` | 已独立，覆盖资质复核、FEFO、拣货、复核与发运 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
 | Web 前端 | `frontend/` | 仅覆盖旧 WMS |
 | 九州通适配器 | 计划为 `app/integrations/jzt/` | 等正式接口规范 |
@@ -68,3 +69,20 @@ stateDiagram-v2
 
 收货数量先记录在 `gsp_receipt_items`，不直接形成可用库存。验收人与收货人必须不同；
 只有验收合格数量才写入 `gsp_batch_stock`，拒收数量不进入可用库存。
+
+## 受控销售与发运状态
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT
+    DRAFT --> SUBMITTED: 销售提交
+    SUBMITTED --> APPROVED: 质量审批
+    APPROVED --> ALLOCATED: FEFO预留
+    ALLOCATED --> PICKED: 拣货
+    PICKED --> PREPARED: 发运准备
+    PREPARED --> REVIEWED: 独立复核
+    REVIEWED --> SHIPPED: 发运扣减
+```
+
+`gsp_batch_stock.reserved_quantity` 防止并发订单重复占用同一库存。质量锁定、资质失效、
+批次过期或剩余有效期不足会在分配、出库复核和实际发运三个节点重复阻断。

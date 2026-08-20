@@ -132,12 +132,18 @@ class GspBatchStock(Base):
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
     quantity = Column(Numeric(18, 3), nullable=False, default=0)
+    reserved_quantity = Column(Numeric(18, 3), nullable=False, default=0)
     stock_status = Column(String(30), nullable=False, default="AVAILABLE", index=True)
     lock_version = Column(Integer, nullable=False, default=0)
     updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
     __table_args__ = (
         UniqueConstraint("batch_id", "warehouse_id", "location_id", name="uq_gsp_batch_location"),
         CheckConstraint("quantity >= 0", name="ck_gsp_batch_stock_quantity_nonnegative"),
+        CheckConstraint("reserved_quantity >= 0", name="ck_gsp_batch_stock_reserved_nonnegative"),
+        CheckConstraint(
+            "reserved_quantity <= quantity",
+            name="ck_gsp_batch_stock_reserved_not_over",
+        ),
     )
 
 
