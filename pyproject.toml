@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wms-gsp"
+version = "0.2.0"
+description = "面向药品经营质量管理的模块化 WMS/GSP 后端"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110,<1",
+  "uvicorn[standard]>=0.29,<1",
+  "sqlalchemy>=1.4,<3",
+  "psycopg2-binary>=2.9,<3",
+  "pydantic>=2.7,<3",
+  "passlib[bcrypt]>=1.7,<2",
+  "bcrypt>=3.2,<4.1",
+  "python-jose[cryptography]>=3.3,<4",
+  "python-multipart>=0.0.9,<1",
+  "ldap3>=2.9,<3",
+  "pandas>=2.0,<3",
+  "openpyxl>=3.1,<4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "httpx>=0.27,<1", "ruff>=0.6,<1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["frontend*", "wechat-miniprogram*", "tests*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+exclude = ["app/legacy.py"]
