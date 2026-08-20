@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.database import SessionLocal
+from app.gsp.errors import WorkflowError
 from app.gsp.models import (
     GspBatchStock,
     GspBusinessPartner,
@@ -21,7 +22,6 @@ from app.gsp.procurement_receiving.schemas import (
     ReceiptLineCreate,
 )
 from app.gsp.procurement_receiving.service import (
-    WorkflowError,
     approve_purchase_order,
     create_purchase_order,
     create_receipt,

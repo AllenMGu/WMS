@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -21,6 +22,7 @@ from app.gsp.models import (
 )
 from app.gsp.outbox import enqueue_integration_message
 from app.gsp.rules import evaluate_partner, evaluate_product
+from app.gsp.sales_shipping.models import GspSalesOrder, GspShipment
 from app.gsp.schemas import (
     AuditEventResponse,
     BatchAcceptance,
@@ -87,6 +89,19 @@ async def compliance_summary(
         "pending_integration_messages": db.query(GspIntegrationMessage)
         .filter(GspIntegrationMessage.status.in_(["PENDING", "RETRY"]))
         .count(),
+        "pending_sales_orders": db.query(GspSalesOrder)
+        .filter(
+            GspSalesOrder.status.in_(
+                ["SUBMITTED", "APPROVED", "ALLOCATED", "PICKED", "PREPARED", "REVIEWED"]
+            )
+        )
+        .count(),
+        "pending_outbound_reviews": db.query(GspShipment)
+        .filter(GspShipment.status == "PREPARED")
+        .count(),
+        "reserved_batch_quantity": float(
+            db.query(func.coalesce(func.sum(GspBatchStock.reserved_quantity), 0)).scalar()
+        ),
     }
 
 

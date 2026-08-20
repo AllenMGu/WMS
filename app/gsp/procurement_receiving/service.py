@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
 from app.gsp.audit import write_audit_event
+from app.gsp.errors import WorkflowError
 from app.gsp.models import (
     GspBatchStock,
     GspBusinessPartner,
@@ -30,20 +31,6 @@ from app.gsp.procurement_receiving.schemas import (
 from app.gsp.rules import evaluate_partner, evaluate_product
 from app.gsp.snapshots import model_snapshot
 from app.legacy import Location, Warehouse
-
-
-class WorkflowError(Exception):
-    def __init__(self, status_code: int, message: str, findings: list[dict] | None = None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.message = message
-        self.findings = findings or []
-
-    @property
-    def detail(self):
-        if self.findings:
-            return {"message": self.message, "findings": self.findings}
-        return self.message
 
 
 def _finding_dicts(result) -> list[dict]:
