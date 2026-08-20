@@ -150,7 +150,7 @@ WMS/
 
 ## 快速开始
 
-要求：Python 3.10 或 3.12。生产环境使用 PostgreSQL；SQLite 仅供本地开发和规则验证。
+要求：Python 3.12。生产环境使用 PostgreSQL；SQLite 仅供本地开发和规则验证。
 
 ```bash
 git clone https://github.com/AllenMGu/WMS.git
@@ -238,7 +238,7 @@ alembic check
 
 GitHub Actions 会在面向 `main` 的 Pull Request 上执行：
 
-- Python 3.10 和 Python 3.12 静态检查、22 项自动化测试、源码编译和依赖一致性检查。
+- Python 3.12 静态检查、22 项自动化测试、源码编译和依赖一致性检查。
 - PostgreSQL 16 服务启动、`alembic upgrade head`、`alembic check` 和集成测试。
 - 官方 Actions 固定完整提交 SHA，工作流权限限制为 `contents: read`。
 
