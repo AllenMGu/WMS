@@ -14,6 +14,8 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/gsp/shipping/shipments" in paths
     assert "/api/gsp/returns/sales" in paths
     assert "/api/gsp/recalls" in paths
+    assert "/api/gsp/quality/nonconforming" in paths
+    assert "/api/gsp/procurement/returns" in paths
     assert "/health" in paths
 
 

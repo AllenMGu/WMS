@@ -28,6 +28,7 @@ from app.gsp.procurement_receiving.schemas import (
     ReceiptCreate,
     ReceiptInspection,
 )
+from app.gsp.quality_disposition.service import register_rejected_material
 from app.gsp.rules import evaluate_partner, evaluate_product
 from app.gsp.snapshots import model_snapshot
 from app.legacy import Location, Warehouse
@@ -475,6 +476,24 @@ def inspect_receipt_item(
         item.inspection_status = "REJECTED"
     else:
         item.inspection_status = "PARTIALLY_ACCEPTED"
+
+    if payload.rejected_quantity > 0:
+        register_rejected_material(
+            db,
+            record_no=f"NC-RCV-{item.id}",
+            source_type="RECEIPT_REJECTION",
+            source_entity_type="GspReceiptItem",
+            source_entity_id=item.id,
+            batch_id=item.batch_id,
+            warehouse_id=order.warehouse_id,
+            location_id=item.location_id,
+            quantity=payload.rejected_quantity,
+            reason_code="RECEIPT_REJECTED",
+            description=payload.conclusion,
+            proposed_disposition=None,
+            actor_id=actor_id,
+            source_ip=source_ip,
+        )
 
     if payload.accepted_quantity > 0:
         active_hold = (

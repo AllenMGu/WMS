@@ -29,6 +29,7 @@ flowchart TB
 | 采购/收货闭环 | `app/gsp/procurement_receiving/` | 已独立，覆盖订单审批、收货与验收 |
 | 销售/出库闭环 | `app/gsp/sales_shipping/` | 已独立，覆盖资质复核、FEFO、拣货、复核与发运 |
 | 退货/召回闭环 | `app/gsp/returns_recalls/` | 已独立，覆盖销后退回隔离、质量检验、批次召回与回收核对 |
+| 不合格品/购进退出 | `app/gsp/quality_disposition/` | 已独立，覆盖质量锁定、独立处置批准、监督销毁与退供发运 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
 | Web 前端 | `frontend/` | 仅覆盖旧 WMS |
 | 九州通适配器 | 计划为 `app/integrations/jzt/` | 等正式接口规范 |
@@ -99,7 +100,7 @@ stateDiagram-v2
 ```
 
 退回数量在质量检验前不进入可用库存。合格数量需要确认包装、储存条件、追溯信息、质量锁定和
-批准库位；拒收数量只记录处置方向，不直接形成库存。
+批准库位；拒收数量不直接形成库存，并自动进入不合格品处置流程。
 
 ## 药品召回状态
 
@@ -111,5 +112,29 @@ stateDiagram-v2
     ACTIVE --> CLOSED: 通知完成并独立复核
 ```
 
-召回启动时从已发运批次生成购货方目标并建立独立质量锁定。召回关闭只结束召回业务状态，
+召回启动时从已发运批次生成购货方目标并建立独立质量锁定。系统按一级 1 日、二级 3 日、
+三级 7 日计算通知和进展报告期限，并保存每次进展报告。召回关闭只结束召回业务状态，
 不自动解除质量锁定；后续处置或重新放行必须走质量锁定解除流程。
+
+## 不合格品处置状态
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING_APPROVAL: 验收拒收/退货拒收/在库登记
+    PENDING_APPROVAL --> APPROVED: 独立质量批准
+    APPROVED --> EXECUTED: 监督销毁
+    APPROVED --> EXECUTED: 购进退出发运
+```
+
+在库不合格品登记会建立独立质量锁定；拒收但从未入库的数量只保留受控记录，不虚增库存。
+销毁要求批准、执行、见证岗位分离和监督证明；退供按原批次供货方生成购进退出单。
+
+## 购进退出状态
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT
+    DRAFT --> SUBMITTED: 采购提交
+    SUBMITTED --> APPROVED: 独立质量批准
+    APPROVED --> DISPATCHED: 仓库发运并扣减库存
+```

@@ -89,6 +89,11 @@ class RecallClose(ChangeReason):
     conclusion: str = Field(..., min_length=3, max_length=500)
 
 
+class RecallProgressCreate(ChangeReason):
+    report_ref: str = Field(..., min_length=3, max_length=200)
+    summary: str = Field(..., min_length=3, max_length=1000)
+
+
 class RecallBatchResponse(OrmModel):
     id: int
     batch_id: int
@@ -111,6 +116,14 @@ class RecallTargetResponse(OrmModel):
     notification_notes: str | None
 
 
+class RecallProgressResponse(OrmModel):
+    id: int
+    report_ref: str
+    summary: str
+    reported_by: int
+    reported_at: datetime
+
+
 class RecallResponse(OrmModel):
     id: int
     recall_no: str
@@ -123,8 +136,12 @@ class RecallResponse(OrmModel):
     created_at: datetime
     activated_by: int | None
     activated_at: datetime | None
+    notification_due_at: datetime | None
+    next_progress_report_due_at: datetime | None
+    last_progress_reported_at: datetime | None
     closed_by: int | None
     closed_at: datetime | None
     closure_conclusion: str | None
     batches: list[RecallBatchResponse]
     targets: list[RecallTargetResponse]
+    progress_reports: list[RecallProgressResponse]
