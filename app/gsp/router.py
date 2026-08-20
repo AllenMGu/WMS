@@ -55,6 +55,7 @@ from app.gsp.schemas import (
     RoleGrant,
 )
 from app.gsp.snapshots import model_snapshot
+from app.gsp.stocktaking.models import GspStocktakeItem, GspStocktakePlan
 from app.legacy import Goods, Location, User, get_current_user
 
 router = APIRouter(prefix="/gsp", tags=["GSP合规"])
@@ -172,6 +173,12 @@ async def compliance_summary(
         .count(),
         "abnormal_maintenance_findings": db.query(GspMaintenancePlanItem)
         .filter(GspMaintenancePlanItem.status == "ABNORMAL")
+        .count(),
+        "pending_stocktake_plans": db.query(GspStocktakePlan)
+        .filter(GspStocktakePlan.status.in_(["SUBMITTED", "COUNTING", "COUNTED"]))
+        .count(),
+        "pending_stocktake_adjustments": db.query(GspStocktakePlan)
+        .filter(GspStocktakePlan.status == "ADJUSTMENT_APPROVED")
         .count(),
         "pending_recall_notifications": db.query(GspRecallTarget)
         .filter(GspRecallTarget.notification_status == "PENDING")
@@ -777,6 +784,11 @@ async def trace_batch(
             .filter(GspMaintenancePlanItem.batch_id == batch.id)
             .all()
         )
+        stocktake_items = (
+            db.query(GspStocktakeItem)
+            .filter(GspStocktakeItem.batch_id == batch.id)
+            .all()
+        )
         nonconforming_records = (
             db.query(GspNonconformingRecord)
             .filter(GspNonconformingRecord.batch_id == batch.id)
@@ -805,6 +817,8 @@ async def trace_batch(
         recall_ids = [str(item.recall_id) for item in recalls]
         recall_drill_ids = [str(item.drill_id) for item in recall_drills]
         maintenance_item_ids = [str(item.id) for item in maintenance_items]
+        stocktake_item_ids = [str(item.id) for item in stocktake_items]
+        stocktake_plan_ids = [str(item.plan_id) for item in stocktake_items]
         nonconforming_audit_ids = [str(item.id) for item in nonconforming_records]
         purchase_return_audit_ids = [str(item.id) for item in purchase_returns]
         result.append(
@@ -819,6 +833,7 @@ async def trace_batch(
                 "recalls": [_snapshot(item) for item in recalls],
                 "recall_drills": [_snapshot(item) for item in recall_drills],
                 "maintenance_items": [_snapshot(item) for item in maintenance_items],
+                "stocktake_items": [_snapshot(item) for item in stocktake_items],
                 "nonconforming_records": [
                     _snapshot(item) for item in nonconforming_records
                 ],
@@ -853,6 +868,14 @@ async def trace_batch(
                             and_(
                                 GspAuditEvent.entity_type == "GspMaintenancePlanItem",
                                 GspAuditEvent.entity_id.in_(maintenance_item_ids),
+                            ),
+                            and_(
+                                GspAuditEvent.entity_type == "GspStocktakeItem",
+                                GspAuditEvent.entity_id.in_(stocktake_item_ids),
+                            ),
+                            and_(
+                                GspAuditEvent.entity_type == "GspStocktakePlan",
+                                GspAuditEvent.entity_id.in_(stocktake_plan_ids),
                             ),
                             and_(
                                 GspAuditEvent.entity_type == "GspNonconformingRecord",

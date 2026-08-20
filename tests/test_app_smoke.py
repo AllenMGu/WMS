@@ -8,6 +8,7 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/token" in paths
     assert "/api/gsp/compliance/summary" in paths
     assert "/api/gsp/quality-holds" in paths
+    assert "/api/gsp/stocktaking/plans" in paths
     assert "/api/gsp/procurement/orders" in paths
     assert "/api/gsp/receiving/receipts" in paths
     assert "/api/gsp/sales/orders" in paths

@@ -26,6 +26,7 @@ flowchart TB
 | 应用装配 | `app/application.py` | 已独立 |
 | 配置与数据库 | `app/core/` | 已独立 |
 | GSP 质量域 | `app/gsp/` | 已建立第一版 |
+| 批号库存盘点 | `app/gsp/stocktaking/` | 已独立，覆盖盲盘、差异审批与受控调整 |
 | 采购/收货闭环 | `app/gsp/procurement_receiving/` | 已独立，覆盖订单审批、收货与验收 |
 | 销售/出库闭环 | `app/gsp/sales_shipping/` | 已独立，覆盖资质复核、FEFO、拣货、复核与发运 |
 | 退货/召回闭环 | `app/gsp/returns_recalls/` | 已独立，覆盖销后退回隔离、质量检验、批次召回与回收核对 |
