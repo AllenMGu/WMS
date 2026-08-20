@@ -25,7 +25,11 @@
 | `BATCH_ACCEPTED` | 本系统→九州通 | 收货验收放行后 |
 | `SHIPMENT_CONFIRMED` | 本系统→九州通 | 独立出库复核通过并实际发运扣减库存后 |
 | `INVENTORY_SNAPSHOT` | 本系统→九州通 | 日终或按约定周期 |
-| `RETURN_STATUS_CHANGED` | 双向 | 退货质量判定后 |
+| `SALES_RETURN_RECEIVED` | 本系统→九州通 | 销后退货关联原发运并完成隔离收货后 |
+| `SALES_RETURN_INSPECTED` | 本系统→九州通 | 退货质量检验完成并判定回库/拒收后 |
+| `RECALL_ACTIVATED` | 本系统→九州通 | 召回独立审批并锁定相关批次后 |
+| `RECALL_TARGET_UPDATED` | 本系统→九州通 | 购货方通知或回收进度更新后 |
+| `RECALL_CLOSED` | 本系统→九州通 | 召回数量核对与独立关闭复核后 |
 
 ## 必测场景
 

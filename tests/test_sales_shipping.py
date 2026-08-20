@@ -318,7 +318,10 @@ def test_fefo_sales_allocation_review_and_dispatch():
         assert later_stock.reserved_quantity == Decimal("0.000")
         assert (
             db.query(GspIntegrationMessage)
-            .filter(GspIntegrationMessage.message_type == "SHIPMENT_CONFIRMED")
+            .filter(
+                GspIntegrationMessage.message_type == "SHIPMENT_CONFIRMED",
+                GspIntegrationMessage.aggregate_id == str(shipment.id),
+            )
             .count()
             == 1
         )
