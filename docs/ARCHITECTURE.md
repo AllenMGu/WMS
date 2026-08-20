@@ -28,6 +28,7 @@ flowchart TB
 | GSP 质量域 | `app/gsp/` | 已建立第一版 |
 | 采购/收货闭环 | `app/gsp/procurement_receiving/` | 已独立，覆盖订单审批、收货与验收 |
 | 销售/出库闭环 | `app/gsp/sales_shipping/` | 已独立，覆盖资质复核、FEFO、拣货、复核与发运 |
+| 退货/召回闭环 | `app/gsp/returns_recalls/` | 已独立，覆盖销后退回隔离、质量检验、批次召回与回收核对 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
 | Web 前端 | `frontend/` | 仅覆盖旧 WMS |
 | 九州通适配器 | 计划为 `app/integrations/jzt/` | 等正式接口规范 |
@@ -86,3 +87,29 @@ stateDiagram-v2
 
 `gsp_batch_stock.reserved_quantity` 防止并发订单重复占用同一库存。质量锁定、资质失效、
 批次过期或剩余有效期不足会在分配、出库复核和实际发运三个节点重复阻断。
+
+## 销后退货状态
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING_INSPECTION: 关联原发运收货
+    PENDING_INSPECTION --> PARTIALLY_INSPECTED: 部分明细检验
+    PENDING_INSPECTION --> COMPLETED: 全部明细检验
+    PARTIALLY_INSPECTED --> COMPLETED: 剩余明细检验
+```
+
+退回数量在质量检验前不进入可用库存。合格数量需要确认包装、储存条件、追溯信息、质量锁定和
+批准库位；拒收数量只记录处置方向，不直接形成库存。
+
+## 药品召回状态
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT
+    DRAFT --> ACTIVE: 独立质量审批并锁定批次
+    ACTIVE --> ACTIVE: 通知购货方与登记回收
+    ACTIVE --> CLOSED: 通知完成并独立复核
+```
+
+召回启动时从已发运批次生成购货方目标并建立独立质量锁定。召回关闭只结束召回业务状态，
+不自动解除质量锁定；后续处置或重新放行必须走质量锁定解除流程。

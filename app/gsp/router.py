@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -21,6 +21,12 @@ from app.gsp.models import (
     GspRoleAssignment,
 )
 from app.gsp.outbox import enqueue_integration_message
+from app.gsp.returns_recalls.models import (
+    GspRecall,
+    GspRecallBatch,
+    GspRecallTarget,
+    GspSalesReturnItem,
+)
 from app.gsp.rules import evaluate_partner, evaluate_product
 from app.gsp.sales_shipping.models import GspSalesOrder, GspShipment
 from app.gsp.schemas import (
@@ -101,6 +107,27 @@ async def compliance_summary(
         .count(),
         "reserved_batch_quantity": float(
             db.query(func.coalesce(func.sum(GspBatchStock.reserved_quantity), 0)).scalar()
+        ),
+        "pending_return_inspections": db.query(GspSalesReturnItem)
+        .filter(GspSalesReturnItem.inspection_status == "PENDING")
+        .count(),
+        "active_recalls": db.query(GspRecall).filter(GspRecall.status == "ACTIVE").count(),
+        "pending_recall_notifications": db.query(GspRecallTarget)
+        .filter(GspRecallTarget.notification_status == "PENDING")
+        .count(),
+        "outstanding_recall_quantity": float(
+            db.query(
+                func.coalesce(
+                    func.sum(
+                        GspRecallBatch.target_shipped_quantity
+                        - GspRecallBatch.recovered_quantity
+                    ),
+                    0,
+                )
+            )
+            .join(GspRecall, GspRecall.id == GspRecallBatch.recall_id)
+            .filter(GspRecall.status == "ACTIVE")
+            .scalar()
         ),
     }
 
@@ -581,6 +608,18 @@ async def release_quality_hold(
         raise HTTPException(404, "质量锁定记录不存在")
     if hold.status != "ACTIVE":
         raise HTTPException(409, "质量锁定已经解除")
+    if hold.reason_code == "RECALL":
+        active_recall = (
+            db.query(GspRecallBatch)
+            .join(GspRecall, GspRecall.id == GspRecallBatch.recall_id)
+            .filter(
+                GspRecallBatch.batch_id == hold.batch_id,
+                GspRecall.status == "ACTIVE",
+            )
+            .count()
+        )
+        if active_recall:
+            raise HTTPException(409, "召回执行期间不能解除对应批次的质量锁定")
     if hold.initiated_by == current_user.id:
         raise HTTPException(409, "质量锁定发起人不能自行解除，需由另一名质量授权人员复核")
     before = _snapshot(hold)
@@ -628,6 +667,20 @@ async def trace_batch(
         raise HTTPException(404, "未找到该批号")
     result = []
     for batch in batches:
+        quality_holds = (
+            db.query(GspQualityHold).filter(GspQualityHold.batch_id == batch.id).all()
+        )
+        sales_returns = (
+            db.query(GspSalesReturnItem)
+            .filter(GspSalesReturnItem.batch_id == batch.id)
+            .all()
+        )
+        recalls = (
+            db.query(GspRecallBatch).filter(GspRecallBatch.batch_id == batch.id).all()
+        )
+        hold_ids = [str(item.id) for item in quality_holds]
+        return_item_ids = [str(item.id) for item in sales_returns]
+        recall_ids = [str(item.recall_id) for item in recalls]
         result.append(
             {
                 "batch": _snapshot(batch),
@@ -635,16 +688,31 @@ async def trace_batch(
                     _snapshot(item)
                     for item in db.query(GspBatchStock).filter(GspBatchStock.batch_id == batch.id)
                 ],
-                "quality_holds": [
-                    _snapshot(item)
-                    for item in db.query(GspQualityHold).filter(GspQualityHold.batch_id == batch.id)
-                ],
+                "quality_holds": [_snapshot(item) for item in quality_holds],
+                "sales_returns": [_snapshot(item) for item in sales_returns],
+                "recalls": [_snapshot(item) for item in recalls],
                 "audit_events": [
                     _snapshot(item)
                     for item in db.query(GspAuditEvent)
                     .filter(
-                        GspAuditEvent.entity_id == str(batch.id),
-                        GspAuditEvent.entity_type.in_(["GspDrugBatch", "GspQualityHold"]),
+                        or_(
+                            and_(
+                                GspAuditEvent.entity_type == "GspDrugBatch",
+                                GspAuditEvent.entity_id == str(batch.id),
+                            ),
+                            and_(
+                                GspAuditEvent.entity_type == "GspQualityHold",
+                                GspAuditEvent.entity_id.in_(hold_ids),
+                            ),
+                            and_(
+                                GspAuditEvent.entity_type == "GspSalesReturnItem",
+                                GspAuditEvent.entity_id.in_(return_item_ids),
+                            ),
+                            and_(
+                                GspAuditEvent.entity_type == "GspRecall",
+                                GspAuditEvent.entity_id.in_(recall_ids),
+                            ),
+                        )
                     )
                     .order_by(GspAuditEvent.occurred_at)
                 ],
