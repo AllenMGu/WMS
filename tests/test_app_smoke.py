@@ -7,7 +7,10 @@ def test_application_exposes_legacy_and_gsp_routes():
     paths = set(module.app.openapi()["paths"])
     assert "/api/token" in paths
     assert "/api/gsp/compliance/summary" in paths
+    assert "/api/gsp/roles/{assignment_id}/review" in paths
+    assert "/api/gsp/roles/{assignment_id}/revoke" in paths
     assert "/api/gsp/quality-holds" in paths
+    assert "/api/gsp/stocktaking/plans" in paths
     assert "/api/gsp/procurement/orders" in paths
     assert "/api/gsp/receiving/receipts" in paths
     assert "/api/gsp/sales/orders" in paths
@@ -32,6 +35,8 @@ def test_audit_and_outbox_accept_json_safe_regulated_snapshot():
 
     db = SessionLocal()
     try:
+        audit_count_before = db.query(GspAuditEvent).count()
+        outbox_count_before = db.query(GspIntegrationMessage).count()
         user = User(
             username="quality-test",
             hashed_password=get_password_hash("test-only-password"),
@@ -72,8 +77,8 @@ def test_audit_and_outbox_accept_json_safe_regulated_snapshot():
             payload=snapshot,
         )
         db.commit()
-        assert db.query(GspAuditEvent).count() == 1
-        assert db.query(GspIntegrationMessage).count() == 1
+        assert db.query(GspAuditEvent).count() == audit_count_before + 1
+        assert db.query(GspIntegrationMessage).count() == outbox_count_before + 1
         assert verify_audit_chain(db) == (True, None)
     finally:
         db.close()

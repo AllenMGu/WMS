@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, HTTPException, Depends, status, Form, APIRouter, Depends, File, UploadFile, Query
+﻿from fastapi import FastAPI, HTTPException, Depends, status, Form, APIRouter, Depends, File, UploadFile, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
@@ -473,6 +473,7 @@ class UserUpdate(BaseModel):
     role: Optional[UserRole] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
+    access_change_reason: Optional[str] = Field(None, min_length=3, max_length=500)
 
 class WarehouseCreate(BaseModel):
     code: str
@@ -1054,9 +1055,8 @@ async def import_ldap_users(
             elif hasattr(entry, 'sn'):
                 full_name = entry.sn.value
 
-            # 生成临时密码（可在后续修改）
-            temp_password = "123456"
-            hashed_password = get_password_hash(temp_password)
+            # LDAP口令不在本系统保存；随机占位值不可用于目录认证。
+            hashed_password = get_password_hash(secrets.token_urlsafe(48))
 
             # 创建本地用户
             new_user = User(
@@ -1069,20 +1069,7 @@ async def import_ldap_users(
             db.add(new_user)
             db.flush()
 
-            # 为新用户分配所有可用仓库的权限（默认）
-            all_warehouses = db.query(Warehouse).filter(Warehouse.is_active == True).all()
-            for i, warehouse in enumerate(all_warehouses):
-                is_default = (i == 0)  # 第一个仓库设为默认
-                user_warehouse = UserWarehouse(
-                    user_id=new_user.id,
-                    warehouse_id=warehouse.id,
-                    is_default=is_default
-                )
-                db.add(user_warehouse)
-
-            # 设置当前仓库（第一个仓库）
-            if all_warehouses:
-                new_user.current_warehouse_id = all_warehouses[0].id
+            # 最小权限：导入只建立无仓库、无GSP岗位账号，访问权限须独立审批。
 
             imported_count += 1
 
@@ -1141,6 +1128,7 @@ async def get_all_users(
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1155,8 +1143,20 @@ async def update_user(
         user.full_name = user_update.full_name
     if user_update.role is not None:
         user.role = user_update.role
-    if user_update.is_active is not None:
-        user.is_active = user_update.is_active
+    if user_update.is_active is False:
+        if not user_update.access_change_reason:
+            raise HTTPException(status_code=400, detail="停用用户必须填写原因")
+        from app.gsp.access_control import deactivate_user_access
+
+        deactivate_user_access(
+            db,
+            user=user,
+            actor_id=current_user.id,
+            reason=user_update.access_change_reason,
+            source_ip=request.client.host if request.client else None,
+        )
+    elif user_update.is_active is True:
+        raise HTTPException(status_code=400, detail="停用账号须通过重新审批后启用，不允许直接恢复")
     if user_update.password:
         user.hashed_password = get_password_hash(user_update.password)
 
@@ -1209,26 +1209,28 @@ async def assign_warehouse_to_user(
 @router.delete("/users/{user_id}", summary="删除用户")
 async def delete_user(
     user_id: int,
+    request: Request,
+    reason: str = Query(..., min_length=3, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
-    # 不能删除自己
-    if current_user.id == user_id:
-        raise HTTPException(status_code=400, detail="不能删除自己的账户")
-
     # 查找用户
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    # 受控系统保留历史操作人的引用，只停用账号并撤销当前仓库。
-    user.is_active = False
-    user.current_warehouse_id = None
-    db.query(UserWarehouse).filter(UserWarehouse.user_id == user_id).update(
-        {UserWarehouse.is_default: False}, synchronize_session=False
+    # 受控系统保留历史操作人引用，同时撤销全部岗位和仓库访问。
+    from app.gsp.access_control import deactivate_user_access
+
+    deactivate_user_access(
+        db,
+        user=user,
+        actor_id=current_user.id,
+        reason=reason,
+        source_ip=request.client.host if request.client else None,
     )
     db.commit()
 
