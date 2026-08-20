@@ -7,10 +7,15 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
 from app.gsp.errors import WorkflowError
-from app.gsp.returns_recalls.models import GspRecall, GspSalesReturn
+from app.gsp.returns_recalls.models import GspRecall, GspRecallDrill, GspSalesReturn
 from app.gsp.returns_recalls.schemas import (
     RecallClose,
+    RecallCompletionReportCreate,
     RecallCreate,
+    RecallDrillComplete,
+    RecallDrillCreate,
+    RecallDrillResponse,
+    RecallDrillTargetVerification,
     RecallProgressCreate,
     RecallResponse,
     RecallTargetNotification,
@@ -20,14 +25,20 @@ from app.gsp.returns_recalls.schemas import (
 )
 from app.gsp.returns_recalls.service import (
     activate_recall,
+    activate_recall_drill,
     close_recall,
+    complete_recall_drill,
     create_recall,
+    create_recall_drill,
     create_sales_return,
     inspect_sales_return_item,
     notify_recall_target,
+    recall_drill_payload,
     recall_payload,
     record_recall_progress,
     sales_return_payload,
+    submit_recall_completion_report,
+    verify_recall_drill_target,
 )
 from app.gsp.schemas import ChangeReason
 from app.legacy import User, get_current_user
@@ -239,5 +250,133 @@ async def close_product_recall(
         )
         db.commit()
         return recall_payload(db, recall)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post("/recalls/{recall_id}/completion-report", response_model=RecallResponse)
+async def report_recall_completion(
+    recall_id: int,
+    payload: RecallCompletionReportCreate,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        recall = submit_recall_completion_report(
+            db,
+            recall_id=recall_id,
+            payload=payload,
+            actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return recall_payload(db, recall)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post("/recall-drills", response_model=RecallDrillResponse, status_code=201)
+async def create_product_recall_drill(
+    payload: RecallDrillCreate,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        drill = create_recall_drill(
+            db,
+            payload=payload,
+            actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return recall_drill_payload(db, drill)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.get("/recall-drills", response_model=list[RecallDrillResponse])
+async def list_product_recall_drills(
+    status: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(GspRecallDrill)
+    if status:
+        query = query.filter(GspRecallDrill.status == status.upper())
+    return [
+        recall_drill_payload(db, drill)
+        for drill in query.order_by(GspRecallDrill.id.desc()).all()
+    ]
+
+
+@router.post("/recall-drills/{drill_id}/activate", response_model=RecallDrillResponse)
+async def activate_product_recall_drill(
+    drill_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        drill = activate_recall_drill(
+            db,
+            drill_id=drill_id,
+            actor_id=current_user.id,
+            reason=payload.reason,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return recall_drill_payload(db, drill)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post(
+    "/recall-drills/{drill_id}/targets/{target_id}/verify",
+    response_model=RecallDrillResponse,
+)
+async def verify_product_recall_drill_target(
+    drill_id: int,
+    target_id: int,
+    payload: RecallDrillTargetVerification,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles("SALES", *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        drill = verify_recall_drill_target(
+            db,
+            drill_id=drill_id,
+            target_id=target_id,
+            payload=payload,
+            actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return recall_drill_payload(db, drill)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post("/recall-drills/{drill_id}/complete", response_model=RecallDrillResponse)
+async def complete_product_recall_drill(
+    drill_id: int,
+    payload: RecallDrillComplete,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        drill = complete_recall_drill(
+            db,
+            drill_id=drill_id,
+            payload=payload,
+            actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return recall_drill_payload(db, drill)
     except (WorkflowError, IntegrityError) as error:
         _rollback_and_raise(db, error)

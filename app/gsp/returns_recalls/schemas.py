@@ -94,6 +94,33 @@ class RecallProgressCreate(ChangeReason):
     summary: str = Field(..., min_length=3, max_length=1000)
 
 
+class RecallCompletionReportCreate(ChangeReason):
+    report_ref: str = Field(..., min_length=3, max_length=200)
+    treatment_summary: str = Field(..., min_length=10, max_length=2000)
+    effectiveness_evaluation: str = Field(..., min_length=10, max_length=1000)
+    regulatory_submission_ref: str = Field(..., min_length=3, max_length=500)
+
+
+class RecallDrillCreate(ChangeReason):
+    drill_no: str = Field(..., min_length=3, max_length=100)
+    recall_level: str = Field(..., min_length=1, max_length=10)
+    scenario: str = Field(..., min_length=10, max_length=1000)
+    objective: str = Field(..., min_length=10, max_length=1000)
+    max_allowed_minutes: int = Field(..., gt=0, le=10080)
+    batch_ids: list[int] = Field(..., min_length=1)
+
+
+class RecallDrillTargetVerification(ChangeReason):
+    verification_status: str = Field(..., min_length=3, max_length=30)
+    notes: str = Field(..., min_length=3, max_length=500)
+
+
+class RecallDrillComplete(ChangeReason):
+    completion_summary: str = Field(..., min_length=10, max_length=2000)
+    deviation_notes: str | None = Field(None, max_length=1000)
+    capa_ref: str | None = Field(None, max_length=500)
+
+
 class RecallBatchResponse(OrmModel):
     id: int
     batch_id: int
@@ -124,6 +151,58 @@ class RecallProgressResponse(OrmModel):
     reported_at: datetime
 
 
+class RecallCompletionReportResponse(OrmModel):
+    id: int
+    report_ref: str
+    treatment_summary: str
+    effectiveness_evaluation: str
+    regulatory_submission_ref: str
+    reported_by: int
+    reported_at: datetime
+
+
+class RecallDrillBatchResponse(OrmModel):
+    id: int
+    batch_id: int
+    target_shipped_quantity: Decimal
+
+
+class RecallDrillTargetResponse(OrmModel):
+    id: int
+    drill_batch_id: int
+    shipment_id: int
+    customer_id: int
+    stock_allocation_id: int
+    batch_id: int
+    shipped_quantity: Decimal
+    verification_status: str
+    verified_by: int | None
+    verified_at: datetime | None
+    verification_notes: str | None
+
+
+class RecallDrillResponse(OrmModel):
+    id: int
+    drill_no: str
+    recall_level: str
+    scenario: str
+    objective: str
+    max_allowed_minutes: int
+    status: str
+    created_by: int
+    created_at: datetime
+    activated_by: int | None
+    activated_at: datetime | None
+    completed_by: int | None
+    completed_at: datetime | None
+    result: str | None
+    completion_summary: str | None
+    deviation_notes: str | None
+    capa_ref: str | None
+    batches: list[RecallDrillBatchResponse]
+    targets: list[RecallDrillTargetResponse]
+
+
 class RecallResponse(OrmModel):
     id: int
     recall_no: str
@@ -142,6 +221,8 @@ class RecallResponse(OrmModel):
     closed_by: int | None
     closed_at: datetime | None
     closure_conclusion: str | None
+    completion_report_due_at: datetime | None
     batches: list[RecallBatchResponse]
     targets: list[RecallTargetResponse]
     progress_reports: list[RecallProgressResponse]
+    completion_report: RecallCompletionReportResponse | None

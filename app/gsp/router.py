@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.time import utc_now
 from app.gsp.audit import verify_audit_chain, write_audit_event
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.maintenance.models import GspMaintenancePlan, GspMaintenancePlanItem
 from app.gsp.models import (
     GspAuditEvent,
     GspBatchStock,
@@ -29,6 +30,9 @@ from app.gsp.quality_disposition.models import (
 from app.gsp.returns_recalls.models import (
     GspRecall,
     GspRecallBatch,
+    GspRecallCompletionReport,
+    GspRecallDrill,
+    GspRecallDrillBatch,
     GspRecallTarget,
     GspSalesReturnItem,
 )
@@ -123,6 +127,52 @@ async def compliance_summary(
         .filter(GspNonconformingRecord.status == "APPROVED")
         .count(),
         "active_recalls": db.query(GspRecall).filter(GspRecall.status == "ACTIVE").count(),
+        "pending_recall_completion_reports": db.query(GspRecall)
+        .outerjoin(
+            GspRecallCompletionReport,
+            GspRecallCompletionReport.recall_id == GspRecall.id,
+        )
+        .filter(
+            GspRecall.status == "CLOSED",
+            GspRecallCompletionReport.id.is_(None),
+        )
+        .count(),
+        "overdue_recall_completion_reports": db.query(GspRecall)
+        .outerjoin(
+            GspRecallCompletionReport,
+            GspRecallCompletionReport.recall_id == GspRecall.id,
+        )
+        .filter(
+            GspRecall.status == "CLOSED",
+            GspRecall.completion_report_due_at < utc_now(),
+            GspRecallCompletionReport.id.is_(None),
+        )
+        .count(),
+        "active_recall_drills": db.query(GspRecallDrill)
+        .filter(GspRecallDrill.status == "ACTIVE")
+        .count(),
+        "failed_recall_drills": db.query(GspRecallDrill)
+        .filter(GspRecallDrill.result == "FAILED")
+        .count(),
+        "pending_maintenance_items": db.query(GspMaintenancePlanItem)
+        .join(
+            GspMaintenancePlan,
+            GspMaintenancePlan.id == GspMaintenancePlanItem.plan_id,
+        )
+        .filter(
+            GspMaintenancePlan.status.in_(["APPROVED", "IN_PROGRESS"]),
+            GspMaintenancePlanItem.status == "PENDING",
+        )
+        .count(),
+        "overdue_maintenance_plans": db.query(GspMaintenancePlan)
+        .filter(
+            GspMaintenancePlan.status.in_(["APPROVED", "IN_PROGRESS"]),
+            GspMaintenancePlan.scheduled_to < today,
+        )
+        .count(),
+        "abnormal_maintenance_findings": db.query(GspMaintenancePlanItem)
+        .filter(GspMaintenancePlanItem.status == "ABNORMAL")
+        .count(),
         "pending_recall_notifications": db.query(GspRecallTarget)
         .filter(GspRecallTarget.notification_status == "PENDING")
         .count(),
@@ -717,6 +767,16 @@ async def trace_batch(
         recalls = (
             db.query(GspRecallBatch).filter(GspRecallBatch.batch_id == batch.id).all()
         )
+        recall_drills = (
+            db.query(GspRecallDrillBatch)
+            .filter(GspRecallDrillBatch.batch_id == batch.id)
+            .all()
+        )
+        maintenance_items = (
+            db.query(GspMaintenancePlanItem)
+            .filter(GspMaintenancePlanItem.batch_id == batch.id)
+            .all()
+        )
         nonconforming_records = (
             db.query(GspNonconformingRecord)
             .filter(GspNonconformingRecord.batch_id == batch.id)
@@ -743,6 +803,8 @@ async def trace_batch(
         hold_ids = [str(item.id) for item in quality_holds]
         return_item_ids = [str(item.id) for item in sales_returns]
         recall_ids = [str(item.recall_id) for item in recalls]
+        recall_drill_ids = [str(item.drill_id) for item in recall_drills]
+        maintenance_item_ids = [str(item.id) for item in maintenance_items]
         nonconforming_audit_ids = [str(item.id) for item in nonconforming_records]
         purchase_return_audit_ids = [str(item.id) for item in purchase_returns]
         result.append(
@@ -755,6 +817,8 @@ async def trace_batch(
                 "quality_holds": [_snapshot(item) for item in quality_holds],
                 "sales_returns": [_snapshot(item) for item in sales_returns],
                 "recalls": [_snapshot(item) for item in recalls],
+                "recall_drills": [_snapshot(item) for item in recall_drills],
+                "maintenance_items": [_snapshot(item) for item in maintenance_items],
                 "nonconforming_records": [
                     _snapshot(item) for item in nonconforming_records
                 ],
@@ -781,6 +845,14 @@ async def trace_batch(
                             and_(
                                 GspAuditEvent.entity_type == "GspRecall",
                                 GspAuditEvent.entity_id.in_(recall_ids),
+                            ),
+                            and_(
+                                GspAuditEvent.entity_type == "GspRecallDrill",
+                                GspAuditEvent.entity_id.in_(recall_drill_ids),
+                            ),
+                            and_(
+                                GspAuditEvent.entity_type == "GspMaintenancePlanItem",
+                                GspAuditEvent.entity_id.in_(maintenance_item_ids),
                             ),
                             and_(
                                 GspAuditEvent.entity_type == "GspNonconformingRecord",

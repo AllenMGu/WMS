@@ -20,13 +20,21 @@ from app.gsp.quality_disposition.service import register_rejected_material
 from app.gsp.returns_recalls.models import (
     GspRecall,
     GspRecallBatch,
+    GspRecallCompletionReport,
+    GspRecallDrill,
+    GspRecallDrillBatch,
+    GspRecallDrillTarget,
     GspRecallProgressReport,
     GspRecallTarget,
     GspSalesReturn,
     GspSalesReturnItem,
 )
 from app.gsp.returns_recalls.schemas import (
+    RecallCompletionReportCreate,
     RecallCreate,
+    RecallDrillComplete,
+    RecallDrillCreate,
+    RecallDrillTargetVerification,
     SalesReturnCreate,
     SalesReturnInspection,
 )
@@ -45,6 +53,7 @@ RECALL_SOURCES = {"REGULATOR", "MANUFACTURER", "INTERNAL"}
 NOTIFICATION_STATUSES = {"NOTIFIED", "ACKNOWLEDGED", "UNREACHABLE"}
 REJECTION_DISPOSITIONS = {"RETURN_TO_SUPPLIER", "DESTROY", "QUARANTINE", "OTHER"}
 RECALL_REPORT_INTERVAL_DAYS = {"I": 1, "II": 3, "III": 7}
+DRILL_VERIFICATION_STATUSES = {"LOCATED", "MISSING"}
 
 
 def _finding_dicts(result) -> list[dict]:
@@ -95,6 +104,50 @@ def recall_payload(db: Session, recall: GspRecall) -> dict:
         .order_by(GspRecallProgressReport.reported_at)
         .all()
     ]
+    completion_report = (
+        db.query(GspRecallCompletionReport)
+        .filter(GspRecallCompletionReport.recall_id == recall.id)
+        .first()
+    )
+    result["completion_report"] = (
+        model_snapshot(completion_report) if completion_report else None
+    )
+    return result
+
+
+def _drill_batches(db: Session, drill_id: int) -> list[GspRecallDrillBatch]:
+    return (
+        db.query(GspRecallDrillBatch)
+        .filter(GspRecallDrillBatch.drill_id == drill_id)
+        .order_by(GspRecallDrillBatch.id)
+        .all()
+    )
+
+
+def _drill_targets(db: Session, drill_id: int) -> list[GspRecallDrillTarget]:
+    return (
+        db.query(GspRecallDrillTarget)
+        .filter(GspRecallDrillTarget.drill_id == drill_id)
+        .order_by(GspRecallDrillTarget.id)
+        .all()
+    )
+
+
+def recall_drill_payload(db: Session, drill: GspRecallDrill) -> dict:
+    result = model_snapshot(drill)
+    result["batches"] = [model_snapshot(item) for item in _drill_batches(db, drill.id)]
+    result["targets"] = [model_snapshot(item) for item in _drill_targets(db, drill.id)]
+    return result
+
+
+def _add_working_days(start, working_days: int):
+    """Return a weekday-based deadline; enterprise holiday calendars remain configurable."""
+    result = start
+    added = 0
+    while added < working_days:
+        result += timedelta(days=1)
+        if result.weekday() < 5:
+            added += 1
     return result
 
 
@@ -789,6 +842,7 @@ def close_recall(
     recall.closed_by = actor_id
     recall.closed_at = utc_now()
     recall.closure_conclusion = conclusion
+    recall.completion_report_due_at = _add_working_days(recall.closed_at, 10)
     db.flush()
     after = recall_payload(db, recall)
     enqueue_integration_message(
@@ -811,3 +865,303 @@ def close_recall(
         source_ip=source_ip,
     )
     return recall
+
+
+def submit_recall_completion_report(
+    db: Session,
+    *,
+    recall_id: int,
+    payload: RecallCompletionReportCreate,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspRecall:
+    recall = (
+        db.query(GspRecall)
+        .filter(GspRecall.id == recall_id)
+        .with_for_update()
+        .first()
+    )
+    if not recall:
+        raise WorkflowError(404, "召回单不存在")
+    if recall.status != "CLOSED":
+        raise WorkflowError(409, "只有已完成的召回可以提交完成报告")
+    if recall.closed_by == actor_id:
+        raise WorkflowError(409, "召回关闭复核人与完成报告提交人必须分离")
+    if (
+        db.query(GspRecallCompletionReport)
+        .filter(GspRecallCompletionReport.recall_id == recall.id)
+        .first()
+    ):
+        raise WorkflowError(409, "该召回已经提交完成报告")
+    before = recall_payload(db, recall)
+    report = GspRecallCompletionReport(
+        recall_id=recall.id,
+        report_ref=payload.report_ref,
+        treatment_summary=payload.treatment_summary,
+        effectiveness_evaluation=payload.effectiveness_evaluation,
+        regulatory_submission_ref=payload.regulatory_submission_ref,
+        reported_by=actor_id,
+        reported_at=utc_now(),
+    )
+    db.add(report)
+    db.flush()
+    after = recall_payload(db, recall)
+    enqueue_integration_message(
+        db,
+        destination="JZT",
+        message_type="RECALL_COMPLETION_REPORTED",
+        aggregate_type="GspRecall",
+        aggregate_id=str(recall.id),
+        payload=after,
+    )
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="RECALL_COMPLETION_REPORTED",
+        entity_type="GspRecall",
+        entity_id=str(recall.id),
+        reason=payload.reason,
+        before_data=before,
+        after_data=after,
+        source_ip=source_ip,
+    )
+    return recall
+
+
+def create_recall_drill(
+    db: Session,
+    *,
+    payload: RecallDrillCreate,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspRecallDrill:
+    recall_level = payload.recall_level.upper()
+    if recall_level not in RECALL_LEVELS:
+        raise WorkflowError(422, "recall_level 只能是 I、II 或 III")
+    if len(payload.batch_ids) != len(set(payload.batch_ids)):
+        raise WorkflowError(422, "同一召回演练不能重复选择批次")
+    batches = (
+        db.query(GspDrugBatch)
+        .filter(GspDrugBatch.id.in_(payload.batch_ids))
+        .order_by(GspDrugBatch.id)
+        .all()
+    )
+    if len(batches) != len(payload.batch_ids):
+        raise WorkflowError(404, "一个或多个演练批次不存在")
+    drill = GspRecallDrill(
+        drill_no=payload.drill_no,
+        recall_level=recall_level,
+        scenario=payload.scenario,
+        objective=payload.objective,
+        max_allowed_minutes=payload.max_allowed_minutes,
+        status="DRAFT",
+        created_by=actor_id,
+    )
+    db.add(drill)
+    db.flush()
+    for batch in batches:
+        db.add(
+            GspRecallDrillBatch(
+                drill_id=drill.id,
+                batch_id=batch.id,
+                target_shipped_quantity=Decimal("0"),
+            )
+        )
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="RECALL_DRILL_CREATED",
+        entity_type="GspRecallDrill",
+        entity_id=str(drill.id),
+        reason=payload.reason,
+        after_data=recall_drill_payload(db, drill),
+        source_ip=source_ip,
+    )
+    return drill
+
+
+def activate_recall_drill(
+    db: Session,
+    *,
+    drill_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+) -> GspRecallDrill:
+    drill = (
+        db.query(GspRecallDrill)
+        .filter(GspRecallDrill.id == drill_id)
+        .with_for_update()
+        .first()
+    )
+    if not drill:
+        raise WorkflowError(404, "召回演练不存在")
+    if drill.status != "DRAFT":
+        raise WorkflowError(409, "只有草稿召回演练可以启动")
+    if drill.created_by == actor_id:
+        raise WorkflowError(409, "召回演练制单人与启动审批人必须分离")
+    before = recall_drill_payload(db, drill)
+    for drill_batch in _drill_batches(db, drill.id):
+        rows = (
+            db.query(
+                GspStockAllocation,
+                GspSalesOrderItem,
+                GspSalesOrder,
+                GspShipment,
+            )
+            .join(
+                GspSalesOrderItem,
+                GspSalesOrderItem.id == GspStockAllocation.sales_order_item_id,
+            )
+            .join(
+                GspSalesOrder,
+                GspSalesOrder.id == GspSalesOrderItem.sales_order_id,
+            )
+            .join(GspShipment, GspShipment.sales_order_id == GspSalesOrder.id)
+            .filter(
+                GspStockAllocation.batch_id == drill_batch.batch_id,
+                GspStockAllocation.status == "SHIPPED",
+                GspShipment.status == "DISPATCHED",
+            )
+            .all()
+        )
+        target_quantity = Decimal("0")
+        for allocation, _order_item, order, shipment in rows:
+            quantity = Decimal(allocation.quantity)
+            target_quantity += quantity
+            db.add(
+                GspRecallDrillTarget(
+                    drill_id=drill.id,
+                    drill_batch_id=drill_batch.id,
+                    shipment_id=shipment.id,
+                    customer_id=order.customer_id,
+                    stock_allocation_id=allocation.id,
+                    batch_id=drill_batch.batch_id,
+                    shipped_quantity=quantity,
+                    verification_status="PENDING",
+                )
+            )
+        drill_batch.target_shipped_quantity = target_quantity
+    drill.status = "ACTIVE"
+    drill.activated_by = actor_id
+    drill.activated_at = utc_now()
+    db.flush()
+    after = recall_drill_payload(db, drill)
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="RECALL_DRILL_ACTIVATED",
+        entity_type="GspRecallDrill",
+        entity_id=str(drill.id),
+        reason=reason,
+        before_data=before,
+        after_data=after,
+        source_ip=source_ip,
+    )
+    return drill
+
+
+def verify_recall_drill_target(
+    db: Session,
+    *,
+    drill_id: int,
+    target_id: int,
+    payload: RecallDrillTargetVerification,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspRecallDrill:
+    drill = db.query(GspRecallDrill).filter(GspRecallDrill.id == drill_id).first()
+    if not drill:
+        raise WorkflowError(404, "召回演练不存在")
+    if drill.status != "ACTIVE":
+        raise WorkflowError(409, "只有执行中的召回演练可以登记追溯核验")
+    status = payload.verification_status.upper()
+    if status not in DRILL_VERIFICATION_STATUSES:
+        raise WorkflowError(422, "verification_status 只能是 LOCATED 或 MISSING")
+    target = (
+        db.query(GspRecallDrillTarget)
+        .filter(
+            GspRecallDrillTarget.id == target_id,
+            GspRecallDrillTarget.drill_id == drill.id,
+        )
+        .with_for_update()
+        .first()
+    )
+    if not target:
+        raise WorkflowError(404, "召回演练追溯目标不存在")
+    before = model_snapshot(target)
+    target.verification_status = status
+    target.verified_by = actor_id
+    target.verified_at = utc_now()
+    target.verification_notes = payload.notes
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="RECALL_DRILL_TARGET_VERIFIED",
+        entity_type="GspRecallDrillTarget",
+        entity_id=str(target.id),
+        reason=payload.reason,
+        before_data=before,
+        after_data=model_snapshot(target),
+        source_ip=source_ip,
+    )
+    return drill
+
+
+def complete_recall_drill(
+    db: Session,
+    *,
+    drill_id: int,
+    payload: RecallDrillComplete,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspRecallDrill:
+    drill = (
+        db.query(GspRecallDrill)
+        .filter(GspRecallDrill.id == drill_id)
+        .with_for_update()
+        .first()
+    )
+    if not drill:
+        raise WorkflowError(404, "召回演练不存在")
+    if drill.status != "ACTIVE":
+        raise WorkflowError(409, "只有执行中的召回演练可以完成")
+    if drill.activated_by == actor_id:
+        raise WorkflowError(409, "召回演练启动人与完成复核人必须分离")
+    targets = _drill_targets(db, drill.id)
+    if not targets:
+        raise WorkflowError(409, "召回演练未生成任何已发运追溯目标")
+    if any(target.verification_status == "PENDING" for target in targets):
+        raise WorkflowError(409, "仍有召回演练追溯目标未完成核验")
+    has_missing = any(target.verification_status == "MISSING" for target in targets)
+    completed_at = utc_now()
+    elapsed_seconds = (completed_at - drill.activated_at).total_seconds()
+    exceeded_time = elapsed_seconds > drill.max_allowed_minutes * 60
+    if (has_missing or exceeded_time) and not (
+        payload.deviation_notes and payload.capa_ref
+    ):
+        raise WorkflowError(422, "演练存在未定位目标或超时，必须记录偏差和 CAPA 引用")
+    before = recall_drill_payload(db, drill)
+    drill.status = "COMPLETED"
+    drill.completed_by = actor_id
+    drill.completed_at = completed_at
+    drill.result = "FAILED" if has_missing or exceeded_time else "PASSED"
+    drill.completion_summary = payload.completion_summary
+    drill.deviation_notes = payload.deviation_notes
+    drill.capa_ref = payload.capa_ref
+    db.flush()
+    after = recall_drill_payload(db, drill)
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="RECALL_DRILL_COMPLETED",
+        entity_type="GspRecallDrill",
+        entity_id=str(drill.id),
+        reason=payload.reason,
+        before_data=before,
+        after_data=after,
+        source_ip=source_ip,
+    )
+    return drill

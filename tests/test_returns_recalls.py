@@ -17,23 +17,34 @@ from app.gsp.models import (
 from app.gsp.quality_disposition.models import GspNonconformingRecord
 from app.gsp.returns_recalls.models import (
     GspRecallBatch,
+    GspRecallCompletionReport,
+    GspRecallDrillTarget,
     GspRecallTarget,
     GspSalesReturnItem,
 )
 from app.gsp.returns_recalls.schemas import (
+    RecallCompletionReportCreate,
     RecallCreate,
+    RecallDrillComplete,
+    RecallDrillCreate,
+    RecallDrillTargetVerification,
     SalesReturnCreate,
     SalesReturnInspection,
     SalesReturnLineCreate,
 )
 from app.gsp.returns_recalls.service import (
     activate_recall,
+    activate_recall_drill,
     close_recall,
+    complete_recall_drill,
     create_recall,
+    create_recall_drill,
     create_sales_return,
     inspect_sales_return_item,
     notify_recall_target,
     record_recall_progress,
+    submit_recall_completion_report,
+    verify_recall_drill_target,
 )
 from app.gsp.sales_shipping.models import GspStockAllocation
 from app.gsp.sales_shipping.schemas import (
@@ -514,6 +525,14 @@ def test_recall_locks_batch_tracks_recovery_and_requires_notification():
         db.refresh(recall)
         db.refresh(stock)
         assert recall.status == "CLOSED"
+        assert recall.completion_report_due_at > recall.closed_at
+        cursor = recall.closed_at
+        counted_working_days = 0
+        while cursor < recall.completion_report_due_at:
+            cursor += timedelta(days=1)
+            if cursor.weekday() < 5:
+                counted_working_days += 1
+        assert counted_working_days == 10
         assert stock.stock_status == "HOLD"
         assert (
             db.query(GspQualityHold)
@@ -537,5 +556,126 @@ def test_recall_locks_batch_tracks_recovery_and_requires_notification():
             "RECALL_TARGET_UPDATED",
             "RECALL_CLOSED",
         } <= recall_messages
+        with pytest.raises(WorkflowError, match="必须分离"):
+            submit_recall_completion_report(
+                db,
+                recall_id=recall.id,
+                payload=RecallCompletionReportCreate(
+                    report_ref="RECALL-COMPLETE-INVALID",
+                    treatment_summary="召回范围、通知、回收和处置记录已经完成汇总。",
+                    effectiveness_evaluation="召回过程达到计划目标，未发现新的风险扩散。",
+                    regulatory_submission_ref="REG-SUBMISSION-INVALID",
+                    reason="错误的同人提交完成报告",
+                ),
+                actor_id=closer.id,
+                source_ip="127.0.0.1",
+            )
+        submit_recall_completion_report(
+            db,
+            recall_id=recall.id,
+            payload=RecallCompletionReportCreate(
+                report_ref="RECALL-COMPLETE-001",
+                treatment_summary="召回范围、通知、回收和处置记录已经完成汇总。",
+                effectiveness_evaluation="召回过程达到计划目标，未发现新的风险扩散。",
+                regulatory_submission_ref="REG-SUBMISSION-001",
+                reason="在法定期限内提交召回完成报告",
+            ),
+            actor_id=creator.id,
+            source_ip="127.0.0.1",
+        )
+        db.commit()
+        report = (
+            db.query(GspRecallCompletionReport)
+            .filter(GspRecallCompletionReport.recall_id == recall.id)
+            .one()
+        )
+        assert report.regulatory_submission_ref == "REG-SUBMISSION-001"
+        assert (
+            db.query(GspIntegrationMessage)
+            .filter(GspIntegrationMessage.message_type == "RECALL_COMPLETION_REPORTED")
+            .count()
+            >= 1
+        )
+    finally:
+        db.close()
+
+
+def test_recall_drill_uses_real_trace_targets_without_locking_inventory():
+    import main  # noqa: F401
+
+    db = SessionLocal()
+    try:
+        users, _warehouse, _location, batch, stock, _shipment, _allocation = (
+            _seed_dispatched_batch(db)
+        )
+        creator, activator, completer = users[1], users[2], users[3]
+        drill = create_recall_drill(
+            db,
+            payload=RecallDrillCreate(
+                drill_no=f"DRILL-{uuid4().hex[:10]}",
+                recall_level="I",
+                scenario="模拟已发运批次出现严重质量风险，需要快速定位全部购货方。",
+                objective="验证批号到发运单和购货方的正向追溯完整性。",
+                max_allowed_minutes=60,
+                batch_ids=[batch.id],
+                reason="建立年度召回演练",
+            ),
+            actor_id=creator.id,
+            source_ip="127.0.0.1",
+        )
+        activate_recall_drill(
+            db,
+            drill_id=drill.id,
+            actor_id=activator.id,
+            reason="独立批准并启动召回演练",
+            source_ip="127.0.0.1",
+        )
+        db.flush()
+        target = (
+            db.query(GspRecallDrillTarget)
+            .filter(GspRecallDrillTarget.drill_id == drill.id)
+            .one()
+        )
+        assert target.shipped_quantity == Decimal("4.000")
+        assert stock.stock_status == "AVAILABLE"
+        verify_recall_drill_target(
+            db,
+            drill_id=drill.id,
+            target_id=target.id,
+            payload=RecallDrillTargetVerification(
+                verification_status="LOCATED",
+                notes="已从批号追溯到原发运单与购货方",
+                reason="登记演练追溯结果",
+            ),
+            actor_id=users[0].id,
+            source_ip="127.0.0.1",
+        )
+        with pytest.raises(WorkflowError, match="必须分离"):
+            complete_recall_drill(
+                db,
+                drill_id=drill.id,
+                payload=RecallDrillComplete(
+                    completion_summary="演练完成且所有目标均已定位。",
+                    reason="错误的同人完成演练",
+                ),
+                actor_id=activator.id,
+                source_ip="127.0.0.1",
+            )
+        complete_recall_drill(
+            db,
+            drill_id=drill.id,
+            payload=RecallDrillComplete(
+                completion_summary="演练在目标时限内完成，所有发运目标均已定位。",
+                reason="独立复核演练完成记录",
+            ),
+            actor_id=completer.id,
+            source_ip="127.0.0.1",
+        )
+        db.commit()
+        db.refresh(drill)
+        db.refresh(stock)
+        assert drill.status == "COMPLETED"
+        assert drill.result == "PASSED"
+        assert stock.stock_status == "AVAILABLE"
     finally:
         db.close()
