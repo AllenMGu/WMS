@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -38,6 +37,7 @@ from app.gsp.schemas import (
     QualityHoldResponse,
     RoleGrant,
 )
+from app.gsp.snapshots import model_snapshot
 from app.legacy import Goods, Location, User, get_current_user
 
 router = APIRouter(prefix="/gsp", tags=["GSP合规"])
@@ -50,7 +50,8 @@ def _source_ip(request: Request) -> str | None:
 
 
 def _snapshot(model) -> dict:
-    return jsonable_encoder({column.name: getattr(model, column.name) for column in model.__table__.columns})
+    """Compatibility alias for callers from the first GSP foundation phase."""
+    return model_snapshot(model)
 
 
 def _findings_detail(result) -> list[dict]:

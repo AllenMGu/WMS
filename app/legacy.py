@@ -1686,6 +1686,22 @@ async def import_goods(
         raise HTTPException(status_code=500, detail=f"导入失败：{str(e)}")
 
 # ------------------- 扫码出入库接口 -------------------
+def ensure_not_gsp_managed_goods(db: Session, goods_ids) -> None:
+    """Prevent legacy quantity paths from bypassing batch and quality controls."""
+    from app.gsp.models import GspDrugProfile
+
+    managed_goods = (
+        db.query(GspDrugProfile.goods_id)
+        .filter(GspDrugProfile.goods_id.in_(set(goods_ids)))
+        .first()
+    )
+    if managed_goods:
+        raise HTTPException(
+            status_code=409,
+            detail="GSP药品禁止使用旧版无批号出入库接口，请使用 /api/gsp 受控流程",
+        )
+
+
 @router.post("/inventory/scan", summary="扫码出入库")
 async def scan_inventory(
     inventory: InventoryCreate,
@@ -1696,6 +1712,7 @@ async def scan_inventory(
     goods = db.query(Goods).filter(Goods.barcode == inventory.goods_barcode).first()
     if not goods:
         raise HTTPException(status_code=404, detail="货物不存在")
+    ensure_not_gsp_managed_goods(db, [goods.id])
 
     # 2. 查询库位并校验所属仓库
     location = db.query(Location).filter(Location.location_code == inventory.location_code).first()
@@ -2809,6 +2826,8 @@ async def submit_inbound_order(
         if not order.items:
             raise HTTPException(status_code=400, detail="入库单没有明细项")
 
+        ensure_not_gsp_managed_goods(db, [item.goods_id for item in order.items])
+
         # 开始事务
         for item in order.items:
             # 更新库存
@@ -3446,6 +3465,8 @@ async def submit_outbound_order(
 
         if not order.items:
             raise HTTPException(status_code=400, detail="出库单没有明细项")
+
+        ensure_not_gsp_managed_goods(db, [item.goods_id for item in order.items])
 
         # 再次检查库存
         for item in order.items:
