@@ -18,6 +18,18 @@ class ChangeReason(BaseModel):
 class RoleGrant(ChangeReason):
     user_id: int
     role: str = Field(..., min_length=3, max_length=50)
+    approval_ref: str = Field(..., min_length=3, max_length=200)
+    review_due_at: datetime
+    expires_at: Optional[datetime] = None
+
+
+class RoleReview(ChangeReason):
+    decision: str = Field(..., pattern="^(RETAIN|REVOKE)$")
+    next_review_due_at: Optional[datetime] = None
+
+
+class RoleRevoke(ChangeReason):
+    pass
 
 
 class DrugProfileUpsert(ChangeReason):

@@ -58,6 +58,10 @@ def write_audit_event(
     after_data: Optional[dict[str, Any]] = None,
     source_ip: Optional[str] = None,
 ) -> GspAuditEvent:
+    # Make earlier events in the same transaction visible before linking the
+    # next event.  Several controlled operations can legitimately emit more
+    # than one audit event before commit.
+    db.flush()
     previous = db.query(GspAuditEvent).order_by(GspAuditEvent.id.desc()).first()
     previous_hash = previous.event_hash if previous else None
     occurred_at = utc_now()

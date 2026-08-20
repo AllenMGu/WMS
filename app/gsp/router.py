@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.time import utc_now
+from app.gsp.access_control import grant_gsp_role, review_gsp_role, revoke_gsp_role
 from app.gsp.audit import verify_audit_chain, write_audit_event
-from app.gsp.dependencies import require_gsp_roles
+from app.gsp.dependencies import require_gsp_roles, require_quality_manager_or_bootstrap
 from app.gsp.maintenance.models import GspMaintenancePlan, GspMaintenancePlanItem
 from app.gsp.models import (
     GspAuditEvent,
@@ -53,6 +54,8 @@ from app.gsp.schemas import (
     QualityHoldRelease,
     QualityHoldResponse,
     RoleGrant,
+    RoleReview,
+    RoleRevoke,
 )
 from app.gsp.snapshots import model_snapshot
 from app.gsp.stocktaking.models import GspStocktakeItem, GspStocktakePlan
@@ -174,6 +177,26 @@ async def compliance_summary(
         "abnormal_maintenance_findings": db.query(GspMaintenancePlanItem)
         .filter(GspMaintenancePlanItem.status == "ABNORMAL")
         .count(),
+        "overdue_access_reviews": db.query(GspRoleAssignment)
+        .filter(
+            GspRoleAssignment.is_active.is_(True),
+            GspRoleAssignment.review_due_at <= utc_now(),
+        )
+        .count(),
+        "expired_role_assignments": db.query(GspRoleAssignment)
+        .filter(
+            GspRoleAssignment.is_active.is_(True),
+            GspRoleAssignment.expires_at.is_not(None),
+            GspRoleAssignment.expires_at <= utc_now(),
+        )
+        .count(),
+        "inactive_users_with_active_roles": db.query(GspRoleAssignment)
+        .join(User, User.id == GspRoleAssignment.user_id)
+        .filter(
+            GspRoleAssignment.is_active.is_(True),
+            User.is_active.is_(False),
+        )
+        .count(),
         "pending_stocktake_plans": db.query(GspStocktakePlan)
         .filter(GspStocktakePlan.status.in_(["SUBMITTED", "COUNTING", "COUNTED"]))
         .count(),
@@ -221,43 +244,110 @@ async def compliance_summary(
 async def grant_role(
     payload: RoleGrant,
     request: Request,
-    current_user: User = Depends(require_gsp_roles("QUALITY_MANAGER")),
+    current_user: User = Depends(require_quality_manager_or_bootstrap),
     db: Session = Depends(get_db),
 ):
-    normalized_role = payload.role.upper()
-    existing = (
+    valid_quality_manager_exists = (
         db.query(GspRoleAssignment)
         .filter(
-            GspRoleAssignment.user_id == payload.user_id,
-            GspRoleAssignment.role == normalized_role,
+            GspRoleAssignment.role == "QUALITY_MANAGER",
+            GspRoleAssignment.is_active.is_(True),
+            GspRoleAssignment.review_due_at > utc_now(),
+            or_(
+                GspRoleAssignment.expires_at.is_(None),
+                GspRoleAssignment.expires_at > utc_now(),
+            ),
         )
         .first()
+        is not None
     )
-    if existing:
-        existing.is_active = True
-        existing.granted_by = current_user.id
-        existing.granted_at = utc_now()
-        assignment = existing
-    else:
-        assignment = GspRoleAssignment(
-            user_id=payload.user_id,
-            role=normalized_role,
-            granted_by=current_user.id,
-        )
-        db.add(assignment)
-        db.flush()
-    write_audit_event(
+    role_value = getattr(current_user.role, "value", current_user.role)
+    if not valid_quality_manager_exists and role_value == "admin" and payload.role.upper() != "QUALITY_MANAGER":
+        raise HTTPException(status_code=400, detail="首次GSP授权必须建立QUALITY_MANAGER岗位")
+    assignment = grant_gsp_role(
         db,
-        actor_user_id=current_user.id,
-        action="ROLE_GRANTED",
-        entity_type="GspRoleAssignment",
-        entity_id=str(assignment.id),
-        reason=payload.reason,
-        after_data=_snapshot(assignment),
+        payload=payload,
+        actor_id=current_user.id,
         source_ip=_source_ip(request),
     )
     db.commit()
-    return {"id": assignment.id, "user_id": assignment.user_id, "role": assignment.role}
+    return _role_assignment_response(assignment)
+
+
+def _role_assignment_response(assignment: GspRoleAssignment) -> dict:
+    return {
+        "id": assignment.id,
+        "user_id": assignment.user_id,
+        "role": assignment.role,
+        "approval_ref": assignment.approval_ref,
+        "review_due_at": assignment.review_due_at,
+        "expires_at": assignment.expires_at,
+        "last_reviewed_by": assignment.last_reviewed_by,
+        "last_reviewed_at": assignment.last_reviewed_at,
+        "is_active": assignment.is_active,
+        "revoked_by": assignment.revoked_by,
+        "revoked_at": assignment.revoked_at,
+        "revocation_reason": assignment.revocation_reason,
+    }
+
+
+@router.get("/roles")
+async def list_roles(
+    user_id: int | None = None,
+    active_only: bool = False,
+    current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    query = db.query(GspRoleAssignment)
+    if user_id is not None:
+        query = query.filter(GspRoleAssignment.user_id == user_id)
+    if active_only:
+        query = query.filter(GspRoleAssignment.is_active.is_(True))
+    return [_role_assignment_response(row) for row in query.order_by(GspRoleAssignment.id).all()]
+
+
+@router.post("/roles/{assignment_id}/review")
+async def review_role(
+    assignment_id: int,
+    payload: RoleReview,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles("QUALITY_MANAGER")),
+    db: Session = Depends(get_db),
+):
+    assignment = db.query(GspRoleAssignment).filter(GspRoleAssignment.id == assignment_id).first()
+    if assignment is None:
+        raise HTTPException(status_code=404, detail="岗位授权不存在")
+    review_gsp_role(
+        db,
+        assignment=assignment,
+        payload=payload,
+        actor_id=current_user.id,
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    return _role_assignment_response(assignment)
+
+
+@router.post("/roles/{assignment_id}/revoke")
+async def revoke_role(
+    assignment_id: int,
+    payload: RoleRevoke,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles("QUALITY_MANAGER")),
+    db: Session = Depends(get_db),
+):
+    assignment = db.query(GspRoleAssignment).filter(GspRoleAssignment.id == assignment_id).first()
+    if assignment is None:
+        raise HTTPException(status_code=404, detail="岗位授权不存在")
+    revoke_gsp_role(
+        db,
+        assignment=assignment,
+        actor_id=current_user.id,
+        reason=payload.reason,
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    return _role_assignment_response(assignment)
 
 
 @router.post("/partners", response_model=PartnerResponse, status_code=201)
