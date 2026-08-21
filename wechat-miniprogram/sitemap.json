@@ -1,9 +1,0 @@
-{
-  "desc": "WMS mini program sitemap",
-  "rules": [
-    {
-      "action": "allow",
-      "page": "*"
-    }
-  ]
-}

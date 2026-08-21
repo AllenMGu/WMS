@@ -33,7 +33,8 @@ flowchart TB
 | 不合格品/购进退出 | `app/gsp/quality_disposition/` | 已独立，覆盖质量锁定、独立处置批准、监督销毁与退供发运 |
 | 药品养护 | `app/gsp/maintenance/` | 已独立，覆盖计划、审批、逐库存检查、异常锁定与完成复核 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
-| Web 前端 | `frontend/` | 仅覆盖旧 WMS |
+| Web 前端 | [`AllenMGu/WMS-frontend`](https://github.com/AllenMGu/WMS-frontend) | 独立部署，当前仅覆盖兼容期旧 WMS |
+| 微信小程序 | [`AllenMGu/WMS-miniprogram`](https://github.com/AllenMGu/WMS-miniprogram) | 原生微信客户端，独立发布 |
 | 九州通适配器 | 计划为 `app/integrations/jzt/` | 等正式接口规范 |
 
 ## WMS 后续拆分顺序
