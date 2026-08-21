@@ -3,7 +3,8 @@
 [查看 CI](https://github.com/AllenMGu/WMS/actions/workflows/ci.yml) ·
 [GSP 差距矩阵](docs/GSP_GAP_ANALYSIS.md) ·
 [CSV 验证计划](docs/VALIDATION_PLAN.md) ·
-[目标架构](docs/ARCHITECTURE.md)
+[目标架构](docs/ARCHITECTURE.md) ·
+[运维控制手册](docs/OPERATIONS_RUNBOOK.md)
 
 本仓库是 WMS / GSP 系统的后端仓库，包含 FastAPI 服务、数据库模型与迁移、自动化测试、
 运维脚本和验证设计资料。客户端已拆分为独立仓库：
@@ -14,7 +15,7 @@
 后端继续保留兼容期 `/api` WMS 接口；新增受控业务统一位于 `/api/gsp`。仓库拆分原则、
 版本关系与部署边界见 [仓库拆分说明](docs/REPOSITORY_SPLIT.md)。
 
-当前版本：`0.8.0`。当前定位是**可继续开发和验证的 GSP 工程基线**，尚不是可直接用于
+当前版本：`0.9.0`。当前定位是**可继续开发和验证的 GSP 工程基线**，尚不是可直接用于
 药品经营活动的商业成品。
 
 > 软件功能不能单独证明企业符合 GSP。正式投用还需要质量部门批准的业务流程与 SOP、
@@ -33,7 +34,8 @@
 | 第七阶段 | 批号库存盲盘、差异复盘/审批、受控库存调整和并发基线保护 | 已完成 |
 | 第八阶段 | GSP 岗位批准依据、职责冲突、授权复核/到期、离职回收和 LDAP 最小权限导入 | 已完成 |
 | 第九阶段 | 资质证据与授权人员、NMPA 档案核验、旧批号查询关闭、抽样/受控打印、全链路锁定和审计校验 | 已完成 |
-| 当前阶段 | 秘密管理/轮换/双人审批、备份调度、异地保存、告警与恢复演练等剩余 P0 | 进行中 |
+| 第十阶段 | 秘密版本治理、双人审批、备份证据/异地副本/告警、恢复演练审批与独立验证 | 已完成（软件控制） |
+| 当前阶段 | 在目标环境接入秘密管理、启用备份定时器、配置真实异地介质与告警并执行首次恢复演练 | 待部署验收 |
 | 后续阶段 | 承运商、在途/签收、温湿度、电子签名等业务功能；九州通正式适配器最后实施 | 待实施 |
 
 CSV 验证文件包暂不纳入当前开发顺序；先完成其余 P0，再补齐业务功能，最后开展九州通正式接口对接。
@@ -133,6 +135,16 @@ flowchart TD
 - 九州通等外部系统通过事务出站箱对接，避免直接修改库存核心表。
 - 提供批号追溯、审计链校验和合规概览接口。
 
+### 秘密、备份与恢复治理
+
+- 生产启动要求声明外部秘密管理来源及 JWT、数据库、LDAP 凭据版本引用；系统不保存秘密正文。
+- 秘密轮换经过申请、独立质量审批、管理员实施和独立结果验证；审批人与实施人分离，申请/实施人不得自行验证。
+- 备份证据保存计划时间、校验和、大小、主副本、异地/离线副本、保留期限和失败告警引用，并要求独立复核。
+- 恢复演练只能选用已复核通过的成功备份，经过申请、独立审批、隔离库执行及独立验证，记录 RTO/RPO 和核对证据。
+- `scripts/backup-postgres.sh` 生成自校验 PostgreSQL 自定义格式备份、异地副本和 JSON 证据；失败时写入耐久告警标记。
+- `scripts/restore-drill-postgres.sh` 仅允许恢复到显式确认的空白非生产数据库，并执行关键表数量与审计链只读检查。
+- systemd 参考调度和生产配置清单见 [运维控制手册](docs/OPERATIONS_RUNBOOK.md)。
+
 ## 系统结构
 
 ```text
@@ -146,6 +158,7 @@ WMS/
 │       ├── procurement_receiving/   # 采购、收货、验收闭环
 │       ├── quality_disposition/      # 不合格品处置、监督销毁与购进退出
 │       ├── maintenance/              # 养护计划、检查、异常锁定与完成复核
+│       ├── operations/               # 秘密轮换、备份证据和恢复演练治理
 │       ├── sales_shipping/          # 销售、FEFO、复核、发运闭环
 │       ├── stocktaking/             # 批号库存盲盘、差异复核与受控调整
 │       ├── returns_recalls/          # 销后退货、检验、召回与回收核对
@@ -200,6 +213,8 @@ uvicorn main:app --reload
 
 - 设置 `APP_ENV=production`。
 - 使用至少 32 字符的随机 `SECRET_KEY`。
+- 由外部秘密管理服务注入秘密，并设置 `SECRETS_PROVIDER`、`SECRET_KEY_VERSION_REF` 和
+  `DATABASE_CREDENTIAL_VERSION_REF`；配置 LDAP 服务账号时还必须设置 `LDAP_CREDENTIAL_VERSION_REF`。
 - 使用 PostgreSQL `DATABASE_URL`，禁止使用 SQLite。
 - 设置 `AUTO_CREATE_SCHEMA=false`。
 - 通过经过评审的 Alembic 迁移变更数据库结构。
@@ -234,6 +249,9 @@ alembic check
 | 药品养护 | `/api/gsp/maintenance/plans` | 养护计划、独立审批、库存检查、异常锁定和完成复核 |
 | 批号库存盘点 | `/api/gsp/stocktaking/plans` | 盲盘、复盘、差异质量批准和独立库存调整 |
 | 追溯审计 | `/api/gsp/trace/batches/{batch_no}`、`/api/gsp/audit-events` | 批号追溯和审计链查询 |
+| 秘密轮换 | `/api/gsp/operations/secret-rotations` | 版本引用、独立审批、实施与验证，不接收秘密正文 |
+| 备份证据 | `/api/gsp/operations/backups` | 备份结果、异地/离线副本、告警与独立复核 |
+| 恢复演练 | `/api/gsp/operations/recovery-drills` | 恢复计划、审批、RTO/RPO、执行与独立验证 |
 
 完整请求/响应模型以运行时 OpenAPI 文档为准。
 
@@ -249,7 +267,7 @@ alembic check
 
 GitHub Actions 会在面向 `main` 的 Pull Request 上执行：
 
-- Python 3.12 静态检查、25 项自动化测试、源码编译和依赖一致性检查。
+- Python 3.12 静态检查、31 项自动化测试、源码编译和依赖一致性检查。
 - PostgreSQL 16 服务启动、`alembic upgrade head`、`alembic check` 和集成测试。
 - 官方 Actions 固定完整提交 SHA，工作流权限限制为 `contents: read`。
 
@@ -260,6 +278,7 @@ GitHub Actions 会在面向 `main` 的 Pull Request 上执行：
 - [GSP 差距矩阵](docs/GSP_GAP_ANALYSIS.md)
 - [CSV / 验证计划](docs/VALIDATION_PLAN.md)
 - [九州通接口边界](docs/JZT_INTEGRATION.md)
+- [秘密、备份与恢复运维控制手册](docs/OPERATIONS_RUNBOOK.md)
 - [数据库迁移说明](migrations/README.md)
 
 ## 投用声明

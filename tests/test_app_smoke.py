@@ -27,6 +27,11 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/gsp/quality/nonconforming" in paths
     assert "/api/gsp/procurement/returns" in paths
     assert "/api/gsp/audit-verifications" in paths
+    assert "/api/gsp/operations/secret-rotations" in paths
+    assert "/api/gsp/operations/secret-rotations/{rotation_id}/verify" in paths
+    assert "/api/gsp/operations/backups/{evidence_id}/review" in paths
+    assert "/api/gsp/operations/recovery-drills/{drill_id}/execute" in paths
+    assert "/api/gsp/operations/recovery-drills/{drill_id}/verify" in paths
     assert "/health" in paths
 
 

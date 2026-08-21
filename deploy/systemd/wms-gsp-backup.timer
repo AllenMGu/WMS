@@ -1,0 +1,13 @@
+[Unit]
+Description=Run WMS GSP controlled backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=15m
+AccuracySec=1m
+Unit=wms-gsp-backup.service
+
+[Install]
+WantedBy=timers.target
+

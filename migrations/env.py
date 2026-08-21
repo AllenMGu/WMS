@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.database import Base
 from app.gsp import models as gsp_models  # noqa: F401
 from app.gsp.maintenance import models as maintenance_models  # noqa: F401
+from app.gsp.operations import models as operations_models  # noqa: F401
 from app.gsp.procurement_receiving import models as procurement_receiving_models  # noqa: F401
 from app.gsp.quality_disposition import models as quality_disposition_models  # noqa: F401
 from app.gsp.returns_recalls import models as returns_recalls_models  # noqa: F401
