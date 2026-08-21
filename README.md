@@ -5,9 +5,14 @@
 [CSV 验证计划](docs/VALIDATION_PLAN.md) ·
 [目标架构](docs/ARCHITECTURE.md)
 
-本项目正在从通用多仓库 WMS 拆分为“WMS 业务域 + GSP 质量域 + 外部集成域”的模块化系统。
-旧版 Web 前端、微信小程序和 `/api` WMS 接口暂时保持兼容；新增受控业务统一位于
-`/api/gsp`。
+本仓库是 WMS / GSP 系统的后端仓库，包含 FastAPI 服务、数据库模型与迁移、自动化测试、
+运维脚本和验证设计资料。客户端已拆分为独立仓库：
+
+- [WMS Web 前端](https://github.com/AllenMGu/WMS-frontend)
+- [WMS 微信小程序](https://github.com/AllenMGu/WMS-miniprogram)
+
+后端继续保留兼容期 `/api` WMS 接口；新增受控业务统一位于 `/api/gsp`。仓库拆分原则、
+版本关系与部署边界见 [仓库拆分说明](docs/REPOSITORY_SPLIT.md)。
 
 当前版本：`0.8.0`。当前定位是**可继续开发和验证的 GSP 工程基线**，尚不是可直接用于
 药品经营活动的商业成品。
@@ -147,8 +152,6 @@ WMS/
 │       ├── rules.py                 # 可独立评审和验证的质量规则
 │       ├── router.py                # GSP 主数据与合规 API
 │       └── schemas.py               # API 数据契约
-├── frontend/                        # 兼容期 Web 前端
-├── wechat-miniprogram/              # 兼容期微信小程序
 ├── tests/                           # 自动化测试
 ├── docs/                            # 架构、差距、验证、九州通对接说明
 ├── migrations/                      # Alembic 数据库迁移
@@ -156,7 +159,7 @@ WMS/
 └── main.py                          # Uvicorn 兼容入口
 ```
 
-## 快速开始
+## 后端快速开始
 
 要求：Python 3.12。生产环境使用 PostgreSQL；SQLite 仅供本地开发和规则验证。
 
@@ -253,6 +256,7 @@ GitHub Actions 会在面向 `main` 的 Pull Request 上执行：
 ## 设计与实施资料
 
 - [目标架构](docs/ARCHITECTURE.md)
+- [仓库拆分说明](docs/REPOSITORY_SPLIT.md)
 - [GSP 差距矩阵](docs/GSP_GAP_ANALYSIS.md)
 - [CSV / 验证计划](docs/VALIDATION_PLAN.md)
 - [九州通接口边界](docs/JZT_INTEGRATION.md)
