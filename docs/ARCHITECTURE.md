@@ -34,6 +34,7 @@ flowchart TB
 | 药品养护 | `app/gsp/maintenance/` | 已独立，覆盖计划、审批、逐库存检查、异常锁定与完成复核 |
 | 运维合规 | `app/gsp/operations/` | 已独立，覆盖秘密轮换、备份证据、恢复演练和职责分离 |
 | 承运与在途 | `app/gsp/transport/` | 已独立，覆盖承运资质、在途异常、签收凭证与独立关闭 |
+| 温湿度监测 | `app/gsp/environment/` | 已独立，覆盖校准设备、仓库/运输监测分配、不可变读数与告警偏差 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
 | Web 前端 | [`AllenMGu/WMS-frontend`](https://github.com/AllenMGu/WMS-frontend) | 独立部署，当前仅覆盖兼容期旧 WMS |
 | 微信小程序 | [`AllenMGu/WMS-miniprogram`](https://github.com/AllenMGu/WMS-miniprogram) | 原生微信客户端，独立发布 |
@@ -64,6 +65,7 @@ flowchart TB
 | 备份文件 | 生产备份及异地/离线介质 | 数据库只保存校验和、位置、保留期和复核证据引用 |
 | 承运商/车辆/驾驶员资质 | GSP 运输域 | 发运只能引用当时有效且已批准的记录 |
 | 运输任务与签收凭证 | GSP 运输域 | 发运单保留承运资源快照，任务保存完整交接状态 |
+| 温湿度原始读数 | GSP 温湿度域 | 按监测分配幂等写入并形成前向哈希链，不提供修改或删除 API |
 
 ## 秘密与灾难恢复控制
 
@@ -125,8 +127,26 @@ stateDiagram-v2
 
 发运准备时实时校验承运商必备文件、服务范围、车辆资质/冷链校准和驾驶员授权；
 实际发运前再次校验。高风险且有质量影响的在途异常会建立批次质量锁定，在质量人员
-完成偏差/CAPA 决定前不得签收。签收登记人与关闭复核人必须分离。实时温湿度和电子签名
-仍属于后续独立边界。
+完成偏差/CAPA 决定前不得签收。签收登记人与关闭复核人必须分离。冷链任务在发运前还必须
+存在生效的实时监测分配；电子签名仍属于后续独立边界。
+
+## 温湿度监测与告警状态
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: 设备/监测分配建档
+    PENDING --> ACTIVE: 独立质量审批
+    ACTIVE --> ACTIVE: 幂等采集并追加哈希链
+    ACTIVE --> OPEN: 超限或设备离线
+    OPEN --> ACKNOWLEDGED: 监测人员确认
+    OPEN --> RESOLVED: 质量直接决定
+    ACKNOWLEDGED --> RESOLVED: 偏差/CAPA质量决定
+    ACTIVE --> CLOSED: 无未决告警时关闭分配
+```
+
+温湿度读数按接收顺序保存 `previous_hash` 和 `record_hash`；链校验同时重新计算原始载荷摘要，
+可识别字段或来源载荷被篡改。严重超限和离线告警锁定监测目标涉及的批次，质量决定不会自动
+解除锁定，后续放行仍须走独立质量锁定解除流程。
 
 ## 销后退货状态
 

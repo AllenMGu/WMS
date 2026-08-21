@@ -8,8 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
 from app.gsp.audit import write_audit_event
+from app.gsp.environment.models import (
+    GspEnvironmentAlarm,
+    GspEnvironmentAssignment,
+    GspEnvironmentDevice,
+)
 from app.gsp.errors import WorkflowError
-from app.gsp.models import GspQualityHold
+from app.gsp.models import GspBatchStock, GspQualityHold
 from app.gsp.outbox import enqueue_integration_message
 from app.gsp.sales_shipping.models import (
     GspSalesOrderItem,
@@ -491,6 +496,19 @@ def start_transport_task(
         driver_id=task.driver_id,
         transport_mode=task.transport_mode,
     )
+    if task.transport_mode in {"COLD", "FROZEN"}:
+        active_monitor = db.query(GspEnvironmentAssignment).join(
+            GspEnvironmentDevice,
+            GspEnvironmentDevice.id == GspEnvironmentAssignment.device_id,
+        ).filter(
+            GspEnvironmentAssignment.context_type == "TRANSPORT",
+            GspEnvironmentAssignment.transport_task_id == task.id,
+            GspEnvironmentAssignment.status == "ACTIVE",
+            GspEnvironmentDevice.status == "APPROVED",
+            GspEnvironmentDevice.calibration_valid_to >= date.today(),
+        ).first()
+        if not active_monitor:
+            raise WorkflowError(409, "冷链运输任务必须配置已批准的实时温湿度监测分配")
     before = model_snapshot(task)
     task.status = "IN_TRANSIT"
     task.actual_departure_at = utc_now()
@@ -630,6 +648,9 @@ def create_transport_exception(
                     initiated_by=actor_id,
                 )
                 db.add(hold)
+                for stock in db.query(GspBatchStock).filter(GspBatchStock.batch_id == batch_id):
+                    stock.stock_status = "HOLD"
+                    stock.lock_version += 1
                 _audit(
                     db,
                     actor_id=actor_id,
@@ -736,6 +757,37 @@ def record_delivery(
 ) -> GspTransportTask:
     if task.status != "IN_TRANSIT":
         raise WorkflowError(409, "运输任务存在未解决异常或不在可签收状态")
+    unresolved_environment_alarm = (
+        db.query(GspEnvironmentAlarm)
+        .join(
+            GspEnvironmentAssignment,
+            GspEnvironmentAssignment.id == GspEnvironmentAlarm.assignment_id,
+        )
+        .filter(
+            GspEnvironmentAssignment.transport_task_id == task.id,
+            GspEnvironmentAlarm.status.in_(["OPEN", "ACKNOWLEDGED"]),
+        )
+        .count()
+    )
+    if unresolved_environment_alarm:
+        raise WorkflowError(409, "运输任务存在未完成质量决定的温湿度告警")
+    if task.transport_mode in {"COLD", "FROZEN"}:
+        monitor = db.query(GspEnvironmentAssignment).join(
+            GspEnvironmentDevice,
+            GspEnvironmentDevice.id == GspEnvironmentAssignment.device_id,
+        ).filter(
+            GspEnvironmentAssignment.transport_task_id == task.id,
+            GspEnvironmentAssignment.status == "ACTIVE",
+            GspEnvironmentDevice.status == "APPROVED",
+            GspEnvironmentDevice.calibration_valid_to >= date.today(),
+        ).first()
+        if (
+            not monitor
+            or not monitor.last_reading_at
+            or (utc_now() - monitor.last_reading_at).total_seconds()
+            > monitor.offline_after_seconds
+        ):
+            raise WorkflowError(409, "冷链运输实时温湿度数据缺失、离线或设备校准无效")
     required_decisions = []
     if payload.package_condition != "INTACT":
         required_decisions.append("PACKAGE_DAMAGE")
