@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
 from app.gsp.procurement_receiving.models import GspPurchaseOrder, GspReceipt
 from app.gsp.procurement_receiving.schemas import (
@@ -113,6 +114,10 @@ async def submit_order(
 @router.post(
     "/procurement/orders/{order_id}/approve",
     response_model=PurchaseOrderResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "PURCHASE_ORDER_APPROVE", "GspPurchaseOrder",
+        entity_id_param="order_id", meaning="APPROVAL",
+    ))],
 )
 async def approve_order(
     order_id: int,
@@ -170,6 +175,10 @@ async def list_receipts(
 @router.post(
     "/receiving/receipts/{receipt_id}/items/{item_id}/inspect",
     response_model=ReceiptResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "RECEIPT_ITEM_INSPECT", "GspReceiptItem",
+        entity_id_param="item_id", meaning="CONFIRMATION",
+    ))],
 )
 async def inspect_item(
     receipt_id: int,

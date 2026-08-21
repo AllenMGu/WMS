@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.environment.models import (
     GspEnvironmentAlarm,
     GspEnvironmentAssignment,
@@ -105,7 +106,14 @@ async def list_devices(
     return query.order_by(GspEnvironmentDevice.id.desc()).limit(limit).all()
 
 
-@router.post("/devices/{device_id}/decision", response_model=EnvironmentDeviceResponse)
+@router.post(
+    "/devices/{device_id}/decision",
+    response_model=EnvironmentDeviceResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "ENVIRONMENT_DEVICE_DECISION", "GspEnvironmentDevice",
+        entity_id_param="device_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_device(
     device_id: int,
     payload: EnvironmentDecision,
@@ -151,7 +159,14 @@ async def recalibrate(
         _rollback_and_raise(db, error)
 
 
-@router.post("/devices/{device_id}/suspend", response_model=EnvironmentDeviceResponse)
+@router.post(
+    "/devices/{device_id}/suspend",
+    response_model=EnvironmentDeviceResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "ENVIRONMENT_DEVICE_SUSPEND", "GspEnvironmentDevice",
+        entity_id_param="device_id", meaning="RESPONSIBILITY",
+    ))],
+)
 async def suspend(
     device_id: int,
     payload: AssignmentClose,
@@ -217,6 +232,10 @@ async def list_assignments(
 @router.post(
     "/assignments/{assignment_id}/decision",
     response_model=EnvironmentAssignmentResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "ENVIRONMENT_ASSIGNMENT_DECISION", "GspEnvironmentAssignment",
+        entity_id_param="assignment_id", meaning="APPROVAL",
+    ))],
 )
 async def approve_assignment(
     assignment_id: int,
@@ -283,6 +302,10 @@ async def add_reading(
 @router.post(
     "/assignments/{assignment_id}/close",
     response_model=EnvironmentAssignmentResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "ENVIRONMENT_ASSIGNMENT_CLOSE", "GspEnvironmentAssignment",
+        entity_id_param="assignment_id", meaning="RESPONSIBILITY",
+    ))],
 )
 async def close_monitoring_assignment(
     assignment_id: int,
@@ -385,7 +408,14 @@ async def acknowledge(
         _rollback_and_raise(db, error)
 
 
-@router.post("/alarms/{alarm_id}/decision", response_model=EnvironmentAlarmResponse)
+@router.post(
+    "/alarms/{alarm_id}/decision",
+    response_model=EnvironmentAlarmResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "ENVIRONMENT_ALARM_DECISION", "GspEnvironmentAlarm",
+        entity_id_param="alarm_id", meaning="APPROVAL",
+    ))],
+)
 async def quality_decision(
     alarm_id: int,
     payload: AlarmDecision,

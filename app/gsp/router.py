@@ -11,6 +11,11 @@ from app.core.time import utc_now
 from app.gsp.access_control import grant_gsp_role, review_gsp_role, revoke_gsp_role
 from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event
 from app.gsp.dependencies import require_gsp_roles, require_quality_manager_or_bootstrap
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
+from app.gsp.electronic_signature.models import (
+    GspElectronicSignature,
+    GspSignatureChallenge,
+)
 from app.gsp.environment.models import (
     GspEnvironmentAlarm,
     GspEnvironmentAssignment,
@@ -184,6 +189,13 @@ async def compliance_summary(
             GspEnvironmentAssignment.last_reading_at.is_(None),
         )
         .count(),
+        "expired_unused_signature_challenges": db.query(GspSignatureChallenge)
+        .filter(
+            GspSignatureChallenge.status == "READY",
+            GspSignatureChallenge.expires_at <= utc_now(),
+        )
+        .count(),
+        "electronic_signature_count": db.query(GspElectronicSignature).count(),
         "reserved_batch_quantity": float(
             db.query(func.coalesce(func.sum(GspBatchStock.reserved_quantity), 0)).scalar()
         ),
@@ -396,7 +408,13 @@ async def list_roles(
     return [_role_assignment_response(row) for row in query.order_by(GspRoleAssignment.id).all()]
 
 
-@router.post("/roles/{assignment_id}/review")
+@router.post(
+    "/roles/{assignment_id}/review",
+    dependencies=[Depends(require_electronic_signature(
+        "ROLE_ASSIGNMENT_REVIEW", "GspRoleAssignment",
+        entity_id_param="assignment_id", meaning="REVIEW",
+    ))],
+)
 async def review_role(
     assignment_id: int,
     payload: RoleReview,
@@ -418,7 +436,13 @@ async def review_role(
     return _role_assignment_response(assignment)
 
 
-@router.post("/roles/{assignment_id}/revoke")
+@router.post(
+    "/roles/{assignment_id}/revoke",
+    dependencies=[Depends(require_electronic_signature(
+        "ROLE_ASSIGNMENT_REVOKE", "GspRoleAssignment",
+        entity_id_param="assignment_id", meaning="RESPONSIBILITY",
+    ))],
+)
 async def revoke_role(
     assignment_id: int,
     payload: RoleRevoke,
@@ -488,7 +512,14 @@ async def list_partners(
     return query.order_by(GspBusinessPartner.name).all()
 
 
-@router.post("/partners/{partner_id}/approve", response_model=PartnerResponse)
+@router.post(
+    "/partners/{partner_id}/approve",
+    response_model=PartnerResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "PARTNER_APPROVE", "GspBusinessPartner",
+        entity_id_param="partner_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_partner(
     partner_id: int,
     payload: ChangeReason,
@@ -592,6 +623,10 @@ async def create_partner_document(
 @router.post(
     "/partners/{partner_id}/documents/{document_id}/verify",
     response_model=PartnerDocumentResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "PARTNER_DOCUMENT_VERIFY", "GspPartnerDocument",
+        entity_id_param="document_id", meaning="REVIEW",
+    ))],
 )
 async def verify_partner_document(
     partner_id: int,
@@ -633,7 +668,14 @@ async def verify_partner_document(
     return document
 
 
-@router.post("/partners/{partner_id}/suspend", response_model=PartnerResponse)
+@router.post(
+    "/partners/{partner_id}/suspend",
+    response_model=PartnerResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "PARTNER_SUSPEND", "GspBusinessPartner",
+        entity_id_param="partner_id", meaning="RESPONSIBILITY",
+    ))],
+)
 async def suspend_partner(
     partner_id: int,
     payload: ChangeReason,
@@ -713,7 +755,14 @@ async def upsert_drug_profile(
     return profile
 
 
-@router.post("/products/{goods_id}/approve", response_model=DrugProfileResponse)
+@router.post(
+    "/products/{goods_id}/approve",
+    response_model=DrugProfileResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "DRUG_PROFILE_APPROVE", "GspDrugProfile",
+        entity_id_param="goods_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_drug_profile(
     goods_id: int,
     payload: ChangeReason,
@@ -815,7 +864,14 @@ async def create_batch(
     return batch
 
 
-@router.post("/batches/{batch_id}/accept", response_model=BatchResponse)
+@router.post(
+    "/batches/{batch_id}/accept",
+    response_model=BatchResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "BATCH_ACCEPT", "GspDrugBatch",
+        entity_id_param="batch_id", meaning="CONFIRMATION",
+    ))],
+)
 async def accept_batch(
     batch_id: int,
     payload: BatchAcceptance,
@@ -967,7 +1023,14 @@ async def create_quality_hold(
     return hold
 
 
-@router.post("/quality-holds/{hold_id}/release", response_model=QualityHoldResponse)
+@router.post(
+    "/quality-holds/{hold_id}/release",
+    response_model=QualityHoldResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "QUALITY_HOLD_RELEASE", "GspQualityHold",
+        entity_id_param="hold_id", meaning="RELEASE",
+    ))],
+)
 async def release_quality_hold(
     hold_id: int,
     payload: QualityHoldRelease,
