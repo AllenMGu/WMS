@@ -27,6 +27,11 @@ from app.gsp.sales_shipping.models import (
 )
 from app.gsp.sales_shipping.schemas import SalesOrderCreate, ShipmentPrepare
 from app.gsp.snapshots import model_snapshot
+from app.gsp.transport.service import (
+    create_transport_task,
+    start_transport_task,
+    validate_transport_resources,
+)
 from app.legacy import Warehouse
 
 
@@ -425,6 +430,13 @@ def prepare_shipment(
     )
     if payload.transport_mode not in {"NORMAL", "COLD", "FROZEN"}:
         raise WorkflowError(422, "transport_mode 只能是 NORMAL、COLD 或 FROZEN")
+    carrier, vehicle, driver = validate_transport_resources(
+        db,
+        carrier_id=payload.carrier_id,
+        vehicle_id=payload.vehicle_id,
+        driver_id=payload.driver_id,
+        transport_mode=payload.transport_mode,
+    )
     _, profiles = _revalidate_order(db, order)
     requires_cold_chain = any(
         profile.storage_condition in {"COLD", "FROZEN"} for profile in profiles.values()
@@ -432,15 +444,17 @@ def prepare_shipment(
     if requires_cold_chain and (
         payload.transport_mode not in {"COLD", "FROZEN"}
         or not payload.temperature_record_ref
-        or not payload.vehicle_no
     ):
         raise WorkflowError(409, "冷链药品必须配置冷链运输方式、车辆和温度记录")
     shipment = GspShipment(
         shipment_no=payload.shipment_no,
         sales_order_id=order.id,
-        carrier_name=payload.carrier_name,
-        vehicle_no=payload.vehicle_no,
-        driver_name=payload.driver_name,
+        carrier_id=carrier.id,
+        vehicle_id=vehicle.id,
+        driver_id=driver.id,
+        carrier_name=carrier.name,
+        vehicle_no=vehicle.vehicle_no,
+        driver_name=driver.name,
         transport_mode=payload.transport_mode,
         temperature_record_ref=payload.temperature_record_ref,
         status="PREPARED",
@@ -449,6 +463,19 @@ def prepare_shipment(
     db.add(shipment)
     order.status = "PREPARED"
     db.flush()
+    create_transport_task(
+        db,
+        shipment=shipment,
+        carrier=carrier,
+        vehicle=vehicle,
+        driver=driver,
+        route_plan_ref=payload.route_plan_ref,
+        handover_document_no=payload.handover_document_no,
+        expected_arrival_at=payload.expected_arrival_at,
+        actor_id=actor_id,
+        reason=payload.reason,
+        source_ip=source_ip,
+    )
     write_audit_event(
         db,
         actor_user_id=actor_id,
@@ -593,6 +620,13 @@ def dispatch_shipment(
     )
     if shipment.status != "REVIEWED" or order.status != "REVIEWED":
         raise WorkflowError(409, "只有通过出库复核的发运单可以发运")
+    start_transport_task(
+        db,
+        shipment=shipment,
+        actor_id=actor_id,
+        reason=reason,
+        source_ip=source_ip,
+    )
     validated = _validate_allocations(
         db,
         order=order,

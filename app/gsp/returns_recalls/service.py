@@ -217,7 +217,7 @@ def create_sales_return(
     )
     if not shipment:
         raise WorkflowError(404, "原发运单不存在")
-    if shipment.status != "DISPATCHED":
+    if shipment.status not in {"DISPATCHED", "DELIVERED", "CLOSED"}:
         raise WorkflowError(409, "只有已实际发运的订单可以办理销后退回")
     order = db.query(GspSalesOrder).filter(GspSalesOrder.id == shipment.sales_order_id).first()
     if not order or order.status != "SHIPPED":
@@ -612,7 +612,7 @@ def activate_recall(
             .filter(
                 GspStockAllocation.batch_id == recall_batch.batch_id,
                 GspStockAllocation.status == "SHIPPED",
-                GspShipment.status == "DISPATCHED",
+                GspShipment.status.in_(["DISPATCHED", "DELIVERED", "CLOSED"]),
             )
             .all()
         )
@@ -1024,7 +1024,7 @@ def activate_recall_drill(
             .filter(
                 GspStockAllocation.batch_id == drill_batch.batch_id,
                 GspStockAllocation.status == "SHIPPED",
-                GspShipment.status == "DISPATCHED",
+                GspShipment.status.in_(["DISPATCHED", "DELIVERED", "CLOSED"]),
             )
             .all()
         )

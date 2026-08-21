@@ -63,17 +63,23 @@ class SalesOrderResponse(OrmModel):
 
 class ShipmentPrepare(ChangeReason):
     shipment_no: str = Field(..., min_length=3, max_length=100)
-    carrier_name: str = Field(..., min_length=2, max_length=200)
-    vehicle_no: str | None = Field(None, max_length=100)
-    driver_name: str | None = Field(None, max_length=100)
+    carrier_id: int = Field(..., gt=0)
+    vehicle_id: int = Field(..., gt=0)
+    driver_id: int = Field(..., gt=0)
     transport_mode: str = Field("NORMAL", min_length=2, max_length=30)
     temperature_record_ref: str | None = Field(None, max_length=500)
+    route_plan_ref: str = Field(..., min_length=3, max_length=500)
+    handover_document_no: str = Field(..., min_length=3, max_length=100)
+    expected_arrival_at: datetime
 
 
 class ShipmentResponse(OrmModel):
     id: int
     shipment_no: str
     sales_order_id: int
+    carrier_id: int | None
+    vehicle_id: int | None
+    driver_id: int | None
     carrier_name: str
     vehicle_no: str | None
     driver_name: str | None

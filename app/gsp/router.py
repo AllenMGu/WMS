@@ -71,6 +71,11 @@ from app.gsp.schemas import (
 )
 from app.gsp.snapshots import model_snapshot
 from app.gsp.stocktaking.models import GspStocktakeItem, GspStocktakePlan
+from app.gsp.transport.models import (
+    GspCarrier,
+    GspTransportException,
+    GspTransportTask,
+)
 from app.legacy import Goods, Location, User, get_current_user
 
 router = APIRouter(prefix="/gsp", tags=["GSP合规"])
@@ -135,6 +140,24 @@ async def compliance_summary(
         .count(),
         "pending_outbound_reviews": db.query(GspShipment)
         .filter(GspShipment.status == "PREPARED")
+        .count(),
+        "pending_carrier_approvals": db.query(GspCarrier)
+        .filter(GspCarrier.status == "PENDING")
+        .count(),
+        "expired_carrier_licenses": db.query(GspCarrier)
+        .filter(GspCarrier.license_valid_to < today)
+        .count(),
+        "open_transport_exceptions": db.query(GspTransportException)
+        .filter(GspTransportException.status == "PENDING_QUALITY")
+        .count(),
+        "overdue_in_transit_tasks": db.query(GspTransportTask)
+        .filter(
+            GspTransportTask.status.in_(["IN_TRANSIT", "EXCEPTION"]),
+            GspTransportTask.expected_arrival_at < utc_now(),
+        )
+        .count(),
+        "delivered_pending_transport_close": db.query(GspTransportTask)
+        .filter(GspTransportTask.status == "DELIVERED")
         .count(),
         "reserved_batch_quantity": float(
             db.query(func.coalesce(func.sum(GspBatchStock.reserved_quantity), 0)).scalar()
