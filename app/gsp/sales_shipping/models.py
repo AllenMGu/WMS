@@ -129,6 +129,19 @@ class GspShipment(Base):
         unique=True,
         index=True,
     )
+    carrier_id = Column(Integer, ForeignKey("gsp_carriers.id"), nullable=True, index=True)
+    vehicle_id = Column(
+        Integer,
+        ForeignKey("gsp_carrier_vehicles.id"),
+        nullable=True,
+        index=True,
+    )
+    driver_id = Column(
+        Integer,
+        ForeignKey("gsp_carrier_drivers.id"),
+        nullable=True,
+        index=True,
+    )
     carrier_name = Column(String(200), nullable=False)
     vehicle_no = Column(String(100), nullable=True)
     driver_name = Column(String(100), nullable=True)

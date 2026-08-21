@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -31,7 +31,10 @@ from app.gsp.sales_shipping.service import (
     submit_sales_order,
 )
 from app.legacy import Goods, Location, User, UserRole, Warehouse
-from tests.gsp_seed_helpers import add_verified_partner_evidence
+from tests.gsp_seed_helpers import (
+    add_approved_transport_resources,
+    add_verified_partner_evidence,
+)
 
 
 def _seed_sales_data(db):
@@ -276,15 +279,24 @@ def test_fefo_sales_allocation_review_and_dispatch():
             reason="按分配批号完成拣货",
             source_ip="127.0.0.1",
         )
+        carrier, vehicle, driver = add_approved_transport_resources(
+            db,
+            creator_id=preparer.id,
+            approver_id=quality.id,
+            suffix=uuid4().hex[:10],
+        )
         shipment = prepare_shipment(
             db,
             order_id=order.id,
             payload=ShipmentPrepare(
                 shipment_no=f"SHIP-{uuid4().hex[:10]}",
-                carrier_name="测试承运商",
-                vehicle_no="苏B12345",
-                driver_name="测试司机",
+                carrier_id=carrier.id,
+                vehicle_id=vehicle.id,
+                driver_id=driver.id,
                 transport_mode="NORMAL",
+                route_plan_ref="test://route/standard",
+                handover_document_no=f"HO-{uuid4().hex[:10]}",
+                expected_arrival_at=datetime.now() + timedelta(days=1),
                 reason="准备发运",
             ),
             actor_id=preparer.id,

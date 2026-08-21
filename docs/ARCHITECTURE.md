@@ -33,6 +33,7 @@ flowchart TB
 | 不合格品/购进退出 | `app/gsp/quality_disposition/` | 已独立，覆盖质量锁定、独立处置批准、监督销毁与退供发运 |
 | 药品养护 | `app/gsp/maintenance/` | 已独立，覆盖计划、审批、逐库存检查、异常锁定与完成复核 |
 | 运维合规 | `app/gsp/operations/` | 已独立，覆盖秘密轮换、备份证据、恢复演练和职责分离 |
+| 承运与在途 | `app/gsp/transport/` | 已独立，覆盖承运资质、在途异常、签收凭证与独立关闭 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
 | Web 前端 | [`AllenMGu/WMS-frontend`](https://github.com/AllenMGu/WMS-frontend) | 独立部署，当前仅覆盖兼容期旧 WMS |
 | 微信小程序 | [`AllenMGu/WMS-miniprogram`](https://github.com/AllenMGu/WMS-miniprogram) | 原生微信客户端，独立发布 |
@@ -61,6 +62,8 @@ flowchart TB
 | 审计事件 | GSP/审计服务 | 只追加，不提供更新或删除 API |
 | 秘密正文 | 外部秘密管理服务 | 本系统只保存提供方、版本和批准/验证证据引用 |
 | 备份文件 | 生产备份及异地/离线介质 | 数据库只保存校验和、位置、保留期和复核证据引用 |
+| 承运商/车辆/驾驶员资质 | GSP 运输域 | 发运只能引用当时有效且已批准的记录 |
+| 运输任务与签收凭证 | GSP 运输域 | 发运单保留承运资源快照，任务保存完整交接状态 |
 
 ## 秘密与灾难恢复控制
 
@@ -105,6 +108,25 @@ stateDiagram-v2
 
 `gsp_batch_stock.reserved_quantity` 防止并发订单重复占用同一库存。质量锁定、资质失效、
 批次过期或剩余有效期不足会在分配、出库复核和实际发运三个节点重复阻断。
+
+## 受控运输与签收状态
+
+```mermaid
+stateDiagram-v2
+    [*] --> PREPARED: 发运准备并固化资源
+    PREPARED --> IN_TRANSIT: 出库复核后交接
+    IN_TRANSIT --> EXCEPTION: 报告在途异常
+    EXCEPTION --> IN_TRANSIT: 质量决定继续
+    EXCEPTION --> RETURN_REQUIRED: 质量决定返回
+    EXCEPTION --> REJECTED_DELIVERY: 质量决定拒绝交付
+    IN_TRANSIT --> DELIVERED: 记录签收凭证
+    DELIVERED --> CLOSED: 独立复核关闭
+```
+
+发运准备时实时校验承运商必备文件、服务范围、车辆资质/冷链校准和驾驶员授权；
+实际发运前再次校验。高风险且有质量影响的在途异常会建立批次质量锁定，在质量人员
+完成偏差/CAPA 决定前不得签收。签收登记人与关闭复核人必须分离。实时温湿度和电子签名
+仍属于后续独立边界。
 
 ## 销后退货状态
 

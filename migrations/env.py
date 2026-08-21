@@ -14,6 +14,7 @@ from app.gsp.quality_disposition import models as quality_disposition_models  # 
 from app.gsp.returns_recalls import models as returns_recalls_models  # noqa: F401
 from app.gsp.sales_shipping import models as sales_shipping_models  # noqa: F401
 from app.gsp.stocktaking import models as stocktaking_models  # noqa: F401
+from app.gsp.transport import models as transport_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
