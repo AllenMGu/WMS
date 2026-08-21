@@ -57,7 +57,6 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["signer_user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("challenge_ref"),
         sa.UniqueConstraint("token_hash"),
     )
     _indexes(
@@ -107,7 +106,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("challenge_id"),
         sa.UniqueConstraint("signature_hash"),
-        sa.UniqueConstraint("signature_ref"),
     )
     _indexes(
         "gsp_electronic_signatures",
