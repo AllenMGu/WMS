@@ -11,6 +11,11 @@ from app.core.time import utc_now
 from app.gsp.access_control import grant_gsp_role, review_gsp_role, revoke_gsp_role
 from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event
 from app.gsp.dependencies import require_gsp_roles, require_quality_manager_or_bootstrap
+from app.gsp.environment.models import (
+    GspEnvironmentAlarm,
+    GspEnvironmentAssignment,
+    GspEnvironmentDevice,
+)
 from app.gsp.maintenance.models import GspMaintenancePlan, GspMaintenancePlanItem
 from app.gsp.models import (
     GspAuditEvent,
@@ -158,6 +163,26 @@ async def compliance_summary(
         .count(),
         "delivered_pending_transport_close": db.query(GspTransportTask)
         .filter(GspTransportTask.status == "DELIVERED")
+        .count(),
+        "open_environment_alarms": db.query(GspEnvironmentAlarm)
+        .filter(GspEnvironmentAlarm.status.in_(["OPEN", "ACKNOWLEDGED"]))
+        .count(),
+        "critical_environment_alarms": db.query(GspEnvironmentAlarm)
+        .filter(
+            GspEnvironmentAlarm.status.in_(["OPEN", "ACKNOWLEDGED"]),
+            GspEnvironmentAlarm.severity == "CRITICAL",
+        )
+        .count(),
+        "expired_environment_calibrations": db.query(GspEnvironmentDevice)
+        .filter(GspEnvironmentDevice.calibration_valid_to < today)
+        .count(),
+        "active_environment_assignments_without_reading": db.query(
+            GspEnvironmentAssignment
+        )
+        .filter(
+            GspEnvironmentAssignment.status == "ACTIVE",
+            GspEnvironmentAssignment.last_reading_at.is_(None),
+        )
         .count(),
         "reserved_batch_quantity": float(
             db.query(func.coalesce(func.sum(GspBatchStock.reserved_quantity), 0)).scalar()
