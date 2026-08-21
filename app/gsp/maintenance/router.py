@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
 from app.gsp.maintenance.models import GspMaintenancePlan
 from app.gsp.maintenance.schemas import (
@@ -97,7 +98,14 @@ async def submit_plan(
         _rollback_and_raise(db, error)
 
 
-@router.post("/plans/{plan_id}/approve", response_model=MaintenancePlanResponse)
+@router.post(
+    "/plans/{plan_id}/approve",
+    response_model=MaintenancePlanResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "MAINTENANCE_PLAN_APPROVE", "GspMaintenancePlan",
+        entity_id_param="plan_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_plan(
     plan_id: int,
     payload: ChangeReason,
@@ -146,7 +154,14 @@ async def inspect_item(
         _rollback_and_raise(db, error)
 
 
-@router.post("/plans/{plan_id}/complete", response_model=MaintenancePlanResponse)
+@router.post(
+    "/plans/{plan_id}/complete",
+    response_model=MaintenancePlanResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "MAINTENANCE_PLAN_COMPLETE", "GspMaintenancePlan",
+        entity_id_param="plan_id", meaning="REVIEW",
+    ))],
+)
 async def complete_plan(
     plan_id: int,
     payload: MaintenanceCompletion,

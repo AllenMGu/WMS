@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.operations.models import GspBackupEvidence, GspRecoveryDrill, GspSecretRotation
 from app.gsp.operations.schemas import (
     BackupEvidenceCreate,
@@ -62,7 +63,14 @@ async def create_secret_rotation(
     return rotation
 
 
-@router.post("/secret-rotations/{rotation_id}/decision", response_model=SecretRotationResponse)
+@router.post(
+    "/secret-rotations/{rotation_id}/decision",
+    response_model=SecretRotationResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "SECRET_ROTATION_DECISION", "GspSecretRotation",
+        entity_id_param="rotation_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_secret_rotation(
     rotation_id: int,
     payload: Decision,
@@ -82,7 +90,14 @@ async def approve_secret_rotation(
     return rotation
 
 
-@router.post("/secret-rotations/{rotation_id}/implement", response_model=SecretRotationResponse)
+@router.post(
+    "/secret-rotations/{rotation_id}/implement",
+    response_model=SecretRotationResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "SECRET_ROTATION_IMPLEMENT", "GspSecretRotation",
+        entity_id_param="rotation_id", meaning="RESPONSIBILITY",
+    ))],
+)
 async def activate_secret_rotation(
     rotation_id: int,
     payload: SecretRotationImplement,
@@ -102,7 +117,14 @@ async def activate_secret_rotation(
     return rotation
 
 
-@router.post("/secret-rotations/{rotation_id}/verify", response_model=SecretRotationResponse)
+@router.post(
+    "/secret-rotations/{rotation_id}/verify",
+    response_model=SecretRotationResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "SECRET_ROTATION_VERIFY", "GspSecretRotation",
+        entity_id_param="rotation_id", meaning="REVIEW",
+    ))],
+)
 async def confirm_secret_rotation(
     rotation_id: int,
     payload: Verification,
@@ -148,7 +170,14 @@ async def create_backup_evidence(
     return evidence
 
 
-@router.post("/backups/{evidence_id}/review", response_model=BackupEvidenceResponse)
+@router.post(
+    "/backups/{evidence_id}/review",
+    response_model=BackupEvidenceResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "BACKUP_EVIDENCE_REVIEW", "GspBackupEvidence",
+        entity_id_param="evidence_id", meaning="REVIEW",
+    ))],
+)
 async def review_backup(
     evidence_id: int,
     payload: BackupReview,
@@ -194,7 +223,14 @@ async def create_recovery_drill(
     return drill
 
 
-@router.post("/recovery-drills/{drill_id}/decision", response_model=RecoveryDrillResponse)
+@router.post(
+    "/recovery-drills/{drill_id}/decision",
+    response_model=RecoveryDrillResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "RECOVERY_DRILL_DECISION", "GspRecoveryDrill",
+        entity_id_param="drill_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_recovery_drill(
     drill_id: int,
     payload: Decision,
@@ -214,7 +250,14 @@ async def approve_recovery_drill(
     return drill
 
 
-@router.post("/recovery-drills/{drill_id}/execute", response_model=RecoveryDrillResponse)
+@router.post(
+    "/recovery-drills/{drill_id}/execute",
+    response_model=RecoveryDrillResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "RECOVERY_DRILL_EXECUTE", "GspRecoveryDrill",
+        entity_id_param="drill_id", meaning="RESPONSIBILITY",
+    ))],
+)
 async def run_recovery_drill(
     drill_id: int,
     payload: RecoveryDrillExecute,
@@ -234,7 +277,14 @@ async def run_recovery_drill(
     return drill
 
 
-@router.post("/recovery-drills/{drill_id}/verify", response_model=RecoveryDrillResponse)
+@router.post(
+    "/recovery-drills/{drill_id}/verify",
+    response_model=RecoveryDrillResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "RECOVERY_DRILL_VERIFY", "GspRecoveryDrill",
+        entity_id_param="drill_id", meaning="REVIEW",
+    ))],
+)
 async def confirm_recovery_drill(
     drill_id: int,
     payload: Verification,
@@ -263,4 +313,3 @@ async def list_recovery_drills(
     db: Session = Depends(get_db),
 ):
     return db.query(GspRecoveryDrill).order_by(GspRecoveryDrill.id.desc()).limit(limit).all()
-

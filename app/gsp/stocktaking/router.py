@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
 from app.gsp.schemas import ChangeReason
 from app.gsp.stocktaking.models import GspStocktakePlan
@@ -108,7 +109,14 @@ async def submit_plan(
         _rollback_and_raise(db, error)
 
 
-@router.post("/plans/{plan_id}/approve", response_model=StocktakePlanResponse)
+@router.post(
+    "/plans/{plan_id}/approve",
+    response_model=StocktakePlanResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "STOCKTAKE_PLAN_APPROVE", "GspStocktakePlan",
+        entity_id_param="plan_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_plan(
     plan_id: int,
     payload: ChangeReason,
@@ -154,7 +162,14 @@ async def count_item(
         _rollback_and_raise(db, error)
 
 
-@router.post("/plans/{plan_id}/review", response_model=StocktakePlanResponse)
+@router.post(
+    "/plans/{plan_id}/review",
+    response_model=StocktakePlanResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "STOCKTAKE_RESULTS_REVIEW", "GspStocktakePlan",
+        entity_id_param="plan_id", meaning="REVIEW",
+    ))],
+)
 async def review_plan(
     plan_id: int,
     payload: StocktakeReview,
@@ -176,7 +191,14 @@ async def review_plan(
         _rollback_and_raise(db, error)
 
 
-@router.post("/plans/{plan_id}/apply-adjustments", response_model=StocktakePlanResponse)
+@router.post(
+    "/plans/{plan_id}/apply-adjustments",
+    response_model=StocktakePlanResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "STOCKTAKE_ADJUSTMENTS_APPLY", "GspStocktakePlan",
+        entity_id_param="plan_id", meaning="RESPONSIBILITY",
+    ))],
+)
 async def apply_adjustments(
     plan_id: int,
     payload: ChangeReason,

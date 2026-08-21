@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
 from app.gsp.quality_disposition.models import GspNonconformingRecord, GspPurchaseReturn
 from app.gsp.quality_disposition.schemas import (
@@ -87,6 +88,10 @@ async def list_nonconforming_records(
 @router.post(
     "/quality/nonconforming/{record_id}/approve",
     response_model=NonconformingResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "NONCONFORMING_DISPOSITION_APPROVE", "GspNonconformingRecord",
+        entity_id_param="record_id", meaning="APPROVAL",
+    ))],
 )
 async def approve_nonconforming_disposition(
     record_id: int,
@@ -113,6 +118,10 @@ async def approve_nonconforming_disposition(
 @router.post(
     "/quality/nonconforming/{record_id}/destroy",
     response_model=NonconformingResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "NONCONFORMING_DESTROY", "GspNonconformingRecord",
+        entity_id_param="record_id", meaning="RESPONSIBILITY",
+    ))],
 )
 async def destroy_nonconforming_product(
     record_id: int,
@@ -203,6 +212,10 @@ async def submit_supplier_return(
 @router.post(
     "/procurement/returns/{return_id}/approve",
     response_model=PurchaseReturnResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "PURCHASE_RETURN_APPROVE", "GspPurchaseReturn",
+        entity_id_param="return_id", meaning="APPROVAL",
+    ))],
 )
 async def approve_supplier_return(
     return_id: int,
@@ -228,6 +241,10 @@ async def approve_supplier_return(
 @router.post(
     "/procurement/returns/{return_id}/dispatch",
     response_model=PurchaseReturnResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "PURCHASE_RETURN_DISPATCH", "GspPurchaseReturn",
+        entity_id_param="return_id", meaning="RESPONSIBILITY",
+    ))],
 )
 async def dispatch_supplier_return(
     return_id: int,
@@ -248,4 +265,3 @@ async def dispatch_supplier_return(
         return purchase_return_payload(db, purchase_return)
     except (WorkflowError, IntegrityError) as error:
         _rollback_and_raise(db, error)
-

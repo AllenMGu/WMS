@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
 from app.gsp.sales_shipping.models import GspSalesOrder, GspShipment
 from app.gsp.sales_shipping.schemas import (
@@ -104,7 +105,14 @@ async def submit_order(
         _rollback_and_raise(db, error)
 
 
-@router.post("/sales/orders/{order_id}/approve", response_model=SalesOrderResponse)
+@router.post(
+    "/sales/orders/{order_id}/approve",
+    response_model=SalesOrderResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "SALES_ORDER_APPROVE", "GspSalesOrder",
+        entity_id_param="order_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_order(
     order_id: int,
     payload: ChangeReason,
@@ -232,7 +240,14 @@ async def list_shipments(
     return [shipment_payload(item) for item in query.order_by(GspShipment.id.desc()).all()]
 
 
-@router.post("/shipping/shipments/{shipment_id}/review", response_model=ShipmentResponse)
+@router.post(
+    "/shipping/shipments/{shipment_id}/review",
+    response_model=ShipmentResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "SHIPMENT_REVIEW", "GspShipment",
+        entity_id_param="shipment_id", meaning="REVIEW",
+    ))],
+)
 async def review_order_shipment(
     shipment_id: int,
     payload: ChangeReason,
@@ -254,7 +269,14 @@ async def review_order_shipment(
         _rollback_and_raise(db, error)
 
 
-@router.post("/shipping/shipments/{shipment_id}/dispatch", response_model=ShipmentResponse)
+@router.post(
+    "/shipping/shipments/{shipment_id}/dispatch",
+    response_model=ShipmentResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "SHIPMENT_DISPATCH", "GspShipment",
+        entity_id_param="shipment_id", meaning="RESPONSIBILITY",
+    ))],
+)
 async def dispatch_order_shipment(
     shipment_id: int,
     payload: ChangeReason,

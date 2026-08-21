@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
 from app.gsp.schemas import ChangeReason
 from app.gsp.transport.models import (
@@ -205,6 +206,10 @@ async def add_document(
 @router.post(
     "/documents/{document_id}/decision",
     response_model=CarrierDocumentResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "CARRIER_DOCUMENT_DECISION", "GspCarrierDocument",
+        entity_id_param="document_id", meaning="REVIEW",
+    ))],
 )
 async def decide_document(
     document_id: int,
@@ -228,7 +233,14 @@ async def decide_document(
         _rollback_and_raise(db, error)
 
 
-@router.post("/carriers/{carrier_id}/decision", response_model=CarrierResponse)
+@router.post(
+    "/carriers/{carrier_id}/decision",
+    response_model=CarrierResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "CARRIER_DECISION", "GspCarrier",
+        entity_id_param="carrier_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_carrier_record(
     carrier_id: int,
     payload: ApprovalDecision,
@@ -302,7 +314,14 @@ async def create_carrier_vehicle(
         _rollback_and_raise(db, error)
 
 
-@router.post("/vehicles/{vehicle_id}/decision", response_model=CarrierVehicleResponse)
+@router.post(
+    "/vehicles/{vehicle_id}/decision",
+    response_model=CarrierVehicleResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "CARRIER_VEHICLE_DECISION", "GspCarrierVehicle",
+        entity_id_param="vehicle_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_vehicle(
     vehicle_id: int,
     payload: ApprovalDecision,
@@ -353,7 +372,14 @@ async def create_carrier_driver(
         _rollback_and_raise(db, error)
 
 
-@router.post("/drivers/{driver_id}/decision", response_model=CarrierDriverResponse)
+@router.post(
+    "/drivers/{driver_id}/decision",
+    response_model=CarrierDriverResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "CARRIER_DRIVER_DECISION", "GspCarrierDriver",
+        entity_id_param="driver_id", meaning="APPROVAL",
+    ))],
+)
 async def approve_driver(
     driver_id: int,
     payload: ApprovalDecision,
@@ -500,6 +526,10 @@ async def list_task_exceptions(
 @router.post(
     "/exceptions/{exception_id}/decision",
     response_model=TransportExceptionResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "TRANSPORT_EXCEPTION_DECISION", "GspTransportException",
+        entity_id_param="exception_id", meaning="APPROVAL",
+    ))],
 )
 async def decide_exception(
     exception_id: int,
@@ -525,7 +555,14 @@ async def decide_exception(
         _rollback_and_raise(db, error)
 
 
-@router.post("/tasks/{task_id}/delivery", response_model=TransportTaskResponse)
+@router.post(
+    "/tasks/{task_id}/delivery",
+    response_model=TransportTaskResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "TRANSPORT_DELIVERY", "GspTransportTask",
+        entity_id_param="task_id", meaning="CONFIRMATION",
+    ))],
+)
 async def deliver_task(
     task_id: int,
     payload: DeliveryCreate,
@@ -548,7 +585,14 @@ async def deliver_task(
         _rollback_and_raise(db, error)
 
 
-@router.post("/tasks/{task_id}/close", response_model=TransportTaskResponse)
+@router.post(
+    "/tasks/{task_id}/close",
+    response_model=TransportTaskResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "TRANSPORT_CLOSE", "GspTransportTask",
+        entity_id_param="task_id", meaning="REVIEW",
+    ))],
+)
 async def close_task(
     task_id: int,
     payload: TransportClose,

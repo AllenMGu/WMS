@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
+from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
 from app.gsp.returns_recalls.models import GspRecall, GspRecallDrill, GspSalesReturn
 from app.gsp.returns_recalls.schemas import (
@@ -100,6 +101,10 @@ async def list_sales_returns(
 @router.post(
     "/returns/sales/{return_id}/items/{item_id}/inspect",
     response_model=SalesReturnResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "SALES_RETURN_ITEM_INSPECT", "GspSalesReturnItem",
+        entity_id_param="item_id", meaning="APPROVAL",
+    ))],
 )
 async def inspect_sales_return(
     return_id: int,
@@ -180,7 +185,14 @@ async def list_product_recalls(
     return [recall_payload(db, item) for item in query.order_by(GspRecall.id.desc()).all()]
 
 
-@router.post("/recalls/{recall_id}/activate", response_model=RecallResponse)
+@router.post(
+    "/recalls/{recall_id}/activate",
+    response_model=RecallResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "RECALL_ACTIVATE", "GspRecall",
+        entity_id_param="recall_id", meaning="RESPONSIBILITY",
+    ))],
+)
 async def activate_product_recall(
     recall_id: int,
     payload: ChangeReason,
@@ -231,7 +243,14 @@ async def update_recall_target(
         _rollback_and_raise(db, error)
 
 
-@router.post("/recalls/{recall_id}/close", response_model=RecallResponse)
+@router.post(
+    "/recalls/{recall_id}/close",
+    response_model=RecallResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "RECALL_CLOSE", "GspRecall",
+        entity_id_param="recall_id", meaning="REVIEW",
+    ))],
+)
 async def close_product_recall(
     recall_id: int,
     payload: RecallClose,
@@ -254,7 +273,14 @@ async def close_product_recall(
         _rollback_and_raise(db, error)
 
 
-@router.post("/recalls/{recall_id}/completion-report", response_model=RecallResponse)
+@router.post(
+    "/recalls/{recall_id}/completion-report",
+    response_model=RecallResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "RECALL_COMPLETION_REPORT", "GspRecall",
+        entity_id_param="recall_id", meaning="RESPONSIBILITY",
+    ))],
+)
 async def report_recall_completion(
     recall_id: int,
     payload: RecallCompletionReportCreate,
@@ -360,7 +386,14 @@ async def verify_product_recall_drill_target(
         _rollback_and_raise(db, error)
 
 
-@router.post("/recall-drills/{drill_id}/complete", response_model=RecallDrillResponse)
+@router.post(
+    "/recall-drills/{drill_id}/complete",
+    response_model=RecallDrillResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "RECALL_DRILL_COMPLETE", "GspRecallDrill",
+        entity_id_param="drill_id", meaning="REVIEW",
+    ))],
+)
 async def complete_product_recall_drill(
     drill_id: int,
     payload: RecallDrillComplete,
