@@ -32,6 +32,7 @@ flowchart TB
 | 退货/召回闭环 | `app/gsp/returns_recalls/` | 已独立，覆盖销后退回隔离、质量检验、批次召回与回收核对 |
 | 不合格品/购进退出 | `app/gsp/quality_disposition/` | 已独立，覆盖质量锁定、独立处置批准、监督销毁与退供发运 |
 | 药品养护 | `app/gsp/maintenance/` | 已独立，覆盖计划、审批、逐库存检查、异常锁定与完成复核 |
+| 运维合规 | `app/gsp/operations/` | 已独立，覆盖秘密轮换、备份证据、恢复演练和职责分离 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
 | Web 前端 | [`AllenMGu/WMS-frontend`](https://github.com/AllenMGu/WMS-frontend) | 独立部署，当前仅覆盖兼容期旧 WMS |
 | 微信小程序 | [`AllenMGu/WMS-miniprogram`](https://github.com/AllenMGu/WMS-miniprogram) | 原生微信客户端，独立发布 |
@@ -58,6 +59,19 @@ flowchart TB
 | 批号库存 | GSP | 通用库存只能作为汇总视图 |
 | 九州通报文状态 | 集成域 | 不反向成为库存事实来源 |
 | 审计事件 | GSP/审计服务 | 只追加，不提供更新或删除 API |
+| 秘密正文 | 外部秘密管理服务 | 本系统只保存提供方、版本和批准/验证证据引用 |
+| 备份文件 | 生产备份及异地/离线介质 | 数据库只保存校验和、位置、保留期和复核证据引用 |
+
+## 秘密与灾难恢复控制
+
+秘密轮换采用 `SUBMITTED → APPROVED → PENDING_VERIFICATION → VERIFIED/FAILED` 状态机。
+申请人不能审批，审批人不能实施，申请人和实施人不能验证；API 契约禁止额外字段，避免把秘密正文
+误传入证据库。
+
+备份作业生成 PostgreSQL 自定义格式文件、SHA-256 校验和、独立异地副本和 JSON 证据。恢复演练只能
+使用已独立复核为 `ACCEPTED` 的成功备份，并采用 `SUBMITTED → APPROVED → EXECUTED → VERIFIED`
+状态机保存 RTO、RPO、隔离目标和关键记录核对结果。实际调度、介质和告警连接属于部署环境控制，
+配置边界见 `docs/OPERATIONS_RUNBOOK.md`。
 
 ## 受控采购与收货状态
 

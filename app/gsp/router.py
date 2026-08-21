@@ -24,6 +24,7 @@ from app.gsp.models import (
     GspQualityHold,
     GspRoleAssignment,
 )
+from app.gsp.operations.models import GspBackupEvidence, GspRecoveryDrill, GspSecretRotation
 from app.gsp.outbox import enqueue_integration_message
 from app.gsp.qualification import (
     AUTHORIZED_DOCUMENTS,
@@ -216,6 +217,27 @@ async def compliance_summary(
         .count(),
         "failed_audit_verifications": db.query(GspAuditVerification)
         .filter(GspAuditVerification.valid.is_(False))
+        .count(),
+        "pending_secret_rotations": db.query(GspSecretRotation)
+        .filter(GspSecretRotation.status.in_(["SUBMITTED", "APPROVED", "PENDING_VERIFICATION"]))
+        .count(),
+        "overdue_secret_rotations": db.query(GspSecretRotation)
+        .filter(
+            GspSecretRotation.status == "VERIFIED",
+            GspSecretRotation.next_rotation_due_at <= utc_now(),
+        )
+        .count(),
+        "unreviewed_backup_evidence": db.query(GspBackupEvidence)
+        .filter(GspBackupEvidence.reviewed_at.is_(None))
+        .count(),
+        "failed_backups": db.query(GspBackupEvidence)
+        .filter(GspBackupEvidence.status == "FAILED")
+        .count(),
+        "pending_recovery_drills": db.query(GspRecoveryDrill)
+        .filter(GspRecoveryDrill.status.in_(["SUBMITTED", "APPROVED", "EXECUTED"]))
+        .count(),
+        "failed_verified_recovery_drills": db.query(GspRecoveryDrill)
+        .filter(GspRecoveryDrill.status == "VERIFIED", GspRecoveryDrill.result == "FAIL")
         .count(),
         "pending_stocktake_plans": db.query(GspStocktakePlan)
         .filter(GspStocktakePlan.status.in_(["SUBMITTED", "COUNTING", "COUNTED"]))

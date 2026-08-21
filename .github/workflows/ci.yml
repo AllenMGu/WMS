@@ -34,11 +34,11 @@ jobs:
       - name: Install application and development dependencies
         run: python -m pip install -e '.[dev]'
       - name: Run static checks
-        run: ruff check app migrations main.py tests
+        run: ruff check app migrations main.py scripts tests
       - name: Run automated tests
         run: pytest -q
       - name: Compile Python sources
-        run: python -m compileall -q app migrations main.py tests
+        run: python -m compileall -q app migrations main.py scripts tests
       - name: Check dependency consistency
         run: python -m pip check
 

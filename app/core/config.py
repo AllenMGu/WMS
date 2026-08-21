@@ -29,6 +29,10 @@ class Settings:
         "sqlite+pysqlite:///./wms-dev.db",
     )
     secret_key: str = os.getenv("SECRET_KEY", "development-only-change-me")
+    secrets_provider: str = os.getenv("SECRETS_PROVIDER", "development")
+    secret_key_version_ref: str = os.getenv("SECRET_KEY_VERSION_REF", "")
+    database_credential_version_ref: str = os.getenv("DATABASE_CREDENTIAL_VERSION_REF", "")
+    ldap_credential_version_ref: str = os.getenv("LDAP_CREDENTIAL_VERSION_REF", "")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     allowed_origins: tuple[str, ...] = _csv(
         "ALLOWED_ORIGINS",
@@ -48,6 +52,22 @@ class Settings:
             raise RuntimeError("生产环境必须通过 SECRET_KEY 提供至少 32 字符的随机密钥")
         if self.environment == "production" and self.database_url.startswith("sqlite"):
             raise RuntimeError("生产环境必须通过 DATABASE_URL 配置 PostgreSQL，不能使用 SQLite")
+        if self.environment == "production" and self.secrets_provider in {
+            "",
+            "development",
+            "plaintext",
+        }:
+            raise RuntimeError("生产环境必须配置外部秘密管理来源 SECRETS_PROVIDER")
+        if self.environment == "production" and not self.secret_key_version_ref:
+            raise RuntimeError("生产环境必须配置 SECRET_KEY_VERSION_REF 以追踪密钥版本")
+        if self.environment == "production" and not self.database_credential_version_ref:
+            raise RuntimeError("生产环境必须配置 DATABASE_CREDENTIAL_VERSION_REF 以追踪数据库凭据版本")
+        if (
+            self.environment == "production"
+            and self.ldap_admin_dn
+            and not self.ldap_credential_version_ref
+        ):
+            raise RuntimeError("配置 LDAP_ADMIN_DN 时必须提供 LDAP_CREDENTIAL_VERSION_REF")
 
 
 settings = Settings()
