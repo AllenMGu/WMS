@@ -68,7 +68,26 @@ journalctl -u wms-gsp-backup.service
 把成功或失败 JSON 登记到 `/api/gsp/operations/backups`，再由独立 `AUDITOR` 或
 `QUALITY_REVIEWER` 复核。
 
-## 3. 隔离恢复演练
+## 3. 温湿度离线自动扫描
+
+离线扫描只读取 WMS 自有监测分配和读数，不调用外部监测平台。部署
+`wms-gsp-environment-scan.service` 与 `wms-gsp-environment-scan.timer` 后，每分钟检查一次
+有效点位，并为超过批准离线阈值的点位生成唯一的未关闭告警。
+
+运行前必须至少存在一个仍在复核期和有效期内的 `ENVIRONMENT_MONITOR` 岗位；定时任务使用该岗位
+作为系统执行责任人写入审计追踪。无有效岗位时任务失败并写入 systemd 日志，不会绕过岗位控制。
+
+```bash
+systemctl daemon-reload
+systemctl enable --now wms-gsp-environment-scan.timer
+systemctl list-timers wms-gsp-environment-scan.timer
+systemctl start wms-gsp-environment-scan.service
+journalctl -u wms-gsp-environment-scan.service
+```
+
+必须由 Zabbix 或企业监控检查 Unit 失败，并按偏差流程处理连续扫描失败。
+
+## 4. 隔离恢复演练
 
 恢复脚本拒绝非空目标库，并要求显式设置 `ALLOW_NON_PRODUCTION_RESTORE=true`。目标库必须是隔离的
 一次性演练数据库；不得指向生产、灾备待机或包含现有数据的库。
@@ -88,7 +107,7 @@ PYTHON_BIN=/opt/wms-gsp/.venv/bin/python \
 业务负责人还应按批准清单抽查采购、收货、库存、销售、召回和权限记录。API 中登记实际 RTO/RPO、
 证据路径和 PASS/FAIL，并由申请人/执行人之外的人员验证。
 
-## 4. 仍需目标环境完成的验收
+## 5. 仍需目标环境完成的验收
 
 - 外部秘密管理连接、服务身份和首次受控轮换；
 - 真实异地或离线介质、不可变/保留锁和容量监控；
