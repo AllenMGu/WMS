@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import main  # noqa: F401
-
 from app.core.database import SessionLocal
 from app.core.time import utc_now
 from app.gsp.environment.service import scan_offline_assignments
