@@ -18,7 +18,11 @@ from app.gsp.catalog_queries import (
     list_partner_documents,
     list_quality_holds,
 )
-from app.gsp.dependencies import require_gsp_roles, require_quality_manager_or_bootstrap
+from app.gsp.dependencies import (
+    require_any_gsp_role,
+    require_gsp_roles,
+    require_quality_manager_or_bootstrap,
+)
 from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.electronic_signature.models import (
     GspElectronicSignature,
@@ -596,7 +600,8 @@ async def get_partner_documents(
     status: str | None = None,
     document_type: str | None = None,
     limit: int = Query(500, ge=1, le=5000),
-    current_user: User = Depends(get_current_user),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
     partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == partner_id).first()
@@ -608,6 +613,7 @@ async def get_partner_documents(
         status=status,
         document_type=document_type,
         limit=limit,
+        offset=offset,
     )
 
 
@@ -758,7 +764,8 @@ async def get_drug_profiles(
     goods_id: int | None = Query(None, gt=0),
     keyword: str | None = None,
     limit: int = Query(500, ge=1, le=5000),
-    current_user: User = Depends(get_current_user),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
     return list_drug_profiles(
@@ -767,6 +774,7 @@ async def get_drug_profiles(
         goods_id=goods_id,
         keyword=keyword,
         limit=limit,
+        offset=offset,
     )
 
 
@@ -885,7 +893,8 @@ async def get_drug_batches(
     supplier_id: int | None = Query(None, gt=0),
     batch_no: str | None = None,
     limit: int = Query(500, ge=1, le=5000),
-    current_user: User = Depends(get_current_user),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
     return list_drug_batches(
@@ -895,6 +904,7 @@ async def get_drug_batches(
         supplier_id=supplier_id,
         batch_no=batch_no,
         limit=limit,
+        offset=offset,
     )
 
 
@@ -1028,7 +1038,8 @@ async def get_batch_stock(
     batch_id: int | None = Query(None, gt=0),
     stock_status: str | None = None,
     limit: int = Query(500, ge=1, le=5000),
-    current_user: User = Depends(get_current_user),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
     return list_batch_stock(
@@ -1038,6 +1049,7 @@ async def get_batch_stock(
         batch_id=batch_id,
         stock_status=stock_status,
         limit=limit,
+        offset=offset,
     )
 
 
@@ -1098,7 +1110,8 @@ async def get_quality_holds(
     batch_id: int | None = Query(None, gt=0),
     reason_code: str | None = None,
     limit: int = Query(500, ge=1, le=5000),
-    current_user: User = Depends(get_current_user),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
     return list_quality_holds(
@@ -1107,6 +1120,7 @@ async def get_quality_holds(
         batch_id=batch_id,
         reason_code=reason_code,
         limit=limit,
+        offset=offset,
     )
 
 
