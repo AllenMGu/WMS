@@ -95,7 +95,6 @@ def test_backup_json_is_registered_idempotently_by_scheduled_system_admin(tmp_pa
         db.query(GspRoleAssignment).filter(
             GspRoleAssignment.user_id == administrator.id
         ).delete()
-        db.query(User).filter(User.id == administrator.id).delete()
         db.commit()
         db.close()
 
