@@ -23,10 +23,13 @@ from app.gsp.sales_shipping.models import (
     GspSalesOrder,
     GspSalesOrderItem,
     GspShipment,
+    GspShipmentPackage,
+    GspShipmentPackageItem,
     GspStockAllocation,
 )
-from app.gsp.sales_shipping.schemas import SalesOrderCreate, ShipmentPrepare
+from app.gsp.sales_shipping.schemas import SalesOrderCreate, ShipmentPackageCreate, ShipmentPrepare
 from app.gsp.snapshots import model_snapshot
+from app.gsp.stocktaking.service import ensure_stock_not_frozen
 from app.gsp.transport.service import (
     create_transport_task,
     start_transport_task,
@@ -70,6 +73,104 @@ def sales_order_payload(db: Session, order: GspSalesOrder) -> dict:
 
 def shipment_payload(shipment: GspShipment) -> dict:
     return model_snapshot(shipment)
+
+
+def shipment_package_payload(db: Session, package: GspShipmentPackage) -> dict:
+    result = model_snapshot(package)
+    result["items"] = [
+        model_snapshot(item)
+        for item in db.query(GspShipmentPackageItem)
+        .filter(GspShipmentPackageItem.package_id == package.id)
+        .order_by(GspShipmentPackageItem.id)
+    ]
+    return result
+
+
+def add_shipment_package(
+    db: Session,
+    *,
+    shipment_id: int,
+    payload: ShipmentPackageCreate,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspShipmentPackage:
+    shipment = db.query(GspShipment).filter(GspShipment.id == shipment_id).with_for_update().first()
+    if not shipment:
+        raise WorkflowError(404, "发运单不存在")
+    if shipment.status != "PREPARED":
+        raise WorkflowError(409, "只有待复核发运单可以登记包装")
+    order = db.query(GspSalesOrder).filter(GspSalesOrder.id == shipment.sales_order_id).first()
+    allocations = {item.id: item for item in _allocations(db, order.id)}
+    if len({item.allocation_id for item in payload.items}) != len(payload.items):
+        raise WorkflowError(422, "同一包装内不能重复登记批次分配")
+    package = GspShipmentPackage(
+        shipment_id=shipment.id,
+        package_no=payload.package_no,
+        package_type=payload.package_type,
+        seal_no=payload.seal_no,
+        packing_condition=payload.packing_condition,
+        delivery_note_no=payload.delivery_note_no,
+        packing_record_ref=payload.packing_record_ref,
+        created_by=actor_id,
+    )
+    db.add(package)
+    db.flush()
+    for line in payload.items:
+        allocation = allocations.get(line.allocation_id)
+        if not allocation or allocation.status != "PICKED":
+            raise WorkflowError(409, "包装明细未关联当前发运单的已拣批次")
+        batch = db.query(GspDrugBatch).filter(GspDrugBatch.id == allocation.batch_id).first()
+        item = db.query(GspSalesOrderItem).filter(
+            GspSalesOrderItem.id == allocation.sales_order_item_id
+        ).first()
+        profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == item.goods_id).first()
+        if profile.traceability_required and (
+            not line.traceability_code or line.traceability_code != batch.traceability_code
+        ):
+            raise WorkflowError(409, "追溯码未扫描或与批准批次不一致")
+        already_packed = db.query(GspShipmentPackageItem).filter(
+            GspShipmentPackageItem.allocation_id == allocation.id
+        ).with_entities(GspShipmentPackageItem.quantity).all()
+        packed_quantity = sum((Decimal(row[0]) for row in already_packed), Decimal("0"))
+        if packed_quantity + Decimal(line.quantity) > Decimal(allocation.quantity):
+            raise WorkflowError(409, "包装数量超过批次分配数量")
+        db.add(GspShipmentPackageItem(
+            package_id=package.id,
+            allocation_id=allocation.id,
+            quantity=line.quantity,
+            traceability_code=line.traceability_code,
+        ))
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="SHIPMENT_PACKAGE_RECORDED",
+        entity_type="GspShipmentPackage",
+        entity_id=str(package.id),
+        reason=payload.reason,
+        after_data=shipment_package_payload(db, package),
+        source_ip=source_ip,
+    )
+    return package
+
+
+def _validate_shipment_packages(db: Session, shipment: GspShipment, order: GspSalesOrder, reviewer_id: int) -> None:
+    packages = db.query(GspShipmentPackage).filter(
+        GspShipmentPackage.shipment_id == shipment.id
+    ).all()
+    if not packages:
+        raise WorkflowError(409, "出库复核前必须完成逐箱包装登记")
+    if any(package.created_by == reviewer_id for package in packages):
+        raise WorkflowError(409, "包装登记人与出库复核人必须分离")
+    package_ids = [package.id for package in packages]
+    packed = {}
+    for item in db.query(GspShipmentPackageItem).filter(
+        GspShipmentPackageItem.package_id.in_(package_ids)
+    ):
+        packed[item.allocation_id] = packed.get(item.allocation_id, Decimal("0")) + Decimal(item.quantity)
+    for allocation in _allocations(db, order.id):
+        if packed.get(allocation.id, Decimal("0")) != Decimal(allocation.quantity):
+            raise WorkflowError(409, "逐箱包装数量与批次分配数量不一致")
 
 
 def _qualified_customer_and_products(
@@ -333,6 +434,7 @@ def allocate_sales_order(
         complete_plan.extend(line_plan)
 
     for item, stock, batch, quantity in complete_plan:
+        ensure_stock_not_frozen(db, [stock.id])
         stock.reserved_quantity = Decimal(stock.reserved_quantity or 0) + quantity
         stock.lock_version += 1
         db.add(
@@ -572,6 +674,7 @@ def review_shipment(
         lock_stock=False,
         expected_status="PICKED",
     )
+    _validate_shipment_packages(db, shipment, order, actor_id)
     before = shipment_payload(shipment)
     reviewed_at = utc_now()
     for allocation in _allocations(db, order.id):
@@ -637,6 +740,7 @@ def dispatch_shipment(
     dispatched_at = utc_now()
     for allocation, stock, _batch, item in validated:
         quantity = Decimal(allocation.quantity)
+        ensure_stock_not_frozen(db, [stock.id])
         stock.quantity -= quantity
         stock.reserved_quantity -= quantity
         stock.lock_version += 1
@@ -702,6 +806,7 @@ def cancel_sales_order(
             .first()
         )
         if allocation.status != "RELEASED":
+            ensure_stock_not_frozen(db, [stock.id])
             stock.reserved_quantity = max(
                 Decimal("0"),
                 Decimal(stock.reserved_quantity or 0) - Decimal(allocation.quantity),

@@ -18,6 +18,7 @@ from app.gsp.stocktaking.service import (
     apply_stocktake_adjustments,
     approve_stocktake_plan,
     create_stocktake_plan,
+    ensure_stock_not_frozen,
     record_stocktake_count,
     review_stocktake_results,
     stocktake_plan_payload,
@@ -114,6 +115,9 @@ def _approved_plan(db, context):
         db, plan_id=plan.id, actor_id=context["approver"].id,
         reason="质量部门独立批准盘点范围并生成账面基线", source_ip="127.0.0.1",
     )
+    assert plan.transactions_frozen is True
+    with pytest.raises(WorkflowError, match="盘点冻结"):
+        ensure_stock_not_frozen(db, [context["stock"].id])
     return plan
 
 
@@ -154,6 +158,7 @@ def test_stocktake_difference_requires_independent_approval_and_execution():
             payload=StocktakeReview(
                 decision="APPROVE",
                 conclusion="已核对破损隔离记录，同意按实盘数量执行受控库存调整。",
+                capa_ref="CAPA-STOCKTAKE-001",
                 reason="质量部门独立批准盘点差异",
             ),
             actor_id=context["reviewer"].id, source_ip="127.0.0.1",
@@ -173,6 +178,8 @@ def test_stocktake_difference_requires_independent_approval_and_execution():
         db.commit()
         db.refresh(context["stock"])
         assert plan.status == "COMPLETED"
+        assert plan.transactions_frozen is False
+        assert plan.capa_ref == "CAPA-STOCKTAKE-001"
         assert context["stock"].quantity == Decimal("8.000")
         assert context["stock"].lock_version == 4
         assert item.status == "ADJUSTED"
@@ -204,6 +211,7 @@ def test_stocktake_blocks_adjustment_when_inventory_changed_after_baseline():
             db, plan_id=plan.id,
             payload=StocktakeReview(
                 decision="APPROVE", conclusion="差异原因已经核实，同意进入调整执行阶段。",
+                capa_ref="CAPA-STOCKTAKE-002",
                 reason="质量复核批准差异",
             ),
             actor_id=context["reviewer"].id, source_ip="127.0.0.1",

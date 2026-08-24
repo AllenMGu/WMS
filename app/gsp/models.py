@@ -63,6 +63,8 @@ class GspDrugProfile(Base):
     traceability_required = Column(Boolean, nullable=False, default=True)
     registration_valid_to = Column(Date, nullable=True)
     registration_document_ref = Column(String(500), nullable=True)
+    registration_document_sha256 = Column(String(64), nullable=True)
+    registration_document_size_bytes = Column(Integer, nullable=True)
     nmpa_verification_ref = Column(String(500), nullable=True)
     nmpa_verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     nmpa_verified_at = Column(DateTime, nullable=True)
@@ -105,6 +107,8 @@ class GspPartnerDocument(Base):
     valid_from = Column(Date, nullable=True)
     valid_to = Column(Date, nullable=False, index=True)
     file_ref = Column(String(500), nullable=True)
+    file_sha256 = Column(String(64), nullable=True)
+    file_size_bytes = Column(Integer, nullable=True)
     person_name = Column(String(200), nullable=True)
     person_role = Column(String(50), nullable=True)
     verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -191,6 +195,9 @@ class GspIntegrationMessage(Base):
     attempt_count = Column(Integer, nullable=False, default=0)
     last_error = Column(Text, nullable=True)
     next_attempt_at = Column(DateTime, nullable=True)
+    claimed_by = Column(String(100), nullable=True)
+    claimed_at = Column(DateTime, nullable=True)
+    dead_lettered_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=utc_now)
     sent_at = Column(DateTime, nullable=True)
 
@@ -224,3 +231,15 @@ class GspAuditVerification(Base):
     valid = Column(Boolean, nullable=False, index=True)
     broken_event_id = Column(Integer, ForeignKey("gsp_audit_events.id"), nullable=True)
     verified_at = Column(DateTime, nullable=False, default=utc_now, index=True)
+
+
+class GspComplianceSetting(Base):
+    __tablename__ = "gsp_compliance_settings"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String(100), nullable=False, unique=True, index=True)
+    integer_value = Column(Integer, nullable=False)
+    approval_ref = Column(String(200), nullable=False)
+    reason = Column(String(500), nullable=False)
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    approved_at = Column(DateTime, nullable=False, default=utc_now)

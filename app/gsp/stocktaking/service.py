@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -7,8 +10,10 @@ from sqlalchemy.orm import Session
 from app.core.time import utc_now
 from app.gsp.audit import write_audit_event
 from app.gsp.errors import WorkflowError
-from app.gsp.models import GspBatchStock, GspDrugBatch
+from app.gsp.models import GspBatchStock, GspComplianceSetting, GspDrugBatch
 from app.gsp.outbox import enqueue_integration_message
+from app.gsp.procurement_receiving.models import GspControlledPrintRecord
+from app.gsp.procurement_receiving.schemas import ControlledPrintCreate
 from app.gsp.snapshots import model_snapshot
 from app.gsp.stocktaking.models import GspStocktakeItem, GspStocktakePlan
 from app.gsp.stocktaking.schemas import StocktakeCount, StocktakePlanCreate, StocktakeReview
@@ -17,6 +22,59 @@ from app.legacy import Location, Warehouse
 SCOPE_TYPES = {"FULL", "CYCLE", "SAMPLE"}
 REVIEW_DECISIONS = {"APPROVE", "RECOUNT"}
 BOOK_VISIBLE_STATUSES = {"COUNTED", "ADJUSTMENT_APPROVED", "COMPLETED"}
+SELECTION_RULES = {"MANUAL", "ALL_AVAILABLE", "NEAR_EXPIRY", "SYSTEMATIC_SAMPLE"}
+
+
+def ensure_stock_not_frozen(db: Session, stock_ids: list[int]) -> None:
+    if not stock_ids:
+        return
+    frozen = (
+        db.query(GspStocktakeItem.id)
+        .join(GspStocktakePlan, GspStocktakePlan.id == GspStocktakeItem.plan_id)
+        .filter(
+            GspStocktakeItem.stock_id.in_(stock_ids),
+            GspStocktakePlan.transactions_frozen.is_(True),
+            GspStocktakePlan.status.in_(("COUNTING", "COUNTED", "ADJUSTMENT_APPROVED")),
+        )
+        .first()
+    )
+    if frozen:
+        raise WorkflowError(409, "库存处于已批准盘点冻结范围，禁止发生数量或预留交易")
+
+
+def _select_stock_ids(db: Session, payload: StocktakePlanCreate) -> list[int]:
+    rule = payload.selection_rule.upper()
+    if rule not in SELECTION_RULES:
+        raise WorkflowError(422, "selection_rule 不受支持")
+    if rule == "MANUAL":
+        if not payload.stock_ids:
+            raise WorkflowError(422, "手工选取盘点范围时 stock_ids 不能为空")
+        return payload.stock_ids
+    if payload.stock_ids:
+        raise WorkflowError(422, "自动选取盘点范围时不得同时传 stock_ids")
+    query = db.query(GspBatchStock).filter(
+        GspBatchStock.warehouse_id == payload.warehouse_id,
+        GspBatchStock.quantity > 0,
+    )
+    if rule == "NEAR_EXPIRY":
+        setting = db.query(GspComplianceSetting).filter(
+            GspComplianceSetting.key == "MAINTENANCE_SELECTION_DAYS"
+        ).first()
+        threshold = setting.integer_value if setting else 120
+        query = query.join(GspDrugBatch, GspDrugBatch.id == GspBatchStock.batch_id).filter(
+            GspDrugBatch.expiry_date <= date.today() + timedelta(days=threshold)
+        )
+    stocks = query.order_by(GspBatchStock.location_id, GspBatchStock.id).all()
+    if rule == "SYSTEMATIC_SAMPLE":
+        if payload.sample_size is None:
+            raise WorkflowError(422, "系统抽盘必须指定 sample_size")
+        if len(stocks) > payload.sample_size:
+            step = len(stocks) / payload.sample_size
+            stocks = [stocks[int(index * step)] for index in range(payload.sample_size)]
+    stock_ids = [stock.id for stock in stocks]
+    if not stock_ids:
+        raise WorkflowError(409, "自动选取规则未找到符合条件的现存库存")
+    return stock_ids
 
 
 def _plan_items(db: Session, plan_id: int) -> list[GspStocktakeItem]:
@@ -60,18 +118,19 @@ def create_stocktake_plan(
     scope_type = payload.scope_type.upper()
     if scope_type not in SCOPE_TYPES:
         raise WorkflowError(422, "scope_type 只能是 FULL、CYCLE 或 SAMPLE")
-    if len(payload.stock_ids) != len(set(payload.stock_ids)):
+    stock_ids = _select_stock_ids(db, payload)
+    if len(stock_ids) != len(set(stock_ids)):
         raise WorkflowError(422, "同一盘点计划不能重复选择批号库存")
     warehouse = db.query(Warehouse).filter(Warehouse.id == payload.warehouse_id).first()
     if not warehouse or not warehouse.is_active:
         raise WorkflowError(422, "盘点仓库不存在或未启用")
     stocks = (
         db.query(GspBatchStock)
-        .filter(GspBatchStock.id.in_(payload.stock_ids))
+        .filter(GspBatchStock.id.in_(stock_ids))
         .order_by(GspBatchStock.id)
         .all()
     )
-    if len(stocks) != len(payload.stock_ids):
+    if len(stocks) != len(stock_ids):
         raise WorkflowError(404, "一个或多个批号库存记录不存在")
     stocks_by_id = {stock.id: stock for stock in stocks}
     for stock in stocks:
@@ -87,12 +146,13 @@ def create_stocktake_plan(
         warehouse_id=warehouse.id,
         scope_type=scope_type,
         scope_summary=payload.scope_summary,
+        selection_rule=payload.selection_rule.upper(),
         status="DRAFT",
         created_by=actor_id,
     )
     db.add(plan)
     db.flush()
-    for line_no, stock_id in enumerate(payload.stock_ids, start=1):
+    for line_no, stock_id in enumerate(stock_ids, start=1):
         stock = stocks_by_id[stock_id]
         db.add(
             GspStocktakeItem(
@@ -181,6 +241,8 @@ def approve_stocktake_plan(
         item.book_lock_version = stock.lock_version
         item.status = "PENDING"
     plan.status = "COUNTING"
+    plan.transactions_frozen = True
+    plan.frozen_at = utc_now()
     plan.approved_by = actor_id
     plan.approved_at = utc_now()
     db.flush()
@@ -276,9 +338,12 @@ def review_stocktake_results(
         raise WorkflowError(409, "实盘人员与质量复核人员必须分离")
     before = stocktake_plan_payload(db, plan, expose_book=True)
     difference_items = [item for item in items if item.difference_quantity != 0]
+    if decision == "APPROVE" and difference_items and not payload.capa_ref:
+        raise WorkflowError(422, "批准盘点差异时必须提供偏差/CAPA 引用")
     plan.reviewed_by = actor_id
     plan.reviewed_at = utc_now()
     plan.review_conclusion = payload.conclusion
+    plan.capa_ref = payload.capa_ref if difference_items else None
     if decision == "RECOUNT":
         if not difference_items:
             raise WorkflowError(409, "无差异盘点不需要重新实盘")
@@ -298,6 +363,7 @@ def review_stocktake_results(
         plan.status = "COMPLETED"
         plan.completed_by = actor_id
         plan.completed_at = utc_now()
+        plan.transactions_frozen = False
         action = "STOCKTAKE_RESULTS_APPROVED"
         enqueue_integration_message(
             db,
@@ -369,6 +435,7 @@ def apply_stocktake_adjustments(
     plan.status = "COMPLETED"
     plan.completed_by = actor_id
     plan.completed_at = utc_now()
+    plan.transactions_frozen = False
     db.flush()
     final_payload = stocktake_plan_payload(db, plan, expose_book=True)
     enqueue_integration_message(
@@ -391,3 +458,46 @@ def apply_stocktake_adjustments(
         source_ip=source_ip,
     )
     return plan
+
+
+def create_stocktake_print_record(
+    db: Session,
+    *,
+    plan_id: int,
+    payload: ControlledPrintCreate,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspControlledPrintRecord:
+    plan = db.query(GspStocktakePlan).filter(GspStocktakePlan.id == plan_id).first()
+    if plan is None:
+        raise WorkflowError(404, "盘点计划不存在")
+    snapshot = stocktake_plan_payload(db, plan, expose_book=plan.status in BOOK_VISIBLE_STATUSES)
+    snapshot["template_version"] = payload.template_version
+    snapshot["copy_no"] = payload.copy_no
+    canonical = json.dumps(
+        snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    record = GspControlledPrintRecord(
+        document_type="STOCKTAKE_SHEET",
+        entity_id=plan.id,
+        template_version=payload.template_version,
+        copy_no=payload.copy_no,
+        purpose=payload.purpose,
+        status="GENERATED",
+        snapshot_data=snapshot,
+        content_hash=hashlib.sha256(canonical).hexdigest(),
+        printed_by=actor_id,
+    )
+    db.add(record)
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="CONTROLLED_COPY_GENERATED",
+        entity_type="GspControlledPrintRecord",
+        entity_id=str(record.id),
+        reason=payload.reason,
+        after_data=model_snapshot(record),
+        source_ip=source_ip,
+    )
+    return record

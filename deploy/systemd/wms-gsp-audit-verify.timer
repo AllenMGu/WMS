@@ -1,0 +1,11 @@
+[Unit]
+Description=Run WMS GSP audit-chain verification daily
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=wms-gsp-audit-verify.service
+
+[Install]
+WantedBy=timers.target

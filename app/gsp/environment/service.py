@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
 from app.gsp.audit import write_audit_event
+from app.gsp.chain_lock import lock_chain_append
 from app.gsp.environment.models import (
     GspEnvironmentAlarm,
     GspEnvironmentAssignment,
@@ -521,6 +522,7 @@ def ingest_reading(
     actor_id: int,
     source_ip: str | None = None,
 ) -> GspEnvironmentReading:
+    lock_chain_append(db, f"environment-reading:{assignment.id}")
     if assignment.status != "ACTIVE":
         raise WorkflowError(409, "监测分配未生效")
     device = db.query(GspEnvironmentDevice).filter(

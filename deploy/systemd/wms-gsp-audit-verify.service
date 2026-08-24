@@ -1,0 +1,15 @@
+[Unit]
+Description=WMS GSP audit-chain verification
+After=wms-gsp-api.service
+
+[Service]
+Type=oneshot
+User=wms-gsp
+Group=wms-gsp
+WorkingDirectory=/opt/wms-gsp
+EnvironmentFile=/etc/wms-gsp/app.env
+ExecStart=/opt/wms-gsp/.venv/bin/python scripts/verify-audit-chain.py
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true

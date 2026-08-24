@@ -50,9 +50,12 @@ from app.gsp.sales_shipping.models import GspStockAllocation
 from app.gsp.sales_shipping.schemas import (
     SalesOrderCreate,
     SalesOrderLineCreate,
+    ShipmentPackageCreate,
+    ShipmentPackageLineCreate,
     ShipmentPrepare,
 )
 from app.gsp.sales_shipping.service import (
+    add_shipment_package,
     allocate_sales_order,
     approve_sales_order,
     create_sales_order,
@@ -249,6 +252,29 @@ def _seed_dispatched_batch(db):
             handover_document_no=f"RR-HO-{suffix}",
             expected_arrival_at=datetime.now() + timedelta(days=1),
             reason="准备测试发运",
+        ),
+        actor_id=users[6].id,
+        source_ip="127.0.0.1",
+    )
+    allocation = db.query(GspStockAllocation).filter(
+        GspStockAllocation.batch_id == batch.id
+    ).one()
+    add_shipment_package(
+        db,
+        shipment_id=shipment.id,
+        payload=ShipmentPackageCreate(
+            package_no=f"RR-PKG-{suffix}",
+            package_type="CARTON",
+            seal_no=f"RR-SEAL-{suffix}",
+            packing_condition="包装完整并已封签",
+            delivery_note_no=f"RR-DN-{suffix}",
+            packing_record_ref=f"test://packing/{suffix}",
+            items=[ShipmentPackageLineCreate(
+                allocation_id=allocation.id,
+                quantity=allocation.quantity,
+                traceability_code=batch.traceability_code,
+            )],
+            reason="登记逐箱包装和追溯码",
         ),
         actor_id=users[6].id,
         source_ip="127.0.0.1",

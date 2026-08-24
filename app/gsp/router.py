@@ -39,6 +39,7 @@ from app.gsp.models import (
     GspAuditVerification,
     GspBatchStock,
     GspBusinessPartner,
+    GspComplianceSetting,
     GspDrugBatch,
     GspDrugProfile,
     GspIntegrationMessage,
@@ -79,6 +80,8 @@ from app.gsp.schemas import (
     BatchStockReceipt,
     BatchStockResponse,
     ChangeReason,
+    ComplianceSettingResponse,
+    ComplianceSettingSet,
     CurrentUserRolesResponse,
     DrugProfileResponse,
     DrugProfileUpsert,
@@ -105,6 +108,11 @@ from app.legacy import Goods, Location, User, get_current_user
 router = APIRouter(prefix="/gsp", tags=["GSP合规"])
 
 QUALITY_ROLES = ("QUALITY_MANAGER", "QUALITY_REVIEWER")
+COMPLIANCE_SETTING_DEFAULTS = {
+    "NEAR_EXPIRY_WARNING_DAYS": 90,
+    "STOP_SALE_DAYS": 30,
+    "MAINTENANCE_SELECTION_DAYS": 120,
+}
 
 
 def _source_ip(request: Request) -> str | None:
@@ -126,9 +134,19 @@ async def compliance_summary(
     db: Session = Depends(get_db),
 ):
     today = date.today()
-    near_expiry = today + timedelta(days=90)
+    configured = {
+        row.key: row.integer_value
+        for row in db.query(GspComplianceSetting).filter(
+            GspComplianceSetting.key.in_(COMPLIANCE_SETTING_DEFAULTS)
+        )
+    }
+    warning_days = configured.get(
+        "NEAR_EXPIRY_WARNING_DAYS", COMPLIANCE_SETTING_DEFAULTS["NEAR_EXPIRY_WARNING_DAYS"]
+    )
+    near_expiry = today + timedelta(days=warning_days)
     return {
         "as_of": today,
+        "near_expiry_warning_days": warning_days,
         "pending_product_approvals": db.query(GspDrugProfile)
         .filter(GspDrugProfile.status == "PENDING")
         .count(),
@@ -154,6 +172,9 @@ async def compliance_summary(
         "active_quality_holds": db.query(GspQualityHold).filter(GspQualityHold.status == "ACTIVE").count(),
         "pending_integration_messages": db.query(GspIntegrationMessage)
         .filter(GspIntegrationMessage.status.in_(["PENDING", "RETRY"]))
+        .count(),
+        "dead_integration_messages": db.query(GspIntegrationMessage)
+        .filter(GspIntegrationMessage.status == "DEAD")
         .count(),
         "pending_sales_orders": db.query(GspSalesOrder)
         .filter(
@@ -354,6 +375,75 @@ async def compliance_summary(
             .scalar()
         ),
     }
+
+
+@router.get("/compliance/settings", response_model=list[ComplianceSettingResponse])
+async def list_compliance_settings(
+    _: User = Depends(require_any_gsp_role),
+    db: Session = Depends(get_db),
+):
+    return db.query(GspComplianceSetting).order_by(GspComplianceSetting.key).all()
+
+
+@router.post(
+    "/compliance/settings/{setting_key}",
+    response_model=ComplianceSettingResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "COMPLIANCE_SETTING_SET", "GspComplianceSetting",
+        entity_id_param="setting_key", meaning="APPROVAL",
+    ))],
+)
+async def set_compliance_setting(
+    setting_key: str,
+    payload: ComplianceSettingSet,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    key = setting_key.upper()
+    if key not in COMPLIANCE_SETTING_DEFAULTS:
+        raise HTTPException(422, "不支持的合规参数")
+    proposed = {
+        row.key: row.integer_value
+        for row in db.query(GspComplianceSetting).filter(
+            GspComplianceSetting.key.in_(COMPLIANCE_SETTING_DEFAULTS)
+        )
+    }
+    for default_key, default_value in COMPLIANCE_SETTING_DEFAULTS.items():
+        proposed.setdefault(default_key, default_value)
+    proposed[key] = payload.integer_value
+    if not (
+        proposed["STOP_SALE_DAYS"]
+        <= proposed["NEAR_EXPIRY_WARNING_DAYS"]
+        <= proposed["MAINTENANCE_SELECTION_DAYS"]
+    ):
+        raise HTTPException(422, "阈值必须满足停销天数 ≤ 预警天数 ≤ 重点养护选取天数")
+    setting = db.query(GspComplianceSetting).filter(
+        GspComplianceSetting.key == key
+    ).with_for_update().first()
+    before = _snapshot(setting) if setting else None
+    if setting is None:
+        setting = GspComplianceSetting(key=key)
+        db.add(setting)
+    setting.integer_value = payload.integer_value
+    setting.approval_ref = payload.approval_ref
+    setting.reason = payload.reason
+    setting.approved_by = current_user.id
+    setting.approved_at = utc_now()
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=current_user.id,
+        action="COMPLIANCE_SETTING_APPROVED",
+        entity_type="GspComplianceSetting",
+        entity_id=key,
+        reason=payload.reason,
+        before_data=before,
+        after_data=_snapshot(setting),
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    return setting
 
 
 @router.post("/roles", status_code=201)
@@ -652,6 +742,8 @@ async def create_partner_document(
         valid_from=payload.valid_from,
         valid_to=payload.valid_to,
         file_ref=payload.file_ref,
+        file_sha256=payload.file_sha256,
+        file_size_bytes=payload.file_size_bytes,
         person_name=payload.person_name,
         person_role=payload.person_role,
         status="PENDING",
@@ -701,6 +793,8 @@ async def verify_partner_document(
         raise HTTPException(404, "合作方资质文件不存在")
     if document.valid_to < date.today():
         raise HTTPException(409, "已过期资质文件不能核验通过")
+    if not document.file_sha256 or not document.file_size_bytes:
+        raise HTTPException(409, "资质文件缺少SHA-256或文件大小证据")
     before = _snapshot(document)
     document.status = "VERIFIED"
     document.verified_by = current_user.id
@@ -846,6 +940,8 @@ async def approve_drug_profile(
     profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == goods_id).first()
     if not profile:
         raise HTTPException(404, "药品质量主数据不存在")
+    if not profile.registration_document_sha256 or not profile.registration_document_size_bytes:
+        raise HTTPException(409, "注册批准档案缺少SHA-256或文件大小证据")
     if profile.updated_by == current_user.id:
         raise HTTPException(409, "质量档案维护人与批准核验人必须分离")
     result = evaluate_product(

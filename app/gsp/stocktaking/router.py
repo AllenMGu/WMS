@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
 from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
+from app.gsp.procurement_receiving.schemas import ControlledPrintCreate, ControlledPrintResponse
 from app.gsp.schemas import ChangeReason
 from app.gsp.stocktaking.models import GspStocktakePlan
 from app.gsp.stocktaking.schemas import (
@@ -18,6 +19,7 @@ from app.gsp.stocktaking.service import (
     apply_stocktake_adjustments,
     approve_stocktake_plan,
     create_stocktake_plan,
+    create_stocktake_print_record,
     record_stocktake_count,
     review_stocktake_results,
     stocktake_plan_payload,
@@ -41,6 +43,32 @@ def _rollback_and_raise(db: Session, error: Exception):
     if isinstance(error, IntegrityError):
         raise HTTPException(409, "盘点计划编号或明细重复") from error
     raise error
+
+
+@router.post(
+    "/plans/{plan_id}/print-records",
+    response_model=ControlledPrintResponse,
+    status_code=201,
+)
+async def record_controlled_print(
+    plan_id: int,
+    payload: ControlledPrintCreate,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*STOCKTAKE_ROLES, *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        record = create_stocktake_print_record(
+            db,
+            plan_id=plan_id,
+            payload=payload,
+            actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return record
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
 
 
 @router.post("/plans", response_model=StocktakePlanResponse, status_code=201)

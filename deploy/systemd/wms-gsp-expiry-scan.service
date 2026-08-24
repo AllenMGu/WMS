@@ -1,0 +1,15 @@
+[Unit]
+Description=WMS GSP approved expiry-control scan
+After=wms-gsp-api.service
+
+[Service]
+Type=oneshot
+User=wms-gsp
+Group=wms-gsp
+WorkingDirectory=/opt/wms-gsp
+EnvironmentFile=/etc/wms-gsp/app.env
+ExecStart=/opt/wms-gsp/.venv/bin/python scripts/scan_expiry_controls.py
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true

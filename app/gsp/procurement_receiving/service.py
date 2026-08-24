@@ -37,6 +37,7 @@ from app.gsp.qualification import evaluate_partner_evidence
 from app.gsp.quality_disposition.service import register_rejected_material
 from app.gsp.rules import evaluate_product
 from app.gsp.snapshots import model_snapshot
+from app.gsp.stocktaking.service import ensure_stock_not_frozen
 from app.legacy import Location, Warehouse
 
 
@@ -528,6 +529,7 @@ def inspect_receipt_item(
             .first()
         )
         if stock:
+            ensure_stock_not_frozen(db, [stock.id])
             stock.quantity += payload.accepted_quantity
             stock.stock_status = "HOLD" if active_hold else "AVAILABLE"
             stock.lock_version += 1

@@ -44,6 +44,13 @@ class Settings:
     ldap_admin_dn: str = os.getenv("LDAP_ADMIN_DN", "")
     ldap_admin_password: str = os.getenv("LDAP_ADMIN_PASSWORD", "")
     ldap_user_search_filter: str = os.getenv("LDAP_USER_SEARCH_FILTER", "(sAMAccountName={})")
+    ldap_use_ssl: bool = _as_bool("LDAP_USE_SSL", False)
+    ldap_start_tls: bool = _as_bool("LDAP_START_TLS", False)
+    ldap_tls_validate: bool = _as_bool("LDAP_TLS_VALIDATE", True)
+    ldap_ca_cert_file: str = os.getenv("LDAP_CA_CERT_FILE", "")
+    login_failure_limit: int = int(os.getenv("LOGIN_FAILURE_LIMIT", "5"))
+    login_failure_window_minutes: int = int(os.getenv("LOGIN_FAILURE_WINDOW_MINUTES", "15"))
+    login_lock_minutes: int = int(os.getenv("LOGIN_LOCK_MINUTES", "15"))
 
     def validate(self) -> None:
         if self.environment == "production" and (
@@ -68,6 +75,15 @@ class Settings:
             and not self.ldap_credential_version_ref
         ):
             raise RuntimeError("配置 LDAP_ADMIN_DN 时必须提供 LDAP_CREDENTIAL_VERSION_REF")
+        if self.environment == "production" and self.ldap_admin_dn:
+            if not (self.ldap_use_ssl or self.ldap_start_tls):
+                raise RuntimeError("生产环境 LDAP 必须启用 LDAPS 或 StartTLS")
+            if not self.ldap_tls_validate:
+                raise RuntimeError("生产环境 LDAP 必须校验证书")
+        if self.login_failure_limit < 3:
+            raise RuntimeError("LOGIN_FAILURE_LIMIT 不能小于 3")
+        if self.login_failure_window_minutes < 1 or self.login_lock_minutes < 1:
+            raise RuntimeError("登录失败窗口和锁定时间必须为正整数")
 
 
 settings = Settings()

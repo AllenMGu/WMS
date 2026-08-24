@@ -18,9 +18,12 @@ from app.gsp.sales_shipping.models import GspSalesOrderItem, GspStockAllocation
 from app.gsp.sales_shipping.schemas import (
     SalesOrderCreate,
     SalesOrderLineCreate,
+    ShipmentPackageCreate,
+    ShipmentPackageLineCreate,
     ShipmentPrepare,
 )
 from app.gsp.sales_shipping.service import (
+    add_shipment_package,
     allocate_sales_order,
     approve_sales_order,
     create_sales_order,
@@ -298,6 +301,31 @@ def test_fefo_sales_allocation_review_and_dispatch():
                 handover_document_no=f"HO-{uuid4().hex[:10]}",
                 expected_arrival_at=datetime.now() + timedelta(days=1),
                 reason="准备发运",
+            ),
+            actor_id=preparer.id,
+            source_ip="127.0.0.1",
+        )
+        add_shipment_package(
+            db,
+            shipment_id=shipment.id,
+            payload=ShipmentPackageCreate(
+                package_no=f"PKG-{uuid4().hex[:10]}",
+                package_type="CARTON",
+                seal_no=f"SEAL-{uuid4().hex[:10]}",
+                packing_condition="外包装完整并已封签",
+                delivery_note_no=f"DN-{uuid4().hex[:10]}",
+                packing_record_ref="test://packing/sales-shipping",
+                items=[
+                    ShipmentPackageLineCreate(
+                        allocation_id=allocation.id,
+                        quantity=allocation.quantity,
+                        traceability_code=db.query(GspDrugBatch).filter(
+                            GspDrugBatch.id == allocation.batch_id
+                        ).one().traceability_code,
+                    )
+                    for allocation in allocations
+                ],
+                reason="逐箱扫描批号与追溯码",
             ),
             actor_id=preparer.id,
             source_ip="127.0.0.1",

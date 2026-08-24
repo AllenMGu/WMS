@@ -92,3 +92,33 @@ class ShipmentResponse(OrmModel):
     reviewed_at: datetime | None
     dispatched_by: int | None
     dispatched_at: datetime | None
+
+
+class ShipmentPackageLineCreate(BaseModel):
+    allocation_id: int = Field(..., gt=0)
+    quantity: Decimal = Field(..., gt=0, decimal_places=3)
+    traceability_code: str | None = Field(None, max_length=200)
+
+
+class ShipmentPackageCreate(ChangeReason):
+    package_no: str = Field(..., min_length=3, max_length=100)
+    package_type: str = Field(..., min_length=2, max_length=50)
+    seal_no: str = Field(..., min_length=2, max_length=100)
+    packing_condition: str = Field(..., min_length=3, max_length=500)
+    delivery_note_no: str = Field(..., min_length=3, max_length=100)
+    packing_record_ref: str = Field(..., min_length=3, max_length=500)
+    items: list[ShipmentPackageLineCreate] = Field(..., min_length=1)
+
+
+class ShipmentPackageResponse(OrmModel):
+    id: int
+    shipment_id: int
+    package_no: str
+    package_type: str
+    seal_no: str
+    packing_condition: str
+    delivery_note_no: str
+    packing_record_ref: str
+    created_by: int
+    created_at: datetime
+    items: list[dict]

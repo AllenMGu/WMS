@@ -87,7 +87,21 @@ journalctl -u wms-gsp-environment-scan.service
 
 必须由 Zabbix 或企业监控检查 Unit 失败，并按偏差流程处理连续扫描失败。
 
-## 4. 隔离恢复演练
+## 4. 近效期自动控制
+
+先由质量岗位通过 `/api/gsp/compliance/settings/{setting_key}` 电子签名批准
+`MAINTENANCE_SELECTION_DAYS`、`NEAR_EXPIRY_WARNING_DAYS` 和 `STOP_SALE_DAYS`。启用
+`wms-gsp-expiry-scan.timer` 后每日扫描一次；达到停销阈值的批次会自动创建质量锁定并置为 `HOLD`。
+任务需要有效的 `MAINTENANCE` 或 `QUALITY_MANAGER` 岗位。告警关闭必须保存处置证据并电子签名，且不会
+自动解除质量锁定。
+
+## 5. 数据库就绪与审计校验
+
+生产服务启动前执行 `scripts/check_schema_revision.py`，`/health/ready` 同时检查数据库连接和 Alembic
+版本。迁移必须在受控发布步骤中单独执行，API 服务不自动迁移。部署并启用
+`wms-gsp-audit-verify.timer`，由有效 `AUDITOR` 或 `QUALITY_REVIEWER` 岗位生成每日验证证据。
+
+## 6. 隔离恢复演练
 
 恢复脚本拒绝非空目标库，并要求显式设置 `ALLOW_NON_PRODUCTION_RESTORE=true`。目标库必须是隔离的
 一次性演练数据库；不得指向生产、灾备待机或包含现有数据的库。
@@ -107,10 +121,12 @@ PYTHON_BIN=/opt/wms-gsp/.venv/bin/python \
 业务负责人还应按批准清单抽查采购、收货、库存、销售、召回和权限记录。API 中登记实际 RTO/RPO、
 证据路径和 PASS/FAIL，并由申请人/执行人之外的人员验证。
 
-## 5. 仍需目标环境完成的验收
+## 7. 仍需目标环境完成的验收
 
 - 外部秘密管理连接、服务身份和首次受控轮换；
 - 真实异地或离线介质、不可变/保留锁和容量监控；
 - systemd 定时器连续成功证据以及失败告警到达/升级测试；
+- 实际温湿度网关、告警渠道和断网补传/时钟同步验证；
+- 九州通正式适配器、联调、对账与失败重放验证；
 - 首次完整恢复演练、关键业务抽查、RTO/RPO 结论和质量批准；
 - SOP、权限矩阵、培训、变更记录和后续 CSV 文件包。

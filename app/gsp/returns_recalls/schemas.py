@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
@@ -226,3 +226,19 @@ class RecallResponse(OrmModel):
     targets: list[RecallTargetResponse]
     progress_reports: list[RecallProgressResponse]
     completion_report: RecallCompletionReportResponse | None
+
+
+class BusinessCalendarDaySet(ChangeReason):
+    calendar_date: date
+    is_working_day: bool
+    approval_ref: str = Field(..., min_length=3, max_length=200)
+
+
+class BusinessCalendarDayResponse(OrmModel):
+    id: int
+    calendar_date: date
+    is_working_day: bool
+    approval_ref: str
+    reason: str
+    approved_by: int
+    approved_at: datetime

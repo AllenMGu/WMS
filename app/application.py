@@ -4,13 +4,18 @@ Legacy WMS routes are preserved while the GSP bounded context evolves behind
 its own router and database tables.
 """
 
+from fastapi import HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.core.config import settings
-from app.core.database import Base, engine
+from app.core.database import EXPECTED_SCHEMA_REVISION, Base, SessionLocal, engine
 from app.gsp import models as gsp_models  # noqa: F401 - registers tables
 from app.gsp.electronic_signature import models as electronic_signature_models  # noqa: F401
 from app.gsp.electronic_signature.router import router as electronic_signature_router
 from app.gsp.environment import models as environment_models  # noqa: F401
 from app.gsp.environment.router import router as environment_router
+from app.gsp.integration_router import router as integration_router
 from app.gsp.maintenance.router import router as maintenance_router
 from app.gsp.operations import models as operations_models  # noqa: F401 - registers tables
 from app.gsp.operations.router import router as operations_router
@@ -25,7 +30,7 @@ from app.gsp.transport.router import router as transport_router
 from app.legacy import app
 
 app.title = "药品GSP仓储与质量管理系统 API"
-app.version = "0.12.0"
+app.version = "0.13.0"
 app.description = (
     "WMS兼容接口与独立GSP质量域。GSP接口默认位于 /api/gsp；对接九州通等外部平台时通过集成出站箱解耦。"
 )
@@ -40,6 +45,7 @@ app.include_router(operations_router, prefix="/api")
 app.include_router(transport_router, prefix="/api")
 app.include_router(environment_router, prefix="/api")
 app.include_router(electronic_signature_router, prefix="/api")
+app.include_router(integration_router, prefix="/api")
 
 if settings.auto_create_schema:
     # Existing deployments keep their current start-up behavior.  Controlled
@@ -50,3 +56,38 @@ if settings.auto_create_schema:
 @app.get("/health", tags=["系统"])
 async def health():
     return {"status": "ok", "service": "wms-gsp", "version": app.version}
+
+
+@app.get("/health/live", tags=["系统"])
+async def liveness():
+    return {"status": "alive", "service": "wms-gsp"}
+
+
+@app.get("/health/ready", tags=["系统"])
+async def readiness():
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        revision = db.execute(text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
+        if settings.environment == "production" and revision != EXPECTED_SCHEMA_REVISION:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "not_ready",
+                    "database": "connected",
+                    "schema_revision": revision,
+                    "expected_schema_revision": EXPECTED_SCHEMA_REVISION,
+                },
+            )
+        return {
+            "status": "ready",
+            "database": "connected",
+            "schema_revision": revision,
+            "expected_schema_revision": EXPECTED_SCHEMA_REVISION,
+        }
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "database": "failed"})
+    finally:
+        db.close()
