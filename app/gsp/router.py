@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.time import utc_now
 from app.gsp.access_control import grant_gsp_role, review_gsp_role, revoke_gsp_role
+from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event
 from app.gsp.catalog_queries import (
     list_batch_stock,
     list_drug_batches,
@@ -17,7 +18,6 @@ from app.gsp.catalog_queries import (
     list_partner_documents,
     list_quality_holds,
 )
-from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event
 from app.gsp.dependencies import require_gsp_roles, require_quality_manager_or_bootstrap
 from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.electronic_signature.models import (
