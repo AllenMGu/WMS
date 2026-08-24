@@ -96,6 +96,7 @@ class GspExpiryAlert(Base):
     resolved_at = Column(DateTime, nullable=True)
     resolution = Column(String(500), nullable=True)
     evidence_ref = Column(String(500), nullable=True)
+    review_due_on = Column(Date, nullable=True, index=True)
     __table_args__ = (
         UniqueConstraint("batch_id", "alert_type", name="uq_gsp_expiry_batch_alert"),
     )

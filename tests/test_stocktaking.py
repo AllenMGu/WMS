@@ -1,8 +1,10 @@
+import asyncio
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from starlette.requests import Request
 
 from app.core.database import SessionLocal
 from app.gsp.errors import WorkflowError
@@ -12,6 +14,8 @@ from app.gsp.models import (
     GspDrugBatch,
     GspIntegrationMessage,
 )
+from app.gsp.router import receive_batch_stock
+from app.gsp.schemas import BatchStockReceipt
 from app.gsp.stocktaking.models import GspStocktakeItem
 from app.gsp.stocktaking.schemas import StocktakeCount, StocktakePlanCreate, StocktakeReview
 from app.gsp.stocktaking.service import (
@@ -119,6 +123,34 @@ def _approved_plan(db, context):
     with pytest.raises(WorkflowError, match="盘点冻结"):
         ensure_stock_not_frozen(db, [context["stock"].id])
     return plan
+
+
+def test_frozen_stock_cannot_be_changed_through_direct_receipt_route():
+    import main  # noqa: F401
+
+    db = SessionLocal()
+    try:
+        context = _stocktake_context(db)
+        _approved_plan(db, context)
+        request = Request({"type": "http", "client": ("127.0.0.1", 12345)})
+        with pytest.raises(WorkflowError, match="盘点冻结"):
+            asyncio.run(
+                receive_batch_stock(
+                    payload=BatchStockReceipt(
+                        batch_id=context["stock"].batch_id,
+                        warehouse_id=context["warehouse"].id,
+                        location_id=context["stock"].location_id,
+                        quantity=Decimal("1.000"),
+                        reason="验证冻结库存不能通过直接收货入口增加",
+                    ),
+                    request=request,
+                    current_user=context["planner"],
+                    db=db,
+                )
+            )
+    finally:
+        db.rollback()
+        db.close()
 
 
 def test_stocktake_difference_requires_independent_approval_and_execution():

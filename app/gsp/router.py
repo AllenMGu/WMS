@@ -98,6 +98,7 @@ from app.gsp.schemas import (
 )
 from app.gsp.snapshots import model_snapshot
 from app.gsp.stocktaking.models import GspStocktakeItem, GspStocktakePlan
+from app.gsp.stocktaking.service import ensure_stock_not_frozen
 from app.gsp.transport.models import (
     GspCarrier,
     GspTransportException,
@@ -1174,6 +1175,7 @@ async def receive_batch_stock(
     )
     before = _snapshot(stock) if stock else None
     if stock:
+        ensure_stock_not_frozen(db, [stock.id])
         stock.quantity += payload.quantity
         stock.lock_version += 1
     else:

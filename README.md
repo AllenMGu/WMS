@@ -256,6 +256,9 @@ uvicorn main:app --reload
 - 使用至少 32 字符的随机 `SECRET_KEY`。
 - 由外部秘密管理服务注入秘密，并设置 `SECRETS_PROVIDER`、`SECRET_KEY_VERSION_REF` 和
   `DATABASE_CREDENTIAL_VERSION_REF`；配置 LDAP 服务账号时还必须设置 `LDAP_CREDENTIAL_VERSION_REF`。
+  LDAP 传输可选择 `LDAP_USE_SSL=true`（LDAPS）、`LDAP_START_TLS=true`（389 升级 TLS），
+  或在完成风险批准后显式设置 `LDAP_ALLOW_PLAINTEXT_AUTH=true` 使用普通 389；三者不得混用，
+  普通 389 默认拒绝传递管理员和用户口令。
 - 使用 PostgreSQL `DATABASE_URL`，禁止使用 SQLite。
 - 设置 `AUTO_CREATE_SCHEMA=false`。
 - 通过经过评审的 Alembic 迁移变更数据库结构。

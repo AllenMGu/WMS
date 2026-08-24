@@ -8,6 +8,9 @@ set -euo pipefail
 
 RETENTION_DAYS="${RETENTION_DAYS:-90}"
 ALLOW_SAME_FILESYSTEM_FOR_TESTS="${ALLOW_SAME_FILESYSTEM_FOR_TESTS:-false}"
+REGISTER_BACKUP_EVIDENCE="${REGISTER_BACKUP_EVIDENCE:-true}"
+WMS_APP_DIR="${WMS_APP_DIR:-/opt/wms-gsp}"
+WMS_PYTHON="${WMS_PYTHON:-${WMS_APP_DIR}/.venv/bin/python}"
 
 for directory_name in BACKUP_DIR OFFSITE_BACKUP_DIR BACKUP_ALERT_DIR; do
   directory_value="${!directory_name}"
@@ -52,9 +55,15 @@ on_exit() {
   if [[ ${exit_code} -ne 0 ]]; then
     completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     alert_file="${BACKUP_ALERT_DIR}/wms-gsp-backup-failed-${timestamp}.json"
-    printf '{"backup_id":"%s","status":"FAILED","started_at":"%s","completed_at":"%s","exit_code":%d}\n' \
-      "${timestamp}" "${started_at}" "${completed_at}" "${exit_code}" > "${alert_file}"
+    printf '{"backup_id":"%s","backup_type":"FULL","status":"FAILED","scheduled_for":"%s","started_at":"%s","completed_at":"%s","evidence_ref":"%s","alert_evidence_ref":"%s"}\n' \
+      "${timestamp}" "${started_at}" "${started_at}" "${completed_at}" \
+      "${alert_file}" "${alert_file}" > "${alert_file}"
     echo "alert=${alert_file}" >&2
+    if [[ "${REGISTER_BACKUP_EVIDENCE}" == "true" ]]; then
+      if ! "${WMS_PYTHON}" "${WMS_APP_DIR}/scripts/register_backup_evidence.py" "${alert_file}"; then
+        echo "failed to register backup failure evidence; durable alert retained at ${alert_file}" >&2
+      fi
+    fi
   fi
   if [[ -f "${temporary_file}" ]]; then
     rm -f -- "${temporary_file}"
@@ -89,6 +98,10 @@ printf '{"backup_id":"%s","backup_type":"FULL","status":"SUCCESS","scheduled_for
   "${timestamp}" "${started_at}" "${started_at}" "${completed_at}" "${checksum}" \
   "${size_bytes}" "${backup_file}" "${OFFSITE_BACKUP_DIR}/${backup_name}" \
   "${retention_until}" "${evidence_file}" > "${evidence_file}"
+
+if [[ "${REGISTER_BACKUP_EVIDENCE}" == "true" ]]; then
+  "${WMS_PYTHON}" "${WMS_APP_DIR}/scripts/register_backup_evidence.py" "${evidence_file}"
+fi
 
 trap - EXIT
 

@@ -79,6 +79,7 @@ def scan_expiry_controls(
                 .first()
             )
             created = alert is None
+            reopened = False
             if alert is None:
                 alert = GspExpiryAlert(
                     batch_id=batch.id,
@@ -89,6 +90,19 @@ def scan_expiry_controls(
                 )
                 db.add(alert)
                 db.flush()
+            elif (
+                alert.status == "RESOLVED"
+                and alert.review_due_on is not None
+                and alert.review_due_on <= today
+            ):
+                before_reopen = model_snapshot(alert)
+                alert.status = "OPEN"
+                alert.resolved_by = None
+                alert.resolved_at = None
+                alert.resolution = None
+                alert.evidence_ref = None
+                alert.review_due_on = None
+                reopened = True
             alert.threshold_days = threshold_days
             alert.last_evaluated_at = utc_now()
             if alert_type == "STOP_SALE":
@@ -133,6 +147,18 @@ def scan_expiry_controls(
                     after_data=model_snapshot(alert),
                     source_ip=source_ip,
                 )
+            elif reopened:
+                write_audit_event(
+                    db,
+                    actor_user_id=actor_id,
+                    action=f"EXPIRY_{alert_type}_REVIEW_REOPENED",
+                    entity_type="GspExpiryAlert",
+                    entity_id=str(alert.id),
+                    reason="已批准的近效期复核到期，系统重新打开告警",
+                    before_data=before_reopen,
+                    after_data=model_snapshot(alert),
+                    source_ip=source_ip,
+                )
             touched.append(alert)
     return touched
 
@@ -143,6 +169,7 @@ def resolve_expiry_alert(
     alert_id: int,
     resolution: str,
     evidence_ref: str,
+    review_due_on: date,
     reason: str,
     actor_id: int,
     source_ip: str | None,
@@ -152,12 +179,15 @@ def resolve_expiry_alert(
         raise WorkflowError(404, "近效期告警不存在")
     if alert.status != "OPEN":
         raise WorkflowError(409, "近效期告警已关闭")
+    if review_due_on <= date.today():
+        raise WorkflowError(422, "下次复核日期必须晚于当前日期")
     before = model_snapshot(alert)
     alert.status = "RESOLVED"
     alert.resolved_by = actor_id
     alert.resolved_at = utc_now()
     alert.resolution = resolution
     alert.evidence_ref = evidence_ref
+    alert.review_due_on = review_due_on
     db.flush()
     write_audit_event(
         db,

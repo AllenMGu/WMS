@@ -105,12 +105,17 @@ def test_expiry_scan_uses_approved_threshold_and_is_idempotent():
             alert_id=stop_alert.id,
             resolution="已完成近效期库存处置评估，质量锁定仍按独立流程管理。",
             evidence_ref="QA-EXP-CLOSE-001",
+            review_due_on=date.today() + timedelta(days=1),
             reason="质量部门关闭告警证据",
             actor_id=actor.id,
             source_ip="127.0.0.1",
         )
         assert stop_alert.status == "RESOLVED"
         assert db.query(GspQualityHold).filter_by(id=stop_alert.quality_hold_id).one().status == "ACTIVE"
+        stop_alert.review_due_on = date.today()
+        scan_expiry_controls(db, actor_id=actor.id, source_ip="SYSTEM_TIMER")
+        assert stop_alert.status == "OPEN"
+        assert stop_alert.review_due_on is None
     finally:
         db.rollback()
         db.close()

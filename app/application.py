@@ -84,6 +84,12 @@ async def readiness():
             "database": "connected",
             "schema_revision": revision,
             "expected_schema_revision": EXPECTED_SCHEMA_REVISION,
+            "ldap_transport_mode": settings.ldap_transport_mode(),
+            "security_warnings": (
+                ["LDAP_PLAINTEXT_AUTH_ENABLED"]
+                if settings.ldap_admin_dn and settings.ldap_transport_mode() == "PLAINTEXT"
+                else []
+            ),
         }
     except HTTPException:
         raise

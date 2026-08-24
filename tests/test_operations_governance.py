@@ -6,7 +6,10 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.core.database import SessionLocal
+from app.core.time import utc_now
 from app.gsp.audit import verify_audit_chain
+from app.gsp.models import GspRoleAssignment
+from app.gsp.operations.models import GspBackupEvidence
 from app.gsp.operations.schemas import (
     BackupEvidenceCreate,
     BackupReview,
@@ -30,6 +33,7 @@ from app.gsp.operations.service import (
     verify_secret_rotation,
 )
 from app.legacy import User, UserRole
+from scripts.register_backup_evidence import register
 
 
 def _user(db, name: str) -> User:
@@ -42,6 +46,58 @@ def _user(db, name: str) -> User:
     db.add(user)
     db.flush()
     return user
+
+
+def test_backup_json_is_registered_idempotently_by_scheduled_system_admin(tmp_path):
+    import json
+    import main  # noqa: F401
+
+    db = SessionLocal()
+    backup_id = f"AUTO-{uuid4().hex[:10]}"
+    try:
+        administrator = _user(db, "自动备份记录人")
+        db.add(
+            GspRoleAssignment(
+                user_id=administrator.id,
+                role="SYSTEM_ADMIN",
+                approval_ref="QA-AUTO-BACKUP-001",
+                review_due_at=utc_now() + timedelta(days=30),
+                is_active=True,
+            )
+        )
+        db.commit()
+        now = datetime.now(UTC)
+        evidence_file = tmp_path / "backup.evidence.json"
+        evidence_file.write_text(
+            json.dumps(
+                {
+                    "backup_id": backup_id,
+                    "backup_type": "FULL",
+                    "status": "SUCCESS",
+                    "scheduled_for": now.isoformat(),
+                    "started_at": now.isoformat(),
+                    "completed_at": (now + timedelta(minutes=1)).isoformat(),
+                    "checksum_sha256": "a" * 64,
+                    "size_bytes": 1024,
+                    "primary_storage_ref": "/backup/test.dump",
+                    "offsite_storage_ref": "/offsite/test.dump",
+                    "retention_until": (now + timedelta(days=90)).isoformat(),
+                    "evidence_ref": str(evidence_file),
+                }
+            ),
+            encoding="utf-8",
+        )
+        first_id = register(evidence_file)
+        assert register(evidence_file) == first_id
+        assert db.query(GspBackupEvidence).filter_by(backup_id=backup_id).count() == 1
+    finally:
+        db.query(GspBackupEvidence).filter_by(backup_id=backup_id).delete()
+        db.query(GspRoleAssignment).filter(
+            GspRoleAssignment.user_id == administrator.id
+        ).delete()
+        db.query(User).filter(User.id == administrator.id).delete()
+        db.commit()
+        db.close()
 
 
 def test_secret_rotation_requires_independent_approval_implementation_and_verification():
@@ -270,4 +326,3 @@ def test_failed_backup_requires_alert_evidence():
     finally:
         db.rollback()
         db.close()
-

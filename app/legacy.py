@@ -38,6 +38,7 @@ LDAP_USE_SSL = settings.ldap_use_ssl
 LDAP_START_TLS = settings.ldap_start_tls
 LDAP_TLS_VALIDATE = settings.ldap_tls_validate
 LDAP_CA_CERT_FILE = settings.ldap_ca_cert_file
+LDAP_ALLOW_PLAINTEXT_AUTH = settings.ldap_allow_plaintext_auth
 
 router = APIRouter()
 
@@ -351,8 +352,11 @@ def _ldap_connection(user: str, password: str):
     server, use_ssl = _ldap_server_definition()
     conn = ldap3.Connection(server, user=user, password=password)
     if LDAP_START_TLS and not use_ssl:
-        if not conn.open() or not conn.start_tls():
+        conn.open()
+        if conn.closed or not conn.start_tls():
             raise RuntimeError("LDAP StartTLS negotiation failed")
+    elif not use_ssl and not LDAP_ALLOW_PLAINTEXT_AUTH:
+        raise RuntimeError("LDAP plaintext authentication is not explicitly enabled")
     if not conn.bind():
         raise RuntimeError("LDAP bind failed")
     return conn
@@ -1027,6 +1031,8 @@ async def get_ldap_config(
         "ldap_use_ssl": settings.ldap_use_ssl,
         "ldap_start_tls": settings.ldap_start_tls,
         "ldap_tls_validate": settings.ldap_tls_validate,
+        "ldap_allow_plaintext_auth": settings.ldap_allow_plaintext_auth,
+        "ldap_transport_mode": settings.ldap_transport_mode(),
         "managed_externally": True,
     }
 

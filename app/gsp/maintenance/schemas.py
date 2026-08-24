@@ -38,6 +38,7 @@ class MaintenanceCompletion(ChangeReason):
 class ExpiryAlertDecision(ChangeReason):
     resolution: str = Field(..., min_length=10, max_length=500)
     evidence_ref: str = Field(..., min_length=3, max_length=500)
+    review_due_on: date
 
 
 class ExpiryAlertResponse(OrmModel):
@@ -54,6 +55,7 @@ class ExpiryAlertResponse(OrmModel):
     resolved_at: datetime | None
     resolution: str | None
     evidence_ref: str | None
+    review_due_on: date | None
 
 
 class MaintenancePlanItemResponse(OrmModel):

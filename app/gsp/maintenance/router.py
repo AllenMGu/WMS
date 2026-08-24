@@ -77,6 +77,7 @@ async def close_expiry_alert(
             alert_id=alert_id,
             resolution=payload.resolution,
             evidence_ref=payload.evidence_ref,
+            review_due_on=payload.review_due_on,
             reason=payload.reason,
             actor_id=current_user.id,
             source_ip=_source_ip(request),

@@ -48,9 +48,17 @@ class Settings:
     ldap_start_tls: bool = _as_bool("LDAP_START_TLS", False)
     ldap_tls_validate: bool = _as_bool("LDAP_TLS_VALIDATE", True)
     ldap_ca_cert_file: str = os.getenv("LDAP_CA_CERT_FILE", "")
+    ldap_allow_plaintext_auth: bool = _as_bool("LDAP_ALLOW_PLAINTEXT_AUTH", False)
     login_failure_limit: int = int(os.getenv("LOGIN_FAILURE_LIMIT", "5"))
     login_failure_window_minutes: int = int(os.getenv("LOGIN_FAILURE_WINDOW_MINUTES", "15"))
     login_lock_minutes: int = int(os.getenv("LOGIN_LOCK_MINUTES", "15"))
+
+    def ldap_transport_mode(self) -> str:
+        if self.ldap_use_ssl or self.ldap_server.lower().startswith("ldaps://"):
+            return "LDAPS"
+        if self.ldap_start_tls:
+            return "STARTTLS"
+        return "PLAINTEXT"
 
     def validate(self) -> None:
         if self.environment == "production" and (
@@ -75,10 +83,19 @@ class Settings:
             and not self.ldap_credential_version_ref
         ):
             raise RuntimeError("配置 LDAP_ADMIN_DN 时必须提供 LDAP_CREDENTIAL_VERSION_REF")
+        if self.ldap_use_ssl and self.ldap_start_tls:
+            raise RuntimeError("LDAP_USE_SSL 与 LDAP_START_TLS 不能同时启用")
+        if self.ldap_allow_plaintext_auth and self.ldap_transport_mode() != "PLAINTEXT":
+            raise RuntimeError("LDAP_ALLOW_PLAINTEXT_AUTH 只能用于普通 LDAP 389 模式")
         if self.environment == "production" and self.ldap_admin_dn:
-            if not (self.ldap_use_ssl or self.ldap_start_tls):
-                raise RuntimeError("生产环境 LDAP 必须启用 LDAPS 或 StartTLS")
-            if not self.ldap_tls_validate:
+            if (
+                self.ldap_transport_mode() == "PLAINTEXT"
+                and not self.ldap_allow_plaintext_auth
+            ):
+                raise RuntimeError(
+                    "普通 LDAP 认证必须显式设置 LDAP_ALLOW_PLAINTEXT_AUTH=true"
+                )
+            if self.ldap_transport_mode() != "PLAINTEXT" and not self.ldap_tls_validate:
                 raise RuntimeError("生产环境 LDAP 必须校验证书")
         if self.login_failure_limit < 3:
             raise RuntimeError("LOGIN_FAILURE_LIMIT 不能小于 3")

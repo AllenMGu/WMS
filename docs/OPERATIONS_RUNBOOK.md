@@ -65,7 +65,9 @@ systemctl start wms-gsp-backup.service
 journalctl -u wms-gsp-backup.service
 ```
 
-把成功或失败 JSON 登记到 `/api/gsp/operations/backups`，再由独立 `AUDITOR` 或
+成功或失败 JSON 默认由备份任务直接登记到数据库；`REGISTER_BACKUP_EVIDENCE=false`
+仅用于隔离恢复测试。自动登记失败时保留告警 JSON，管理员可补录到
+`/api/gsp/operations/backups`，再由独立 `AUDITOR` 或
 `QUALITY_REVIEWER` 复核。
 
 ## 3. 温湿度离线自动扫描
