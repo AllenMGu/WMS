@@ -30,6 +30,7 @@ def list_drug_profiles(
     goods_id: int | None = None,
     keyword: str | None = None,
     limit: int = 500,
+    offset: int = 0,
 ) -> list[dict]:
     query = db.query(GspDrugProfile, Goods.name).join(
         Goods, Goods.id == GspDrugProfile.goods_id
@@ -48,7 +49,7 @@ def list_drug_profiles(
                 GspDrugProfile.manufacturer.ilike(pattern),
             )
         )
-    rows = query.order_by(Goods.name, GspDrugProfile.id).limit(limit).all()
+    rows = query.order_by(Goods.name, GspDrugProfile.id).offset(offset).limit(limit).all()
     return [{**model_snapshot(profile), "goods_name": goods_name} for profile, goods_name in rows]
 
 
@@ -60,6 +61,7 @@ def list_drug_batches(
     supplier_id: int | None = None,
     batch_no: str | None = None,
     limit: int = 500,
+    offset: int = 0,
 ) -> list[dict]:
     query = (
         db.query(GspDrugBatch, Goods.name, GspBusinessPartner.name)
@@ -74,7 +76,7 @@ def list_drug_batches(
         query = query.filter(GspDrugBatch.supplier_id == supplier_id)
     if batch_no and batch_no.strip():
         query = query.filter(GspDrugBatch.batch_no.ilike(f"%{batch_no.strip()}%"))
-    rows = query.order_by(GspDrugBatch.expiry_date, GspDrugBatch.id).limit(limit).all()
+    rows = query.order_by(GspDrugBatch.expiry_date, GspDrugBatch.id).offset(offset).limit(limit).all()
     return [
         {
             **model_snapshot(batch),
@@ -93,6 +95,7 @@ def list_batch_stock(
     batch_id: int | None = None,
     stock_status: str | None = None,
     limit: int = 500,
+    offset: int = 0,
 ) -> list[dict]:
     query = (
         db.query(
@@ -116,7 +119,7 @@ def list_batch_stock(
         query = query.filter(GspBatchStock.batch_id == batch_id)
     if stock_status:
         query = query.filter(GspBatchStock.stock_status == stock_status)
-    rows = query.order_by(GspDrugBatch.expiry_date, Location.location_code).limit(limit).all()
+    rows = query.order_by(GspDrugBatch.expiry_date, Location.location_code).offset(offset).limit(limit).all()
     return [
         {
             **model_snapshot(stock),
@@ -137,6 +140,7 @@ def list_quality_holds(
     batch_id: int | None = None,
     reason_code: str | None = None,
     limit: int = 500,
+    offset: int = 0,
 ) -> list[dict]:
     query = (
         db.query(GspQualityHold, GspDrugBatch.batch_no, GspDrugBatch.goods_id, Goods.name)
@@ -149,7 +153,7 @@ def list_quality_holds(
         query = query.filter(GspQualityHold.batch_id == batch_id)
     if reason_code:
         query = query.filter(GspQualityHold.reason_code == reason_code)
-    rows = query.order_by(GspQualityHold.id.desc()).limit(limit).all()
+    rows = query.order_by(GspQualityHold.id.desc()).offset(offset).limit(limit).all()
     return [
         {
             **model_snapshot(hold),
@@ -168,6 +172,7 @@ def list_partner_documents(
     status: str | None = None,
     document_type: str | None = None,
     limit: int = 500,
+    offset: int = 0,
 ) -> list[dict]:
     query = db.query(GspPartnerDocument).filter(GspPartnerDocument.partner_id == partner_id)
     if status:
@@ -176,7 +181,7 @@ def list_partner_documents(
         query = query.filter(GspPartnerDocument.document_type == document_type)
     return [
         model_snapshot(row)
-        for row in query.order_by(GspPartnerDocument.valid_to, GspPartnerDocument.id).limit(limit).all()
+        for row in query.order_by(GspPartnerDocument.valid_to, GspPartnerDocument.id).offset(offset).limit(limit).all()
     ]
 
 

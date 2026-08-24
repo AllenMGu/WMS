@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -92,6 +93,9 @@ class ControlledPrintResponse(OrmModel):
     template_version: str
     copy_no: str
     purpose: str
+    status: str
+    snapshot_data: dict[str, Any] | None
+    content_hash: str | None
     printed_by: int
     printed_at: datetime
 

@@ -9,6 +9,30 @@ from app.gsp.models import GspRoleAssignment
 from app.legacy import User, get_current_user
 
 
+async def require_any_gsp_role(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """Require at least one currently effective GSP assignment for regulated reads."""
+    now = utc_now()
+    assignment = (
+        db.query(GspRoleAssignment)
+        .filter(
+            GspRoleAssignment.user_id == current_user.id,
+            GspRoleAssignment.is_active.is_(True),
+            GspRoleAssignment.review_due_at > now,
+            (
+                GspRoleAssignment.expires_at.is_(None)
+                | (GspRoleAssignment.expires_at > now)
+            ),
+        )
+        .first()
+    )
+    if assignment is not None:
+        return current_user
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要有效的GSP岗位")
+
+
 def require_gsp_roles(*allowed_roles: str):
     async def dependency(
         current_user: User = Depends(get_current_user),

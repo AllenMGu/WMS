@@ -1,0 +1,16 @@
+[Unit]
+Description=WMS GSP environment offline alarm scan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=wms-gsp
+Group=wms-gsp
+WorkingDirectory=/opt/wms-gsp
+EnvironmentFile=-/etc/wms-gsp/app.env
+ExecStart=/opt/wms-gsp/.venv/bin/python scripts/scan_environment_offline.py
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true

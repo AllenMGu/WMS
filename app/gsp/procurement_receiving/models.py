@@ -1,6 +1,7 @@
 """Persistence models for the controlled purchase-to-stock workflow."""
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     Column,
     Date,
@@ -144,5 +145,8 @@ class GspControlledPrintRecord(Base):
     template_version = Column(String(50), nullable=False)
     copy_no = Column(String(100), nullable=False, unique=True, index=True)
     purpose = Column(String(500), nullable=False)
+    status = Column(String(30), nullable=False, default="GENERATED", server_default="LEGACY")
+    snapshot_data = Column(JSON, nullable=True)
+    content_hash = Column(String(64), nullable=True, index=True)
     printed_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     printed_at = Column(DateTime, nullable=False, default=utc_now)
