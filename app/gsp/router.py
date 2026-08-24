@@ -10,6 +10,14 @@ from app.core.database import get_db
 from app.core.time import utc_now
 from app.gsp.access_control import grant_gsp_role, review_gsp_role, revoke_gsp_role
 from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event
+from app.gsp.catalog_queries import (
+    list_batch_stock,
+    list_drug_batches,
+    list_drug_profiles,
+    list_effective_role_assignments,
+    list_partner_documents,
+    list_quality_holds,
+)
 from app.gsp.dependencies import require_gsp_roles, require_quality_manager_or_bootstrap
 from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.electronic_signature.models import (
@@ -65,7 +73,9 @@ from app.gsp.schemas import (
     BatchCreate,
     BatchResponse,
     BatchStockReceipt,
+    BatchStockResponse,
     ChangeReason,
+    CurrentUserRolesResponse,
     DrugProfileResponse,
     DrugProfileUpsert,
     PartnerCreate,
@@ -393,6 +403,19 @@ def _role_assignment_response(assignment: GspRoleAssignment) -> dict:
     }
 
 
+@router.get("/roles/me", response_model=CurrentUserRolesResponse)
+async def list_my_roles(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    assignments = list_effective_role_assignments(db, user_id=current_user.id)
+    return {
+        "user_id": current_user.id,
+        "roles": [row.role for row in assignments],
+        "assignments": [_role_assignment_response(row) for row in assignments],
+    }
+
+
 @router.get("/roles")
 async def list_roles(
     user_id: int | None = None,
@@ -564,6 +587,30 @@ async def approve_partner(
     return partner
 
 
+@router.get(
+    "/partners/{partner_id}/documents",
+    response_model=list[PartnerDocumentResponse],
+)
+async def get_partner_documents(
+    partner_id: int,
+    status: str | None = None,
+    document_type: str | None = None,
+    limit: int = Query(500, ge=1, le=5000),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == partner_id).first()
+    if partner is None:
+        raise HTTPException(404, "合作方不存在")
+    return list_partner_documents(
+        db,
+        partner_id=partner_id,
+        status=status,
+        document_type=document_type,
+        limit=limit,
+    )
+
+
 @router.post(
     "/partners/{partner_id}/documents",
     response_model=PartnerDocumentResponse,
@@ -705,6 +752,24 @@ async def suspend_partner(
     return partner
 
 
+@router.get("/products", response_model=list[DrugProfileResponse])
+async def get_drug_profiles(
+    status: str | None = None,
+    goods_id: int | None = Query(None, gt=0),
+    keyword: str | None = None,
+    limit: int = Query(500, ge=1, le=5000),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return list_drug_profiles(
+        db,
+        status=status,
+        goods_id=goods_id,
+        keyword=keyword,
+        limit=limit,
+    )
+
+
 @router.put("/products/{goods_id}/profile", response_model=DrugProfileResponse)
 async def upsert_drug_profile(
     goods_id: int,
@@ -811,6 +876,26 @@ async def approve_drug_profile(
     db.commit()
     db.refresh(profile)
     return profile
+
+
+@router.get("/batches", response_model=list[BatchResponse])
+async def get_drug_batches(
+    status: str | None = None,
+    goods_id: int | None = Query(None, gt=0),
+    supplier_id: int | None = Query(None, gt=0),
+    batch_no: str | None = None,
+    limit: int = Query(500, ge=1, le=5000),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return list_drug_batches(
+        db,
+        status=status,
+        goods_id=goods_id,
+        supplier_id=supplier_id,
+        batch_no=batch_no,
+        limit=limit,
+    )
 
 
 @router.post("/batches", response_model=BatchResponse, status_code=201)
@@ -936,6 +1021,26 @@ async def accept_batch(
     return batch
 
 
+@router.get("/batch-stock", response_model=list[BatchStockResponse])
+async def get_batch_stock(
+    warehouse_id: int | None = Query(None, gt=0),
+    location_id: int | None = Query(None, gt=0),
+    batch_id: int | None = Query(None, gt=0),
+    stock_status: str | None = None,
+    limit: int = Query(500, ge=1, le=5000),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return list_batch_stock(
+        db,
+        warehouse_id=warehouse_id,
+        location_id=location_id,
+        batch_id=batch_id,
+        stock_status=stock_status,
+        limit=limit,
+    )
+
+
 @router.post("/batch-stock/receipt", status_code=201)
 async def receive_batch_stock(
     payload: BatchStockReceipt,
@@ -985,6 +1090,24 @@ async def receive_batch_stock(
     )
     db.commit()
     return {"id": stock.id, "quantity": stock.quantity, "status": stock.stock_status}
+
+
+@router.get("/quality-holds", response_model=list[QualityHoldResponse])
+async def get_quality_holds(
+    status: str | None = None,
+    batch_id: int | None = Query(None, gt=0),
+    reason_code: str | None = None,
+    limit: int = Query(500, ge=1, le=5000),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return list_quality_holds(
+        db,
+        status=status,
+        batch_id=batch_id,
+        reason_code=reason_code,
+        limit=limit,
+    )
 
 
 @router.post("/quality-holds", response_model=QualityHoldResponse, status_code=201)

@@ -7,6 +7,10 @@ def test_application_exposes_legacy_and_gsp_routes():
     paths = set(module.app.openapi()["paths"])
     assert "/api/token" in paths
     assert "/api/gsp/compliance/summary" in paths
+    assert "/api/gsp/roles/me" in paths
+    assert "/api/gsp/products" in paths
+    assert "/api/gsp/batches" in paths
+    assert "/api/gsp/batch-stock" in paths
     assert "/api/gsp/roles/{assignment_id}/review" in paths
     assert "/api/gsp/roles/{assignment_id}/revoke" in paths
     assert "/api/gsp/partners/{partner_id}/documents" in paths
