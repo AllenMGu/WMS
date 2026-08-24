@@ -1,5 +1,7 @@
 # WMS / 药品 GSP 质量管理系统
 
+[中文](README.md) | [English](README.en.md)
+
 [查看 CI](https://github.com/AllenMGu/WMS/actions/workflows/ci.yml) ·
 [GSP 差距矩阵](docs/GSP_GAP_ANALYSIS.md) ·
 [CSV 验证计划](docs/VALIDATION_PLAN.md) ·
@@ -38,7 +40,7 @@
 | 第十一阶段 | 承运商资质、受控车辆/驾驶员、运输任务、在途异常、签收凭证和独立关闭 | 已完成（软件控制） |
 | 第十二阶段 | 校准设备、仓库/运输监测分配、实时温湿度采集、超限/离线告警、偏差处理和不可篡改记录 | 已完成（软件控制） |
 | 第十三阶段 | 电子签名、签名含义、身份再确认、单次签署门禁和签名链验证 | 已完成（软件控制） |
-| 第十四阶段 | 登录限流、LDAP TLS、并发哈希链、出站箱治理、装箱复核、批准工作日历、文件完整性、近效期和盘点收口 | 已完成（软件控制） |
+| 第十四阶段 | 登录限流、LDAP LDAPS/StartTLS/显式普通 389 模式、并发哈希链、出站箱治理、装箱复核、批准工作日历、文件完整性、近效期和盘点收口 | 已完成（软件控制） |
 | 当前阶段 | CSV 验证文件包（VP/URS/RA/FS/DS/RTM/IQ/OQ/PQ/报告/放行） | 待实施 |
 | 部署验收 | 目标环境秘密管理、备份定时器、异地介质/告警和首次恢复演练 | 待完成 |
 | 后续阶段 | 九州通正式适配器最后实施 | 待实施 |
@@ -316,7 +318,7 @@ alembic check
 
 GitHub Actions 会在面向 `main` 的 Pull Request 上执行：
 
-- Python 3.12 静态检查、43 项自动化测试、源码编译和依赖一致性检查。
+- Python 3.12 静态检查、自动化测试、源码编译和依赖一致性检查。
 - PostgreSQL 16 服务启动、`alembic upgrade head`、`alembic check` 和集成测试。
 - 官方 Actions 固定完整提交 SHA，工作流权限限制为 `contents: read`。
 
