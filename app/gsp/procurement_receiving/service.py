@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -654,12 +656,30 @@ def create_receipt_print_record(
     receipt = db.query(GspReceipt).filter(GspReceipt.id == receipt_id).first()
     if receipt is None:
         raise WorkflowError(404, "收货单不存在")
+    snapshot = receipt_payload(db, receipt)
+    order = (
+        db.query(GspPurchaseOrder)
+        .filter(GspPurchaseOrder.id == receipt.purchase_order_id)
+        .first()
+    )
+    snapshot["purchase_order_no"] = order.order_no if order else None
+    snapshot["template_version"] = payload.template_version
+    snapshot["copy_no"] = payload.copy_no
+    canonical = json.dumps(
+        snapshot,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     record = GspControlledPrintRecord(
         document_type="RECEIPT_INSPECTION",
         entity_id=receipt.id,
         template_version=payload.template_version,
         copy_no=payload.copy_no,
         purpose=payload.purpose,
+        status="GENERATED",
+        snapshot_data=snapshot,
+        content_hash=hashlib.sha256(canonical).hexdigest(),
         printed_by=actor_id,
     )
     db.add(record)
@@ -667,7 +687,7 @@ def create_receipt_print_record(
     write_audit_event(
         db,
         actor_user_id=actor_id,
-        action="CONTROLLED_COPY_PRINTED",
+        action="CONTROLLED_COPY_GENERATED",
         entity_type="GspControlledPrintRecord",
         entity_id=str(record.id),
         reason=payload.reason,
