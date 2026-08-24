@@ -1,0 +1,12 @@
+[Unit]
+Description=Run WMS GSP environment offline scan every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=wms-gsp-environment-scan.service
+
+[Install]
+WantedBy=timers.target
