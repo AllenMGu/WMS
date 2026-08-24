@@ -278,6 +278,10 @@ def test_controlled_purchase_receipt_and_inspection_flow():
         assert stock.quantity == Decimal("12.000")
         assert stock.stock_status == "AVAILABLE"
         assert print_record.document_type == "RECEIPT_INSPECTION"
+        assert print_record.status == "GENERATED"
+        assert print_record.snapshot_data["receipt_no"] == receipt.receipt_no
+        assert print_record.snapshot_data["items"][0]["inspection_status"] == "ACCEPTED"
+        assert len(print_record.content_hash) == 64
     finally:
         db.close()
 
