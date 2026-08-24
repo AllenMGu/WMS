@@ -1,13 +1,13 @@
 """Persistence models for the controlled purchase-to-stock workflow."""
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     Column,
     Date,
     DateTime,
     ForeignKey,
     Integer,
-    JSON,
     Numeric,
     String,
     UniqueConstraint,
