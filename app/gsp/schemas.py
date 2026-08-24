@@ -52,11 +52,18 @@ class DrugProfileUpsert(ChangeReason):
 class DrugProfileResponse(OrmModel):
     id: int
     goods_id: int
+    goods_name: Optional[str] = None
     approval_no: str
     generic_name: str
     dosage_form: str
     manufacturer: str
+    marketing_authorization_holder: Optional[str]
     storage_condition: str
+    min_temperature: Optional[float]
+    max_temperature: Optional[float]
+    is_prescription: bool
+    is_special_controlled: bool
+    traceability_required: bool
     status: str
     registration_valid_to: Optional[date]
     registration_document_ref: Optional[str]
@@ -137,14 +144,18 @@ class BatchCreate(ChangeReason):
 class BatchResponse(OrmModel):
     id: int
     goods_id: int
+    goods_name: Optional[str] = None
     batch_no: str
     production_date: date
     expiry_date: date
     supplier_id: int
+    supplier_name: Optional[str] = None
     receipt_document_no: str
     inspection_report_no: Optional[str]
     traceability_code: Optional[str]
     arrival_temperature: Optional[float]
+    transport_temperature_min: Optional[float]
+    transport_temperature_max: Optional[float]
     temperature_record_ref: Optional[str]
     acceptance_conclusion: Optional[str]
     status: str
@@ -173,9 +184,29 @@ class BatchStockReceipt(ChangeReason):
     quantity: Decimal = Field(..., gt=0, decimal_places=3)
 
 
+class BatchStockResponse(OrmModel):
+    id: int
+    batch_id: int
+    batch_no: str
+    goods_id: int
+    goods_name: str
+    warehouse_id: int
+    warehouse_name: str
+    location_id: int
+    location_code: str
+    quantity: Decimal
+    reserved_quantity: Decimal
+    stock_status: str
+    lock_version: int
+    updated_at: datetime
+
+
 class QualityHoldResponse(OrmModel):
     id: int
     batch_id: int
+    batch_no: Optional[str] = None
+    goods_id: Optional[int] = None
+    goods_name: Optional[str] = None
     reason_code: str
     reason: str
     status: str
@@ -184,6 +215,22 @@ class QualityHoldResponse(OrmModel):
     released_by: Optional[int]
     released_at: Optional[datetime]
     release_reason: Optional[str]
+
+
+class EffectiveRoleAssignmentResponse(OrmModel):
+    id: int
+    user_id: int
+    role: str
+    approval_ref: str
+    review_due_at: datetime
+    expires_at: Optional[datetime]
+    is_active: bool
+
+
+class CurrentUserRolesResponse(BaseModel):
+    user_id: int
+    roles: list[str]
+    assignments: list[EffectiveRoleAssignmentResponse]
 
 
 class AuditEventResponse(OrmModel):

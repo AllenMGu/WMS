@@ -271,9 +271,11 @@ alembic check
 | 业务域 | 路径示例 | 用途 |
 | --- | --- | --- |
 | 合规概览 | `GET /api/gsp/compliance/summary` | 汇总待审批、待复核和质量锁定状态 |
-| 交易方 | `/api/gsp/partners` | 供货方/购货方建档、审批和暂停 |
-| 药品与批次 | `/api/gsp/products`、`/api/gsp/batches` | 质量主数据、批次验收与放行 |
-| 质量锁定 | `/api/gsp/quality-holds` | 创建和释放批次/库存质量锁定 |
+| 当前岗位 | `GET /api/gsp/roles/me` | 返回当前用户仍在复核期、有效期内的 GSP 岗位 |
+| 交易方 | `/api/gsp/partners` | 供货方/购货方建档、资质文件查询、审批和暂停 |
+| 药品与批次 | `/api/gsp/products`、`/api/gsp/batches` | 质量主数据与批次台账查询、批次验收和放行 |
+| 批号库存 | `GET /api/gsp/batch-stock` | 按仓库、库位、批次和状态查询批号库存 |
+| 质量锁定 | `/api/gsp/quality-holds` | 查询、创建和释放批次/库存质量锁定 |
 | 采购 | `/api/gsp/procurement/orders` | 采购订单、提交和质量审批 |
 | 收货验收 | `/api/gsp/receiving/receipts` | 按单收货与独立验收 |
 | 不合格品 | `/api/gsp/quality/nonconforming` | 登记、独立处置批准和监督销毁 |
@@ -293,7 +295,7 @@ alembic check
 | 备份证据 | `/api/gsp/operations/backups` | 备份结果、异地/离线副本、告警与独立复核 |
 | 恢复演练 | `/api/gsp/operations/recovery-drills` | 恢复计划、审批、RTO/RPO、执行与独立验证 |
 
-完整请求/响应模型以运行时 OpenAPI 文档为准。
+完整请求/响应模型以运行时 OpenAPI 文档为准。NMPA、电子档案库和其他外部平台在本阶段仅保存受控引用字段，正式适配器及凭据不进入目录查询模块。
 
 ## 测试与质量门禁
 
@@ -307,7 +309,7 @@ alembic check
 
 GitHub Actions 会在面向 `main` 的 Pull Request 上执行：
 
-- Python 3.12 静态检查、37 项自动化测试、源码编译和依赖一致性检查。
+- Python 3.12 静态检查、39 项自动化测试、源码编译和依赖一致性检查。
 - PostgreSQL 16 服务启动、`alembic upgrade head`、`alembic check` 和集成测试。
 - 官方 Actions 固定完整提交 SHA，工作流权限限制为 `contents: read`。
 
