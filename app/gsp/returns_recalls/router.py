@@ -8,8 +8,15 @@ from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
 from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
-from app.gsp.returns_recalls.models import GspRecall, GspRecallDrill, GspSalesReturn
+from app.gsp.returns_recalls.models import (
+    GspBusinessCalendarDay,
+    GspRecall,
+    GspRecallDrill,
+    GspSalesReturn,
+)
 from app.gsp.returns_recalls.schemas import (
+    BusinessCalendarDayResponse,
+    BusinessCalendarDaySet,
     RecallClose,
     RecallCompletionReportCreate,
     RecallCreate,
@@ -38,6 +45,7 @@ from app.gsp.returns_recalls.service import (
     recall_payload,
     record_recall_progress,
     sales_return_payload,
+    set_business_calendar_day,
     submit_recall_completion_report,
     verify_recall_drill_target,
 )
@@ -59,6 +67,43 @@ def _rollback_and_raise(db: Session, error: Exception):
     if isinstance(error, IntegrityError):
         raise HTTPException(409, "退货单号、召回单号或业务明细重复") from error
     raise error
+
+
+@router.get("/business-calendar", response_model=list[BusinessCalendarDayResponse])
+async def list_business_calendar(
+    _: User = Depends(require_gsp_roles(*QUALITY_ROLES, "AUDITOR")),
+    db: Session = Depends(get_db),
+):
+    return db.query(GspBusinessCalendarDay).order_by(
+        GspBusinessCalendarDay.calendar_date
+    ).all()
+
+
+@router.post(
+    "/business-calendar/{calendar_date}",
+    response_model=BusinessCalendarDayResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "BUSINESS_CALENDAR_SET", "GspBusinessCalendarDay",
+        entity_id_param="calendar_date", meaning="APPROVAL",
+    ))],
+)
+async def configure_business_calendar_day(
+    calendar_date: str,
+    payload: BusinessCalendarDaySet,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    if str(payload.calendar_date) != calendar_date:
+        raise HTTPException(409, "路径日期与请求正文不一致")
+    day = set_business_calendar_day(
+        db,
+        payload=payload,
+        actor_id=current_user.id,
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    return day
 
 
 @router.post("/returns/sales", response_model=SalesReturnResponse, status_code=201)

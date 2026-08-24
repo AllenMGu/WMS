@@ -9,6 +9,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
+from app.gsp.chain_lock import lock_chain_append
 from app.gsp.models import GspAuditEvent, GspAuditVerification
 
 
@@ -58,6 +59,7 @@ def write_audit_event(
     after_data: Optional[dict[str, Any]] = None,
     source_ip: Optional[str] = None,
 ) -> GspAuditEvent:
+    lock_chain_append(db, "audit")
     # Make earlier events in the same transaction visible before linking the
     # next event.  Several controlled operations can legitimately emit more
     # than one audit event before commit.

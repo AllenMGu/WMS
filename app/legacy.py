@@ -2,15 +2,17 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Enum, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Enum, UniqueConstraint, text
 from sqlalchemy.orm import Session, relationship
 from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 from typing import List, Optional, Dict, Any
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 import enum
 import logging
+import ssl
 import pandas as pd
 import io
 import ldap3
@@ -19,6 +21,7 @@ from ldap3.utils.conv import escape_filter_chars
 
 from app.core.config import settings
 from app.core.database import Base, get_db
+from app.core.time import utc_now
 
 # ------------------- 配置项 -------------------
 SECRET_KEY = settings.secret_key
@@ -31,6 +34,11 @@ LDAP_BASE_DN = settings.ldap_base_dn
 LDAP_ADMIN_DN = settings.ldap_admin_dn
 LDAP_ADMIN_PASSWORD = settings.ldap_admin_password
 LDAP_USER_SEARCH_FILTER = settings.ldap_user_search_filter
+LDAP_USE_SSL = settings.ldap_use_ssl
+LDAP_START_TLS = settings.ldap_start_tls
+LDAP_TLS_VALIDATE = settings.ldap_tls_validate
+LDAP_CA_CERT_FILE = settings.ldap_ca_cert_file
+LDAP_ALLOW_PLAINTEXT_AUTH = settings.ldap_allow_plaintext_auth
 
 router = APIRouter()
 
@@ -93,6 +101,22 @@ class User(Base):
     # 多对多关联
     warehouses = relationship("Warehouse", secondary="user_warehouses",
                             backref="users", lazy="dynamic")
+
+
+class LoginSecurityState(Base):
+    """Durable login throttling shared by all API processes."""
+
+    __tablename__ = "login_security_states"
+    id = Column(Integer, primary_key=True)
+    scope_type = Column(String(20), nullable=False)
+    scope_key = Column(String(200), nullable=False)
+    failed_count = Column(Integer, nullable=False, default=0)
+    window_started_at = Column(DateTime, nullable=True)
+    last_failed_at = Column(DateTime, nullable=True)
+    locked_until = Column(DateTime, nullable=True)
+    __table_args__ = (
+        UniqueConstraint("scope_type", "scope_key", name="uq_login_security_scope"),
+    )
 
 # 3. 库位表（关联仓库）
 class Location(Base):
@@ -308,28 +332,50 @@ def get_password_hash(password: str):
     return pwd_context.hash(password)
 
 # LDAP认证
+def _ldap_server_definition():
+    parsed = urlparse(LDAP_SERVER if "://" in LDAP_SERVER else f"ldap://{LDAP_SERVER}")
+    use_ssl = LDAP_USE_SSL or parsed.scheme.lower() == "ldaps"
+    tls = ldap3.Tls(
+        validate=ssl.CERT_REQUIRED if LDAP_TLS_VALIDATE else ssl.CERT_NONE,
+        ca_certs_file=LDAP_CA_CERT_FILE or None,
+    )
+    return ldap3.Server(
+        parsed.hostname or LDAP_SERVER,
+        port=parsed.port or (636 if use_ssl else 389),
+        use_ssl=use_ssl,
+        tls=tls,
+        get_info=ldap3.NONE,
+    ), use_ssl
+
+
+def _ldap_connection(user: str, password: str):
+    server, use_ssl = _ldap_server_definition()
+    conn = ldap3.Connection(server, user=user, password=password)
+    if LDAP_START_TLS and not use_ssl:
+        conn.open()
+        if conn.closed or not conn.start_tls():
+            raise RuntimeError("LDAP StartTLS negotiation failed")
+    elif not use_ssl and not LDAP_ALLOW_PLAINTEXT_AUTH:
+        raise RuntimeError("LDAP plaintext authentication is not explicitly enabled")
+    if not conn.bind():
+        raise RuntimeError("LDAP bind failed")
+    return conn
+
+
 def ldap_authenticate(username: str, password: str):
-    """通过LDAP验证用户身份"""
+    """通过LDAP安全连接验证用户身份。"""
     try:
-        logging.info(f"开始LDAP认证，用户: {username}")
-        # 建立LDAP连接
-        server = ldap3.Server(LDAP_SERVER, get_info=ldap3.ALL)
-        conn = ldap3.Connection(server, user=LDAP_ADMIN_DN, password=LDAP_ADMIN_PASSWORD, auto_bind=True)
-        logging.info("成功连接到LDAP服务器")
+        conn = _ldap_connection(LDAP_ADMIN_DN, LDAP_ADMIN_PASSWORD)
 
         # 搜索用户
         search_filter = LDAP_USER_SEARCH_FILTER.format(escape_filter_chars(username))
-        logging.info(f"搜索过滤器: {search_filter}")
         conn.search(LDAP_BASE_DN, search_filter, attributes=['cn', 'mail', 'givenName', 'sn', 'sAMAccountName', 'uid'])
-        logging.info(f"搜索结果数量: {len(conn.entries)}")
 
-        if conn.entries:
+        if len(conn.entries) == 1:
             user_dn = conn.entries[0].entry_dn
-            logging.info(f"找到用户DN: {user_dn}")
             # 尝试使用用户凭证绑定
-            user_conn = ldap3.Connection(server, user=user_dn, password=password)
-            if user_conn.bind():
-                logging.info(f"用户 {username} 认证成功")
+            user_conn = _ldap_connection(user_dn, password)
+            if user_conn.bound:
                 # 获取用户信息
                 user_info = {
                     'username': username,
@@ -339,14 +385,12 @@ def ldap_authenticate(username: str, password: str):
                     'last_name': conn.entries[0].sn.value if hasattr(conn.entries[0], 'sn') else ''
                 }
                 return True, user_info
-            else:
-                logging.error(f"用户 {username} 凭证绑定失败，DN: {user_dn}")
-        else:
-            logging.error(f"未找到用户: {username}，搜索过滤器: {search_filter}")
+        elif len(conn.entries) > 1:
+            logging.warning("LDAP search returned multiple entries")
 
         return False, None
-    except Exception as e:
-        logging.error(f"LDAP认证过程异常: {str(e)}")
+    except Exception:
+        logging.exception("LDAP authentication failed")
         return False, None
 
 # 创建JWT Token
@@ -438,6 +482,11 @@ def recalculate_inbound_order_total(order_id, db):
 def generate_order_no(prefix: str, db: Session) -> str:
     """生成单据编号"""
     today = datetime.now().strftime("%Y%m%d")
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:scope))"),
+            {"scope": f"wms-order-number:{prefix}:{today}"},
+        )
     # 查找今天已有多少单
     if prefix == "IN":
         count = db.query(InboundOrderHeader).filter(
@@ -461,10 +510,10 @@ class UserResponse(BaseModel):
     id: int
     username: str
     full_name: str
-    warehouse_id: int
-    warehouse_name: str
+    current_warehouse_id: Optional[int] = None
     role: UserRole
     is_ldap_user: bool
+    is_active: bool
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -658,29 +707,92 @@ class OutboundOrderDetailResponse(OutboundOrderHeaderResponse):
     items: List[OutboundOrderItemResponse] = []
 
 # ------------------- 认证接口 -------------------
+def _login_scopes(username: str, source_ip: str) -> tuple[tuple[str, str], ...]:
+    return (("USERNAME", username.strip().lower()), ("SOURCE_IP", source_ip))
+
+
+def _login_security_rows(db: Session, username: str, source_ip: str, *, lock: bool):
+    rows = []
+    for scope_type, scope_key in _login_scopes(username, source_ip):
+        if lock and db.get_bind().dialect.name == "postgresql":
+            db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:scope))"),
+                {"scope": f"wms-gsp-login:{scope_type}:{scope_key}"},
+            )
+        query = db.query(LoginSecurityState).filter(
+            LoginSecurityState.scope_type == scope_type,
+            LoginSecurityState.scope_key == scope_key,
+        )
+        row = query.with_for_update().first() if lock else query.first()
+        if row is None and lock:
+            row = LoginSecurityState(scope_type=scope_type, scope_key=scope_key)
+            db.add(row)
+            db.flush()
+        rows.append(row)
+    return rows
+
+
+def _enforce_login_throttle(db: Session, username: str, source_ip: str) -> None:
+    now = utc_now()
+    for row in _login_security_rows(db, username, source_ip, lock=False):
+        if row and row.locked_until and row.locked_until > now:
+            raise HTTPException(status_code=429, detail="登录尝试过多，请稍后重试")
+
+
+def _record_login_failure(db: Session, username: str, source_ip: str) -> None:
+    now = utc_now()
+    window = timedelta(minutes=settings.login_failure_window_minutes)
+    for row in _login_security_rows(db, username, source_ip, lock=True):
+        if row.window_started_at is None or now - row.window_started_at > window:
+            row.failed_count = 0
+            row.window_started_at = now
+        row.failed_count += 1
+        row.last_failed_at = now
+        if row.failed_count >= settings.login_failure_limit:
+            row.locked_until = now + timedelta(minutes=settings.login_lock_minutes)
+    db.commit()
+
+
+def _record_login_success(db: Session, username: str, source_ip: str) -> None:
+    for row in _login_security_rows(db, username, source_ip, lock=True):
+        row.failed_count = 0
+        row.window_started_at = None
+        row.last_failed_at = None
+        row.locked_until = None
+    db.commit()
+
+
+def _authentication_failed(db: Session, username: str, source_ip: str) -> None:
+    _record_login_failure(db, username, source_ip)
+    raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+
 @router.post("/token", summary="用户登录获取Token")
 async def login_for_access_token(
+    request: Request,
     username: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
+    source_ip = request.client.host if request.client else "UNKNOWN"
+    _enforce_login_throttle(db, username, source_ip)
     # 首先尝试本地数据库认证
     user = db.query(User).filter(User.username == username).first()
     if user:
         # 检查用户是否被禁用
         if not user.is_active:
-            raise HTTPException(status_code=401, detail="用户已被禁用")
+            _authentication_failed(db, username, source_ip)
 
         if user.is_ldap_user:
             # LDAP用户，直接使用LDAP认证
             ldap_success, ldap_user_info = ldap_authenticate(username, password)
             if not ldap_success:
-                raise HTTPException(status_code=401, detail="用户名或密码错误")
+                _authentication_failed(db, username, source_ip)
             # LDAP口令只交给目录服务验证，不在本系统留存可复用的派生值。
         else:
             # 本地用户，使用本地数据库认证
             if not verify_password(password, user.hashed_password):
-                raise HTTPException(status_code=401, detail="用户名或密码错误")
+                _authentication_failed(db, username, source_ip)
     else:
         # 本地数据库中未找到用户，尝试LDAP认证
         ldap_success, ldap_user_info = ldap_authenticate(username, password)
@@ -701,7 +813,9 @@ async def login_for_access_token(
             db.commit()
             db.refresh(user)
         else:
-            raise HTTPException(status_code=401, detail="用户名或密码错误")
+            _authentication_failed(db, username, source_ip)
+
+    _record_login_success(db, username, source_ip)
 
     # 获取用户所有可管理仓库
     warehouses = []
@@ -803,9 +917,13 @@ async def create_user(
         db.commit()
         db.refresh(new_user)
         return new_user
-    except Exception as e:
+    except HTTPException:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"创建用户失败：{str(e)}")
+        raise
+    except Exception:
+        db.rollback()
+        logging.exception("local user creation failed")
+        raise HTTPException(status_code=500, detail="创建用户失败")
 
 # 用户切换仓库接口
 @router.post("/users/{user_id}/switch-warehouse", summary="切换当前仓库")
@@ -905,25 +1023,18 @@ async def get_ldap_config(
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="无权限操作")
 
-    # 从数据库获取配置
-    config = {}
-    keys = ["ldap_server", "ldap_base_dn", "ldap_admin_dn", "ldap_admin_password", "ldap_user_search_filter"]
-    default_values = {
+    return {
         "ldap_server": settings.ldap_server,
         "ldap_base_dn": settings.ldap_base_dn,
         "ldap_admin_dn": settings.ldap_admin_dn,
-        "ldap_admin_password": "",
         "ldap_user_search_filter": settings.ldap_user_search_filter,
+        "ldap_use_ssl": settings.ldap_use_ssl,
+        "ldap_start_tls": settings.ldap_start_tls,
+        "ldap_tls_validate": settings.ldap_tls_validate,
+        "ldap_allow_plaintext_auth": settings.ldap_allow_plaintext_auth,
+        "ldap_transport_mode": settings.ldap_transport_mode(),
+        "managed_externally": True,
     }
-
-    for key in keys:
-        db_config = db.query(Config).filter(Config.key == key).first()
-        if db_config:
-            config[key] = "********" if key == "ldap_admin_password" and db_config.value else db_config.value
-        else:
-            config[key] = default_values[key]
-
-    return config
 
 # 更新LDAP配置
 @router.put("/ldap/config", summary="更新LDAP配置")
@@ -935,111 +1046,25 @@ async def update_ldap_config(
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="无权限操作")
-    reason = str(config_data.get("reason", "")).strip()
-    if len(reason) < 3:
-        raise HTTPException(status_code=400, detail="配置变更必须填写原因")
-
-    # 允许更新的配置项
-    allowed_keys = ["ldap_server", "ldap_base_dn", "ldap_admin_dn", "ldap_admin_password", "ldap_user_search_filter"]
-    before = {
-        key: ("********" if key == "ldap_admin_password" and value.value else value.value)
-        for key in allowed_keys
-        if (value := db.query(Config).filter(Config.key == key).first()) is not None
-    }
-
-    for key, value in config_data.items():
-        if key in allowed_keys:
-            if key == "ldap_admin_password" and value == "********":
-                continue
-            # 查找或创建配置项
-            db_config = db.query(Config).filter(Config.key == key).first()
-            if db_config:
-                db_config.value = value
-                db_config.update_time = datetime.now()
-            else:
-                db_config = Config(
-                    key=key,
-                    value=value,
-                    description=f"LDAP {key}配置"
-                )
-                db.add(db_config)
-
-    db.flush()
-    after = {
-        key: ("********" if key == "ldap_admin_password" and value.value else value.value)
-        for key in allowed_keys
-        if (value := db.query(Config).filter(Config.key == key).first()) is not None
-    }
-    write_legacy_audit(
-        db,
-        actor_id=current_user.id,
-        action="LDAP_CONFIG_UPDATED",
-        entity_type="Config",
-        entity_id="LDAP",
-        reason=reason,
-        before_data=before,
-        after_data=after,
-        request=request,
+    raise HTTPException(
+        status_code=409,
+        detail="LDAP配置由外部秘密管理和部署配置控制，请通过受控变更流程更新并重启服务",
     )
-    db.commit()
-
-    return {"message": "LDAP配置更新成功"}
 
 # LDAP用户导入
 @router.post("/ldap/import-users", summary="导入LDAP用户")
 async def import_ldap_users(
-    ldap_config: dict = None,  # 允许传入自定义配置，可选
+    ldap_config: dict = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="无权限操作")
-
-    # 声明为全局变量，以便在函数内部访问和修改
-    global LDAP_SERVER, LDAP_BASE_DN, LDAP_ADMIN_DN, LDAP_ADMIN_PASSWORD, LDAP_USER_SEARCH_FILTER
-
-    # 保存原始配置，确保在任何情况下都能恢复
-    original_server = LDAP_SERVER
-    original_base_dn = LDAP_BASE_DN
-    original_admin_dn = LDAP_ADMIN_DN
-    original_admin_password = LDAP_ADMIN_PASSWORD
-    original_user_filter = LDAP_USER_SEARCH_FILTER
+    if ldap_config:
+        raise HTTPException(status_code=422, detail="LDAP连接与凭据只能由受控运行环境配置")
 
     try:
-        # 获取配置（优先级：传入参数 > 数据库配置 > 默认配置）
-        if ldap_config:
-            LDAP_SERVER = ldap_config.get("ldap_server", LDAP_SERVER)
-            LDAP_BASE_DN = ldap_config.get("base_dn", LDAP_BASE_DN)
-            LDAP_ADMIN_DN = ldap_config.get("admin_dn", LDAP_ADMIN_DN)
-            LDAP_ADMIN_PASSWORD = ldap_config.get("admin_password", LDAP_ADMIN_PASSWORD)
-            LDAP_USER_SEARCH_FILTER = ldap_config.get("user_filter", LDAP_USER_SEARCH_FILTER)
-        else:
-            # 使用数据库中保存的默认配置
-            config_keys = {
-                "ldap_server": "ldap_server",
-                "base_dn": "ldap_base_dn",
-                "admin_dn": "ldap_admin_dn",
-                "admin_password": "ldap_admin_password",
-                "user_filter": "ldap_user_search_filter"
-            }
-
-            for key, db_key in config_keys.items():
-                db_config = db.query(Config).filter(Config.key == db_key).first()
-                if db_config:
-                    if key == "ldap_server":
-                        LDAP_SERVER = db_config.value
-                    elif key == "base_dn":
-                        LDAP_BASE_DN = db_config.value
-                    elif key == "admin_dn":
-                        LDAP_ADMIN_DN = db_config.value
-                    elif key == "admin_password":
-                        LDAP_ADMIN_PASSWORD = db_config.value
-                    elif key == "user_filter":
-                        LDAP_USER_SEARCH_FILTER = db_config.value
-
-        # 连接LDAP服务器
-        server = ldap3.Server(LDAP_SERVER, get_info=ldap3.ALL)
-        conn = ldap3.Connection(server, user=LDAP_ADMIN_DN, password=LDAP_ADMIN_PASSWORD, auto_bind=True)
+        conn = _ldap_connection(LDAP_ADMIN_DN, LDAP_ADMIN_PASSWORD)
 
         # 搜索符合条件的用户
         search_filter = LDAP_USER_SEARCH_FILTER  # 使用传入的用户搜索过滤器
@@ -1101,28 +1126,19 @@ async def import_ldap_users(
 
         db.commit()
 
-        # 恢复全局配置
-        LDAP_SERVER = original_server
-        LDAP_BASE_DN = original_base_dn
-        LDAP_ADMIN_DN = original_admin_dn
-        LDAP_ADMIN_PASSWORD = original_admin_password
-        LDAP_USER_SEARCH_FILTER = original_user_filter
-
         return {
             "imported": imported_count,
             "skipped": skipped_count,
             "message": f"成功导入 {imported_count} 个用户，跳过 {skipped_count} 个用户"
         }
 
-    except Exception as e:
+    except HTTPException:
         db.rollback()
-        # 恢复全局配置（即使出现错误）
-        LDAP_SERVER = original_server
-        LDAP_BASE_DN = original_base_dn
-        LDAP_ADMIN_DN = original_admin_dn
-        LDAP_ADMIN_PASSWORD = original_admin_password
-        LDAP_USER_SEARCH_FILTER = original_user_filter
-        raise HTTPException(status_code=500, detail=f"导入LDAP用户失败：{str(e)}")
+        raise
+    except Exception:
+        db.rollback()
+        logging.exception("LDAP user import failed")
+        raise HTTPException(status_code=502, detail="LDAP用户导入失败")
 
 # 获取所有用户
 @router.get("/users/", summary="获取所有用户")

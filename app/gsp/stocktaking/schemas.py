@@ -11,7 +11,9 @@ class StocktakePlanCreate(ChangeReason):
     warehouse_id: int
     scope_type: str = Field(..., min_length=3, max_length=30)
     scope_summary: str = Field(..., min_length=10, max_length=1000)
-    stock_ids: list[int] = Field(..., min_length=1)
+    selection_rule: str = Field("MANUAL", min_length=3, max_length=50)
+    sample_size: int | None = Field(None, gt=0, le=10000)
+    stock_ids: list[int] = Field(default_factory=list)
 
 
 class StocktakeCount(ChangeReason):
@@ -22,6 +24,7 @@ class StocktakeCount(ChangeReason):
 class StocktakeReview(ChangeReason):
     decision: str = Field(..., min_length=3, max_length=30)
     conclusion: str = Field(..., min_length=10, max_length=1000)
+    capa_ref: str | None = Field(None, min_length=3, max_length=500)
 
 
 class StocktakeItemResponse(OrmModel):
@@ -49,7 +52,10 @@ class StocktakePlanResponse(OrmModel):
     warehouse_id: int
     scope_type: str
     scope_summary: str
+    selection_rule: str
     status: str
+    transactions_frozen: bool
+    frozen_at: datetime | None
     created_by: int
     created_at: datetime
     submitted_by: int | None
@@ -59,6 +65,7 @@ class StocktakePlanResponse(OrmModel):
     reviewed_by: int | None
     reviewed_at: datetime | None
     review_conclusion: str | None
+    capa_ref: str | None
     completed_by: int | None
     completed_at: datetime | None
     items: list[StocktakeItemResponse]

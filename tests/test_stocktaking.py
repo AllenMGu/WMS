@@ -1,8 +1,10 @@
+import asyncio
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from starlette.requests import Request
 
 from app.core.database import SessionLocal
 from app.gsp.errors import WorkflowError
@@ -12,12 +14,15 @@ from app.gsp.models import (
     GspDrugBatch,
     GspIntegrationMessage,
 )
+from app.gsp.router import receive_batch_stock
+from app.gsp.schemas import BatchStockReceipt
 from app.gsp.stocktaking.models import GspStocktakeItem
 from app.gsp.stocktaking.schemas import StocktakeCount, StocktakePlanCreate, StocktakeReview
 from app.gsp.stocktaking.service import (
     apply_stocktake_adjustments,
     approve_stocktake_plan,
     create_stocktake_plan,
+    ensure_stock_not_frozen,
     record_stocktake_count,
     review_stocktake_results,
     stocktake_plan_payload,
@@ -114,7 +119,38 @@ def _approved_plan(db, context):
         db, plan_id=plan.id, actor_id=context["approver"].id,
         reason="质量部门独立批准盘点范围并生成账面基线", source_ip="127.0.0.1",
     )
+    assert plan.transactions_frozen is True
+    with pytest.raises(WorkflowError, match="盘点冻结"):
+        ensure_stock_not_frozen(db, [context["stock"].id])
     return plan
+
+
+def test_frozen_stock_cannot_be_changed_through_direct_receipt_route():
+    import main  # noqa: F401
+
+    db = SessionLocal()
+    try:
+        context = _stocktake_context(db)
+        _approved_plan(db, context)
+        request = Request({"type": "http", "client": ("127.0.0.1", 12345)})
+        with pytest.raises(WorkflowError, match="盘点冻结"):
+            asyncio.run(
+                receive_batch_stock(
+                    payload=BatchStockReceipt(
+                        batch_id=context["stock"].batch_id,
+                        warehouse_id=context["warehouse"].id,
+                        location_id=context["stock"].location_id,
+                        quantity=Decimal("1.000"),
+                        reason="验证冻结库存不能通过直接收货入口增加",
+                    ),
+                    request=request,
+                    current_user=context["planner"],
+                    db=db,
+                )
+            )
+    finally:
+        db.rollback()
+        db.close()
 
 
 def test_stocktake_difference_requires_independent_approval_and_execution():
@@ -154,6 +190,7 @@ def test_stocktake_difference_requires_independent_approval_and_execution():
             payload=StocktakeReview(
                 decision="APPROVE",
                 conclusion="已核对破损隔离记录，同意按实盘数量执行受控库存调整。",
+                capa_ref="CAPA-STOCKTAKE-001",
                 reason="质量部门独立批准盘点差异",
             ),
             actor_id=context["reviewer"].id, source_ip="127.0.0.1",
@@ -173,6 +210,8 @@ def test_stocktake_difference_requires_independent_approval_and_execution():
         db.commit()
         db.refresh(context["stock"])
         assert plan.status == "COMPLETED"
+        assert plan.transactions_frozen is False
+        assert plan.capa_ref == "CAPA-STOCKTAKE-001"
         assert context["stock"].quantity == Decimal("8.000")
         assert context["stock"].lock_version == 4
         assert item.status == "ADJUSTED"
@@ -204,6 +243,7 @@ def test_stocktake_blocks_adjustment_when_inventory_changed_after_baseline():
             db, plan_id=plan.id,
             payload=StocktakeReview(
                 decision="APPROVE", conclusion="差异原因已经核实，同意进入调整执行阶段。",
+                capa_ref="CAPA-STOCKTAKE-002",
                 reason="质量复核批准差异",
             ),
             actor_id=context["reviewer"].id, source_ip="127.0.0.1",

@@ -35,6 +35,29 @@ class MaintenanceCompletion(ChangeReason):
     conclusion: str = Field(..., min_length=10, max_length=1000)
 
 
+class ExpiryAlertDecision(ChangeReason):
+    resolution: str = Field(..., min_length=10, max_length=500)
+    evidence_ref: str = Field(..., min_length=3, max_length=500)
+    review_due_on: date
+
+
+class ExpiryAlertResponse(OrmModel):
+    id: int
+    batch_id: int
+    alert_type: str
+    threshold_days: int
+    status: str
+    quality_hold_id: int | None
+    created_by: int
+    created_at: datetime
+    last_evaluated_at: datetime
+    resolved_by: int | None
+    resolved_at: datetime | None
+    resolution: str | None
+    evidence_ref: str | None
+    review_due_on: date | None
+
+
 class MaintenancePlanItemResponse(OrmModel):
     id: int
     line_no: int

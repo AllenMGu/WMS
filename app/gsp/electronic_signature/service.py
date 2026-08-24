@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
 from app.gsp.audit import write_audit_event
+from app.gsp.chain_lock import lock_chain_append
 from app.gsp.electronic_signature.models import (
     GspElectronicSignature,
     GspSignatureChallenge,
@@ -72,6 +73,10 @@ SIGNATURE_POLICIES: dict[str, tuple[str, str]] = {
     "RECALL_CLOSE": ("GspRecall", "REVIEW"),
     "RECALL_COMPLETION_REPORT": ("GspRecall", "RESPONSIBILITY"),
     "RECALL_DRILL_COMPLETE": ("GspRecallDrill", "REVIEW"),
+    "INTEGRATION_MESSAGE_REQUEUE": ("GspIntegrationMessage", "RESPONSIBILITY"),
+    "BUSINESS_CALENDAR_SET": ("GspBusinessCalendarDay", "APPROVAL"),
+    "COMPLIANCE_SETTING_SET": ("GspComplianceSetting", "APPROVAL"),
+    "EXPIRY_ALERT_RESOLVE": ("GspExpiryAlert", "REVIEW"),
 }
 
 
@@ -245,6 +250,7 @@ def consume_signature_challenge(
     if actual != expected:
         raise WorkflowError(409, "电子签名与当前操作、记录、含义或请求内容不匹配")
 
+    lock_chain_append(db, "electronic-signatures")
     db.flush()
     previous = db.query(GspElectronicSignature).order_by(GspElectronicSignature.id.desc()).first()
     previous_hash = previous.signature_hash if previous else None

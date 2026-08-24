@@ -1,21 +1,206 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
 from app.gsp.audit import write_audit_event
 from app.gsp.errors import WorkflowError
-from app.gsp.maintenance.models import GspMaintenancePlan, GspMaintenancePlanItem
+from app.gsp.maintenance.models import (
+    GspExpiryAlert,
+    GspMaintenancePlan,
+    GspMaintenancePlanItem,
+)
 from app.gsp.maintenance.schemas import MaintenanceInspection, MaintenancePlanCreate
-from app.gsp.models import GspBatchStock, GspDrugBatch, GspQualityHold
+from app.gsp.models import GspBatchStock, GspComplianceSetting, GspDrugBatch, GspQualityHold
 from app.gsp.outbox import enqueue_integration_message
 from app.gsp.snapshots import model_snapshot
 from app.legacy import Warehouse
 
 PLAN_TYPES = {"ROUTINE", "KEY"}
 INSPECTION_RESULTS = {"NORMAL", "ABNORMAL"}
+EXPIRY_DEFAULTS = {
+    "NEAR_EXPIRY_WARNING_DAYS": 90,
+    "STOP_SALE_DAYS": 30,
+    "MAINTENANCE_SELECTION_DAYS": 120,
+}
+
+
+def _expiry_thresholds(db: Session) -> dict[str, int]:
+    values = dict(EXPIRY_DEFAULTS)
+    for setting in db.query(GspComplianceSetting).filter(
+        GspComplianceSetting.key.in_(EXPIRY_DEFAULTS)
+    ):
+        values[setting.key] = setting.integer_value
+    return values
+
+
+def scan_expiry_controls(
+    db: Session,
+    *,
+    actor_id: int,
+    source_ip: str | None,
+) -> list[GspExpiryAlert]:
+    """Idempotently create near-expiry evidence and stop-sale holds."""
+    today = date.today()
+    thresholds = _expiry_thresholds(db)
+    maximum_days = max(thresholds.values())
+    batches = (
+        db.query(GspDrugBatch)
+        .filter(
+            GspDrugBatch.status == "RELEASED",
+            GspDrugBatch.expiry_date <= today + timedelta(days=maximum_days),
+            GspDrugBatch.id.in_(
+                db.query(GspBatchStock.batch_id).filter(GspBatchStock.quantity > 0)
+            ),
+        )
+        .order_by(GspDrugBatch.expiry_date, GspDrugBatch.id)
+        .all()
+    )
+    touched: list[GspExpiryAlert] = []
+    rules = (
+        ("MAINTENANCE_DUE", thresholds["MAINTENANCE_SELECTION_DAYS"]),
+        ("WARNING", thresholds["NEAR_EXPIRY_WARNING_DAYS"]),
+        ("STOP_SALE", thresholds["STOP_SALE_DAYS"]),
+    )
+    for batch in batches:
+        remaining_days = (batch.expiry_date - today).days
+        for alert_type, threshold_days in rules:
+            if remaining_days > threshold_days:
+                continue
+            alert = (
+                db.query(GspExpiryAlert)
+                .filter(
+                    GspExpiryAlert.batch_id == batch.id,
+                    GspExpiryAlert.alert_type == alert_type,
+                )
+                .with_for_update()
+                .first()
+            )
+            created = alert is None
+            reopened = False
+            if alert is None:
+                alert = GspExpiryAlert(
+                    batch_id=batch.id,
+                    alert_type=alert_type,
+                    threshold_days=threshold_days,
+                    status="OPEN",
+                    created_by=actor_id,
+                )
+                db.add(alert)
+                db.flush()
+            elif (
+                alert.status == "RESOLVED"
+                and alert.review_due_on is not None
+                and alert.review_due_on <= today
+            ):
+                before_reopen = model_snapshot(alert)
+                alert.status = "OPEN"
+                alert.resolved_by = None
+                alert.resolved_at = None
+                alert.resolution = None
+                alert.evidence_ref = None
+                alert.review_due_on = None
+                reopened = True
+            alert.threshold_days = threshold_days
+            alert.last_evaluated_at = utc_now()
+            if alert_type == "STOP_SALE":
+                hold = (
+                    db.query(GspQualityHold)
+                    .filter(
+                        GspQualityHold.batch_id == batch.id,
+                        GspQualityHold.reason_code == "NEAR_EXPIRY_STOP_SALE",
+                        GspQualityHold.status == "ACTIVE",
+                    )
+                    .with_for_update()
+                    .first()
+                )
+                if hold is None:
+                    hold = GspQualityHold(
+                        batch_id=batch.id,
+                        reason_code="NEAR_EXPIRY_STOP_SALE",
+                        reason=f"批号 {batch.batch_no} 距有效期仅 {remaining_days} 天，自动停止销售",
+                        status="ACTIVE",
+                        initiated_by=actor_id,
+                    )
+                    db.add(hold)
+                    db.flush()
+                    for stock in (
+                        db.query(GspBatchStock)
+                        .filter(GspBatchStock.batch_id == batch.id)
+                        .with_for_update()
+                    ):
+                        if stock.stock_status != "HOLD":
+                            stock.stock_status = "HOLD"
+                            stock.lock_version += 1
+                alert.quality_hold_id = hold.id
+            db.flush()
+            if created:
+                write_audit_event(
+                    db,
+                    actor_user_id=actor_id,
+                    action=f"EXPIRY_{alert_type}_CREATED",
+                    entity_type="GspExpiryAlert",
+                    entity_id=str(alert.id),
+                    reason=f"批号剩余 {remaining_days} 天，触发已批准阈值 {threshold_days} 天",
+                    after_data=model_snapshot(alert),
+                    source_ip=source_ip,
+                )
+            elif reopened:
+                write_audit_event(
+                    db,
+                    actor_user_id=actor_id,
+                    action=f"EXPIRY_{alert_type}_REVIEW_REOPENED",
+                    entity_type="GspExpiryAlert",
+                    entity_id=str(alert.id),
+                    reason="已批准的近效期复核到期，系统重新打开告警",
+                    before_data=before_reopen,
+                    after_data=model_snapshot(alert),
+                    source_ip=source_ip,
+                )
+            touched.append(alert)
+    return touched
+
+
+def resolve_expiry_alert(
+    db: Session,
+    *,
+    alert_id: int,
+    resolution: str,
+    evidence_ref: str,
+    review_due_on: date,
+    reason: str,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspExpiryAlert:
+    alert = db.query(GspExpiryAlert).filter(GspExpiryAlert.id == alert_id).with_for_update().first()
+    if alert is None:
+        raise WorkflowError(404, "近效期告警不存在")
+    if alert.status != "OPEN":
+        raise WorkflowError(409, "近效期告警已关闭")
+    if review_due_on <= date.today():
+        raise WorkflowError(422, "下次复核日期必须晚于当前日期")
+    before = model_snapshot(alert)
+    alert.status = "RESOLVED"
+    alert.resolved_by = actor_id
+    alert.resolved_at = utc_now()
+    alert.resolution = resolution
+    alert.evidence_ref = evidence_ref
+    alert.review_due_on = review_due_on
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="EXPIRY_ALERT_RESOLVED",
+        entity_type="GspExpiryAlert",
+        entity_id=str(alert.id),
+        reason=reason,
+        before_data=before,
+        after_data=model_snapshot(alert),
+        source_ip=source_ip,
+    )
+    return alert
 
 
 def _plan_items(db: Session, plan_id: int) -> list[GspMaintenancePlanItem]:

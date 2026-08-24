@@ -8,10 +8,10 @@ Type=oneshot
 User=wms-gsp
 Group=wms-gsp
 EnvironmentFile=/etc/wms-gsp/backup.env
+EnvironmentFile=-/etc/wms-gsp/app.env
 ExecStart=/opt/wms-gsp/scripts/backup-postgres.sh
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/backups/wms-gsp /mnt/wms-gsp-offsite /var/lib/wms-gsp/alerts
-

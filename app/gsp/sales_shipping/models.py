@@ -154,3 +154,35 @@ class GspShipment(Base):
     reviewed_at = Column(DateTime, nullable=True)
     dispatched_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     dispatched_at = Column(DateTime, nullable=True)
+
+
+class GspShipmentPackage(Base):
+    __tablename__ = "gsp_shipment_packages"
+
+    id = Column(Integer, primary_key=True)
+    shipment_id = Column(Integer, ForeignKey("gsp_shipments.id"), nullable=False, index=True)
+    package_no = Column(String(100), nullable=False)
+    package_type = Column(String(50), nullable=False)
+    seal_no = Column(String(100), nullable=False)
+    packing_condition = Column(String(500), nullable=False)
+    delivery_note_no = Column(String(100), nullable=False)
+    packing_record_ref = Column(String(500), nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    __table_args__ = (
+        UniqueConstraint("shipment_id", "package_no", name="uq_gsp_shipment_package_no"),
+    )
+
+
+class GspShipmentPackageItem(Base):
+    __tablename__ = "gsp_shipment_package_items"
+
+    id = Column(Integer, primary_key=True)
+    package_id = Column(Integer, ForeignKey("gsp_shipment_packages.id"), nullable=False, index=True)
+    allocation_id = Column(Integer, ForeignKey("gsp_stock_allocations.id"), nullable=False, index=True)
+    quantity = Column(Numeric(18, 3), nullable=False)
+    traceability_code = Column(String(200), nullable=True, index=True)
+    __table_args__ = (
+        UniqueConstraint("package_id", "allocation_id", name="uq_gsp_package_allocation"),
+        CheckConstraint("quantity > 0", name="ck_gsp_package_item_quantity_positive"),
+    )

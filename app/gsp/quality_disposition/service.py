@@ -23,6 +23,7 @@ from app.gsp.quality_disposition.schemas import (
     PurchaseReturnDispatch,
 )
 from app.gsp.snapshots import model_snapshot
+from app.gsp.stocktaking.service import ensure_stock_not_frozen
 from app.legacy import User
 
 FINAL_DISPOSITIONS = {"RETURN_TO_SUPPLIER", "DESTROY"}
@@ -294,6 +295,7 @@ def execute_destruction(
         )
         if not stock or Decimal(stock.quantity) - Decimal(stock.reserved_quantity) < record.quantity:
             raise WorkflowError(409, "待销毁库存数量不足或仍被销售订单预留")
+        ensure_stock_not_frozen(db, [stock.id])
         stock.quantity -= record.quantity
         stock.lock_version += 1
     record.status = "EXECUTED"
@@ -537,6 +539,7 @@ def dispatch_purchase_return(
             )
             if not stock or Decimal(stock.quantity) - Decimal(stock.reserved_quantity) < item.quantity:
                 raise WorkflowError(409, "待退供库存数量不足或仍被销售订单预留")
+            ensure_stock_not_frozen(db, [stock.id])
             stock.quantity -= item.quantity
             stock.lock_version += 1
         record.status = "EXECUTED"

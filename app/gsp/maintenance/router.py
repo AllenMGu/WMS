@@ -6,8 +6,10 @@ from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
 from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
-from app.gsp.maintenance.models import GspMaintenancePlan
+from app.gsp.maintenance.models import GspExpiryAlert, GspMaintenancePlan
 from app.gsp.maintenance.schemas import (
+    ExpiryAlertDecision,
+    ExpiryAlertResponse,
     MaintenanceCompletion,
     MaintenanceInspection,
     MaintenancePlanCreate,
@@ -19,6 +21,7 @@ from app.gsp.maintenance.service import (
     create_maintenance_plan,
     inspect_maintenance_item,
     maintenance_plan_payload,
+    resolve_expiry_alert,
     submit_maintenance_plan,
 )
 from app.gsp.schemas import ChangeReason
@@ -39,6 +42,50 @@ def _rollback_and_raise(db: Session, error: Exception):
     if isinstance(error, IntegrityError):
         raise HTTPException(409, "养护计划编号或明细重复") from error
     raise error
+
+
+@router.get("/expiry-alerts", response_model=list[ExpiryAlertResponse])
+async def list_expiry_alerts(
+    status: str | None = None,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(GspExpiryAlert)
+    if status:
+        query = query.filter(GspExpiryAlert.status == status.upper())
+    return query.order_by(GspExpiryAlert.id.desc()).all()
+
+
+@router.post(
+    "/expiry-alerts/{alert_id}/resolve",
+    response_model=ExpiryAlertResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "EXPIRY_ALERT_RESOLVE", "GspExpiryAlert",
+        entity_id_param="alert_id", meaning="REVIEW",
+    ))],
+)
+async def close_expiry_alert(
+    alert_id: int,
+    payload: ExpiryAlertDecision,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        alert = resolve_expiry_alert(
+            db,
+            alert_id=alert_id,
+            resolution=payload.resolution,
+            evidence_ref=payload.evidence_ref,
+            review_due_on=payload.review_due_on,
+            reason=payload.reason,
+            actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return alert
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
 
 
 @router.post("/plans", response_model=MaintenancePlanResponse, status_code=201)

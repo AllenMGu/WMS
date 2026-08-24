@@ -46,6 +46,8 @@ class DrugProfileUpsert(ChangeReason):
     traceability_required: bool = True
     registration_valid_to: Optional[date] = None
     registration_document_ref: str = Field(..., min_length=3, max_length=500)
+    registration_document_sha256: str | None = Field(None, pattern="^[0-9a-f]{64}$")
+    registration_document_size_bytes: int | None = Field(None, gt=0)
     nmpa_verification_ref: str = Field(..., min_length=3, max_length=500)
 
 
@@ -67,6 +69,8 @@ class DrugProfileResponse(OrmModel):
     status: str
     registration_valid_to: Optional[date]
     registration_document_ref: Optional[str]
+    registration_document_sha256: Optional[str]
+    registration_document_size_bytes: Optional[int]
     nmpa_verification_ref: Optional[str]
     nmpa_verified_by: Optional[int]
     nmpa_verified_at: Optional[datetime]
@@ -107,6 +111,8 @@ class PartnerDocumentCreate(ChangeReason):
     valid_from: Optional[date] = None
     valid_to: date
     file_ref: str = Field(..., min_length=3, max_length=500)
+    file_sha256: str | None = Field(None, pattern="^[0-9a-f]{64}$")
+    file_size_bytes: int | None = Field(None, gt=0)
     person_name: Optional[str] = Field(None, min_length=2, max_length=200)
     person_role: Optional[str] = Field(None, min_length=2, max_length=50)
 
@@ -119,6 +125,8 @@ class PartnerDocumentResponse(OrmModel):
     valid_from: Optional[date]
     valid_to: date
     file_ref: Optional[str]
+    file_sha256: Optional[str]
+    file_size_bytes: Optional[int]
     person_name: Optional[str]
     person_role: Optional[str]
     verified_by: Optional[int]
@@ -261,3 +269,18 @@ class AuditVerificationResponse(OrmModel):
     valid: bool
     broken_event_id: Optional[int]
     verified_at: datetime
+
+
+class ComplianceSettingSet(ChangeReason):
+    integer_value: int = Field(..., ge=1, le=3650)
+    approval_ref: str = Field(..., min_length=3, max_length=200)
+
+
+class ComplianceSettingResponse(OrmModel):
+    id: int
+    key: str
+    integer_value: int
+    approval_ref: str
+    reason: str
+    approved_by: int
+    approved_at: datetime

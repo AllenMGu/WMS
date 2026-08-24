@@ -8,14 +8,17 @@ from app.core.database import get_db
 from app.gsp.dependencies import require_gsp_roles
 from app.gsp.electronic_signature.dependencies import require_electronic_signature
 from app.gsp.errors import WorkflowError
-from app.gsp.sales_shipping.models import GspSalesOrder, GspShipment
+from app.gsp.sales_shipping.models import GspSalesOrder, GspShipment, GspShipmentPackage
 from app.gsp.sales_shipping.schemas import (
     SalesOrderCreate,
     SalesOrderResponse,
+    ShipmentPackageCreate,
+    ShipmentPackageResponse,
     ShipmentPrepare,
     ShipmentResponse,
 )
 from app.gsp.sales_shipping.service import (
+    add_shipment_package,
     allocate_sales_order,
     approve_sales_order,
     cancel_sales_order,
@@ -25,6 +28,7 @@ from app.gsp.sales_shipping.service import (
     prepare_shipment,
     review_shipment,
     sales_order_payload,
+    shipment_package_payload,
     shipment_payload,
     submit_sales_order,
 )
@@ -238,6 +242,49 @@ async def list_shipments(
     if status:
         query = query.filter(GspShipment.status == status)
     return [shipment_payload(item) for item in query.order_by(GspShipment.id.desc()).all()]
+
+
+@router.post(
+    "/shipping/shipments/{shipment_id}/packages",
+    response_model=ShipmentPackageResponse,
+    status_code=201,
+)
+async def create_shipment_package(
+    shipment_id: int,
+    payload: ShipmentPackageCreate,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles("WAREHOUSE_CUSTODIAN")),
+    db: Session = Depends(get_db),
+):
+    try:
+        package = add_shipment_package(
+            db,
+            shipment_id=shipment_id,
+            payload=payload,
+            actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return shipment_package_payload(db, package)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.get(
+    "/shipping/shipments/{shipment_id}/packages",
+    response_model=list[ShipmentPackageResponse],
+)
+async def list_shipment_packages(
+    shipment_id: int,
+    _: User = Depends(require_gsp_roles("WAREHOUSE_CUSTODIAN", "OUTBOUND_REVIEWER", *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    return [
+        shipment_package_payload(db, package)
+        for package in db.query(GspShipmentPackage)
+        .filter(GspShipmentPackage.shipment_id == shipment_id)
+        .order_by(GspShipmentPackage.id)
+    ]
 
 
 @router.post(

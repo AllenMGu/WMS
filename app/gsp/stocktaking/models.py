@@ -1,6 +1,7 @@
 """Persistence models for controlled GSP lot-level stocktaking."""
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -23,7 +24,10 @@ class GspStocktakePlan(Base):
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
     scope_type = Column(String(30), nullable=False)
     scope_summary = Column(String(1000), nullable=False)
+    selection_rule = Column(String(50), nullable=False, default="MANUAL")
     status = Column(String(30), nullable=False, default="DRAFT", index=True)
+    transactions_frozen = Column(Boolean, nullable=False, default=False)
+    frozen_at = Column(DateTime, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=utc_now)
     submitted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -33,6 +37,7 @@ class GspStocktakePlan(Base):
     reviewed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
     review_conclusion = Column(String(1000), nullable=True)
+    capa_ref = Column(String(500), nullable=True)
     completed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     completed_at = Column(DateTime, nullable=True)
 

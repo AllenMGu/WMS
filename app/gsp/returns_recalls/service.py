@@ -18,6 +18,7 @@ from app.gsp.models import (
 from app.gsp.outbox import enqueue_integration_message
 from app.gsp.quality_disposition.service import register_rejected_material
 from app.gsp.returns_recalls.models import (
+    GspBusinessCalendarDay,
     GspRecall,
     GspRecallBatch,
     GspRecallCompletionReport,
@@ -30,6 +31,7 @@ from app.gsp.returns_recalls.models import (
     GspSalesReturnItem,
 )
 from app.gsp.returns_recalls.schemas import (
+    BusinessCalendarDaySet,
     RecallCompletionReportCreate,
     RecallCreate,
     RecallDrillComplete,
@@ -46,6 +48,7 @@ from app.gsp.sales_shipping.models import (
     GspStockAllocation,
 )
 from app.gsp.snapshots import model_snapshot
+from app.gsp.stocktaking.service import ensure_stock_not_frozen
 from app.legacy import Location
 
 RECALL_LEVELS = {"I", "II", "III"}
@@ -140,15 +143,53 @@ def recall_drill_payload(db: Session, drill: GspRecallDrill) -> dict:
     return result
 
 
-def _add_working_days(start, working_days: int):
-    """Return a weekday-based deadline; enterprise holiday calendars remain configurable."""
+def _add_working_days(db: Session, start, working_days: int):
+    """Apply approved calendar overrides with weekday behavior as the baseline."""
     result = start
     added = 0
     while added < working_days:
         result += timedelta(days=1)
-        if result.weekday() < 5:
+        override = db.query(GspBusinessCalendarDay).filter(
+            GspBusinessCalendarDay.calendar_date == result.date()
+        ).first()
+        is_working_day = override.is_working_day if override else result.weekday() < 5
+        if is_working_day:
             added += 1
     return result
+
+
+def set_business_calendar_day(
+    db: Session,
+    *,
+    payload: BusinessCalendarDaySet,
+    actor_id: int,
+    source_ip: str | None,
+) -> GspBusinessCalendarDay:
+    day = db.query(GspBusinessCalendarDay).filter(
+        GspBusinessCalendarDay.calendar_date == payload.calendar_date
+    ).with_for_update().first()
+    before = model_snapshot(day) if day else None
+    if day is None:
+        day = GspBusinessCalendarDay(calendar_date=payload.calendar_date)
+        db.add(day)
+    day.is_working_day = payload.is_working_day
+    day.approval_ref = payload.approval_ref
+    day.reason = payload.reason
+    day.approved_by = actor_id
+    day.approved_at = utc_now()
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="BUSINESS_CALENDAR_DAY_APPROVED",
+        entity_type="GspBusinessCalendarDay",
+        entity_id=str(day.id),
+        reason=payload.reason,
+        before_data=before,
+        after_data=model_snapshot(day),
+        source_ip=source_ip,
+    )
+    return day
 
 
 def _active_hold_exists(db: Session, batch_id: int) -> bool:
@@ -429,6 +470,7 @@ def inspect_sales_return_item(
         if stock and stock.stock_status != "AVAILABLE":
             raise WorkflowError(409, "目标批号库存当前不可回库")
         if stock:
+            ensure_stock_not_frozen(db, [stock.id])
             stock.quantity += payload.accepted_quantity
             stock.lock_version += 1
         else:
@@ -844,7 +886,7 @@ def close_recall(
     recall.closed_by = actor_id
     recall.closed_at = utc_now()
     recall.closure_conclusion = conclusion
-    recall.completion_report_due_at = _add_working_days(recall.closed_at, 10)
+    recall.completion_report_due_at = _add_working_days(db, recall.closed_at, 10)
     db.flush()
     after = recall_payload(db, recall)
     enqueue_integration_message(

@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -14,6 +15,18 @@ from sqlalchemy import (
 
 from app.core.database import Base
 from app.core.time import utc_now
+
+
+class GspBusinessCalendarDay(Base):
+    __tablename__ = "gsp_business_calendar_days"
+
+    id = Column(Integer, primary_key=True)
+    calendar_date = Column(Date, nullable=False, unique=True, index=True)
+    is_working_day = Column(Boolean, nullable=False)
+    approval_ref = Column(String(200), nullable=False)
+    reason = Column(String(500), nullable=False)
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    approved_at = Column(DateTime, nullable=False, default=utc_now)
 
 
 class GspSalesReturn(Base):
