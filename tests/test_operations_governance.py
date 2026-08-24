@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -49,7 +50,6 @@ def _user(db, name: str) -> User:
 
 
 def test_backup_json_is_registered_idempotently_by_scheduled_system_admin(tmp_path):
-    import json
     import main  # noqa: F401
 
     db = SessionLocal()
