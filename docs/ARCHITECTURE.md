@@ -1,5 +1,7 @@
 # 目标架构
 
+[中文](ARCHITECTURE.md) | [English](ARCHITECTURE.en.md)
+
 ## 拆分原则
 
 1. **WMS 业务域**负责仓库、库位、基础货物和通用作业，不自行决定药品能否经营或放行。

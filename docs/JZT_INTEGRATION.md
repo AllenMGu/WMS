@@ -1,5 +1,7 @@
 # 九州通接口边界
 
+[中文](JZT_INTEGRATION.md) | [English](JZT_INTEGRATION.en.md)
+
 ## 原则
 
 九州通接口属于适配器，不得直接写 `stock` 或 `gsp_batch_stock`。内部业务事务先提交，随后在同一事务中写入

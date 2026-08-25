@@ -1,5 +1,7 @@
 # 秘密、备份与恢复运维控制手册
 
+[中文](OPERATIONS_RUNBOOK.md) | [English](OPERATIONS_RUNBOOK.en.md)
+
 本文说明自 v0.9.0 起后端提供的运维合规控制。示例路径和时间不是企业 SOP；上线前必须由 IT、质量和
 信息安全共同批准目标环境配置、保留期限、RTO/RPO、复核周期和告警升级路径。
 
@@ -18,6 +20,17 @@ LDAP_CREDENTIAL_VERSION_REF=kv://wms-gsp/ldap/version-id
 
 `*_VERSION_REF` 是非秘密版本标识，不能填入密码、令牌或连接串。LDAP 未使用绑定服务账号时可不设置
 LDAP 版本引用。
+
+LDAP 认证传输必须从以下互斥模式中选择一种：
+
+| 模式 | 配置 | 说明 |
+|---|---|---|
+| LDAPS | `LDAP_USE_SSL=true` | 推荐方式，通常使用 636 端口并验证证书 |
+| StartTLS | `LDAP_START_TLS=true` | 在 389 端口建立连接后、发送凭据前升级为 TLS |
+| 普通 389 | `LDAP_ALLOW_PLAINTEXT_AUTH=true` | 仅限风险批准且网络隔离的受信环境，默认关闭 |
+
+普通 389 启用后，就绪检查会返回 `LDAP_PLAINTEXT_AUTH_ENABLED` 警告。变更单必须记录风险接受、网络
+隔离、访问控制和补偿措施。三个开关不得同时启用，绑定密码仍只能由外部秘密源注入。
 
 轮换流程：
 
