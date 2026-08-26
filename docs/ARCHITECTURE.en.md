@@ -69,6 +69,9 @@ flowchart TB
 Major workflows use explicit state transitions and independent decision points:
 
 - procurement: draft → quality approved → received → sampled → accepted/rejected → batch stock;
+- generic manual batch creation, manual batch acceptance, and direct batch-stock receipt routes are disabled;
+  authoritative batch stock can arise only from controlled receipt acceptance, inspected sales returns, or an
+  approved stocktake adjustment;
 - sales: draft → quality approved → reserved → picked → packed → independently reviewed → shipped;
 - transport: approved assignment → dispatched → in transit → delivered → independently closed;
 - returns: received in quarantine → inspected → returned to stock/rejected;
@@ -76,6 +79,10 @@ Major workflows use explicit state transitions and independent decision points:
 - maintenance: planned → approved → checked → exception resolution → independently completed;
 - stocktaking: selected/frozen → blind count → variance review/CAPA → approved adjustment → closed;
 - nonconforming stock: held → independent disposition approval → return/destruction → witness evidence → closed.
+
+Before the final active hold on a batch is released, the system revalidates supplier evidence, product approval,
+batch release and traceability, and the configured stop-sale shelf-life threshold. Stock remains `HOLD` if any
+blocking finding remains.
 
 Critical approvals consume a short-lived, single-use electronic-signature challenge bound to the operation, record,
 meaning, and request digest. Closing an environmental alarm never automatically releases its quality hold.
