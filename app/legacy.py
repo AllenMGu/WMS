@@ -22,6 +22,7 @@ from ldap3.utils.conv import escape_filter_chars
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.time import utc_now
+from app.gsp.snapshots import model_snapshot
 
 # ------------------- 配置项 -------------------
 SECRET_KEY = settings.secret_key
@@ -859,60 +860,102 @@ async def login_for_access_token(
 @router.post("/users/", response_model=UserResponse, summary="新增用户")
 async def create_user(
     user: UserCreate,
+    request: Request,
+    reason: str = Query(..., min_length=3, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # 权限校验：仅admin可创建用户
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="无权限操作")
+    reason = normalize_legacy_audit_reason(reason)
 
-    # 检查用户名是否存在
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="用户名已存在")
 
     try:
-        # 创建用户
-        hashed_password = get_password_hash(user.password)
         new_user = User(
             username=user.username,
-            hashed_password=hashed_password,
+            hashed_password=get_password_hash(user.password),
             full_name=user.full_name,
-            role=user.role
+            role=user.role,
         )
         db.add(new_user)
-        db.flush()  # 先获取用户ID
+        db.flush()
 
-        # 如果是管理员，分配所有现有仓库
         if user.role == UserRole.ADMIN:
-            all_warehouses = db.query(Warehouse).filter(Warehouse.is_active == True).all()
-            for i, warehouse in enumerate(all_warehouses):
-                is_default = (i == 0)  # 第一个仓库设为默认
-                user_warehouse = UserWarehouse(
-                    user_id=new_user.id,
-                    warehouse_id=warehouse.id,
-                    is_default=is_default
-                )
-                db.add(user_warehouse)
-            # 设置当前仓库（第一个仓库）
-            if all_warehouses:
-                new_user.current_warehouse_id = all_warehouses[0].id
+            assigned_warehouses = (
+                db.query(Warehouse)
+                .filter(Warehouse.is_active.is_(True))
+                .order_by(Warehouse.id)
+                .all()
+            )
         else:
-            # 普通操作员，按传入的仓库分配
+            assigned_warehouses = []
+            seen_warehouse_ids = set()
             for warehouse_id in user.warehouse_ids:
+                if warehouse_id in seen_warehouse_ids:
+                    continue
+                seen_warehouse_ids.add(warehouse_id)
                 warehouse = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
                 if not warehouse:
                     raise HTTPException(status_code=400, detail=f"仓库ID {warehouse_id} 不存在")
-                is_default = (user.warehouse_ids.index(warehouse_id) == 0)
-                user_warehouse = UserWarehouse(
+                if warehouse.is_active is False:
+                    raise HTTPException(status_code=400, detail=f"仓库ID {warehouse_id} 已停用")
+                assigned_warehouses.append(warehouse)
+
+        for index, warehouse in enumerate(assigned_warehouses):
+            is_default = index == 0
+            db.add(
+                UserWarehouse(
                     user_id=new_user.id,
-                    warehouse_id=warehouse_id,
-                    is_default=is_default
+                    warehouse_id=warehouse.id,
+                    is_default=is_default,
                 )
-                db.add(user_warehouse)
-            # 设置当前仓库（第一个）
-            if user.warehouse_ids:
-                new_user.current_warehouse_id = user.warehouse_ids[0]
+            )
+        if assigned_warehouses:
+            new_user.current_warehouse_id = assigned_warehouses[0].id
+
+        db.flush()
+        assigned_ids = [warehouse.id for warehouse in assigned_warehouses]
+        write_legacy_audit(
+            db,
+            actor_id=current_user.id,
+            action="USER_CREATED",
+            entity_type="User",
+            entity_id=str(new_user.id),
+            reason=reason,
+            before_data=None,
+            after_data={
+                "id": new_user.id,
+                "username": new_user.username,
+                "full_name": new_user.full_name,
+                "role": new_user.role.value if hasattr(new_user.role, "value") else new_user.role,
+                "is_ldap_user": new_user.is_ldap_user,
+                "warehouse_ids": assigned_ids,
+                "current_warehouse_id": new_user.current_warehouse_id,
+            },
+            request=request,
+        )
+        for index, warehouse in enumerate(assigned_warehouses):
+            write_legacy_audit(
+                db,
+                actor_id=current_user.id,
+                action="USER_WAREHOUSE_ASSIGNED",
+                entity_type="UserWarehouse",
+                entity_id=f"{new_user.id}:{warehouse.id}",
+                reason=reason,
+                before_data=None,
+                after_data={
+                    "user_id": new_user.id,
+                    "warehouse_id": warehouse.id,
+                    "warehouse_code": warehouse.code,
+                    "warehouse_name": warehouse.name,
+                    "is_default": index == 0,
+                    "assignment_source": "USER_CREATION",
+                },
+                request=request,
+            )
 
         db.commit()
         db.refresh(new_user)
@@ -1210,41 +1253,75 @@ async def update_user(
 async def assign_warehouse_to_user(
     user_id: int,
     warehouse_id: int,
+    request: Request,
+    reason: str = Query(..., min_length=3, max_length=500),
     is_default: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
+    reason = normalize_legacy_audit_reason(reason)
 
-    # 检查是否已分配
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    warehouse = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+    if not warehouse:
+        raise HTTPException(status_code=404, detail="仓库不存在")
+    if warehouse.is_active is False:
+        raise HTTPException(status_code=400, detail="不能分配已停用仓库")
+
     existing = db.query(UserWarehouse).filter(
         UserWarehouse.user_id == user_id,
-        UserWarehouse.warehouse_id == warehouse_id
+        UserWarehouse.warehouse_id == warehouse_id,
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="已分配该仓库给用户")
 
-    # 如果是设为默认，先取消其他默认
+    previous_current_warehouse_id = user.current_warehouse_id
+    previous_default_ids = []
     if is_default:
-        db.query(UserWarehouse).filter(
+        previous_defaults = db.query(UserWarehouse).filter(
             UserWarehouse.user_id == user_id,
-            UserWarehouse.is_default == True
-        ).update({"is_default": False})
+            UserWarehouse.is_default.is_(True),
+        ).all()
+        previous_default_ids = [assignment.warehouse_id for assignment in previous_defaults]
+        for assignment in previous_defaults:
+            assignment.is_default = False
 
-    # 分配新仓库
-    user_warehouse = UserWarehouse(
-        user_id=user_id,
-        warehouse_id=warehouse_id,
-        is_default=is_default
+    db.add(
+        UserWarehouse(
+            user_id=user_id,
+            warehouse_id=warehouse_id,
+            is_default=is_default,
+        )
     )
-    db.add(user_warehouse)
-
-    # 如果用户没有当前仓库，设置为当前仓库
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user.current_warehouse_id:
+    if is_default or not user.current_warehouse_id:
         user.current_warehouse_id = warehouse_id
 
+    db.flush()
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="USER_WAREHOUSE_ASSIGNED",
+        entity_type="UserWarehouse",
+        entity_id=f"{user_id}:{warehouse_id}",
+        reason=reason,
+        before_data={
+            "current_warehouse_id": previous_current_warehouse_id,
+            "previous_default_warehouse_ids": previous_default_ids,
+        },
+        after_data={
+            "user_id": user_id,
+            "warehouse_id": warehouse_id,
+            "warehouse_code": warehouse.code,
+            "warehouse_name": warehouse.name,
+            "is_default": is_default,
+            "current_warehouse_id": user.current_warehouse_id,
+        },
+        request=request,
+    )
     db.commit()
     return {"message": "仓库分配成功"}
 
@@ -1282,37 +1359,73 @@ async def delete_user(
 async def unassign_warehouse_from_user(
     user_id: int,
     warehouse_id: int,
+    request: Request,
+    reason: str = Query(..., min_length=3, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
+    reason = normalize_legacy_audit_reason(reason)
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if user.role == UserRole.ADMIN:
+        raise HTTPException(status_code=400, detail="管理员自动拥有全部仓库，不能单独解除")
 
     user_warehouse = db.query(UserWarehouse).filter(
         UserWarehouse.user_id == user_id,
-        UserWarehouse.warehouse_id == warehouse_id
+        UserWarehouse.warehouse_id == warehouse_id,
     ).first()
     if not user_warehouse:
         raise HTTPException(status_code=404, detail="未找到分配记录")
 
+    warehouse = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+    previous_current_warehouse_id = user.current_warehouse_id
+    before = {
+        "user_id": user_id,
+        "warehouse_id": warehouse_id,
+        "warehouse_code": warehouse.code if warehouse else None,
+        "warehouse_name": warehouse.name if warehouse else None,
+        "is_default": user_warehouse.is_default,
+        "current_warehouse_id": previous_current_warehouse_id,
+    }
     db.delete(user_warehouse)
+    db.flush()
 
-    # 如果这是用户的当前仓库，需要重新设置
-    user = db.query(User).filter(User.id == user_id).first()
-    if user.current_warehouse_id == warehouse_id:
-        # 尝试找默认仓库，没有就找第一个
-        default = db.query(UserWarehouse).filter(
-            UserWarehouse.user_id == user_id,
-            UserWarehouse.is_default == True
-        ).first()
-        if default:
-            user.current_warehouse_id = default.warehouse_id
-        else:
-            first = db.query(UserWarehouse).filter(
-                UserWarehouse.user_id == user_id
-            ).first()
-            user.current_warehouse_id = first.warehouse_id if first else None
+    if previous_current_warehouse_id == warehouse_id:
+        replacement = (
+            db.query(UserWarehouse)
+            .filter(UserWarehouse.user_id == user_id)
+            .order_by(UserWarehouse.is_default.desc(), UserWarehouse.id)
+            .first()
+        )
+        user.current_warehouse_id = replacement.warehouse_id if replacement else None
 
+    remaining_warehouse_ids = [
+        assignment.warehouse_id
+        for assignment in db.query(UserWarehouse)
+        .filter(UserWarehouse.user_id == user_id)
+        .order_by(UserWarehouse.id)
+        .all()
+    ]
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="USER_WAREHOUSE_UNASSIGNED",
+        entity_type="UserWarehouse",
+        entity_id=f"{user_id}:{warehouse_id}",
+        reason=reason,
+        before_data=before,
+        after_data={
+            "user_id": user_id,
+            "removed_warehouse_id": warehouse_id,
+            "current_warehouse_id": user.current_warehouse_id,
+            "remaining_warehouse_ids": remaining_warehouse_ids,
+        },
+        request=request,
+    )
     db.commit()
     return {"message": "取消分配成功"}
 
@@ -1320,11 +1433,14 @@ async def unassign_warehouse_from_user(
 @router.post("/warehouses/", response_model=WarehouseResponse, summary="新增仓库")
 async def create_warehouse(
     warehouse: WarehouseCreate,
+    request: Request,
+    reason: str = Query(..., min_length=3, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="无权限操作")
+    reason = normalize_legacy_audit_reason(reason)
 
     db_warehouse = db.query(Warehouse).filter(Warehouse.code == warehouse.code).first()
     if db_warehouse:
@@ -1332,23 +1448,57 @@ async def create_warehouse(
 
     new_warehouse = Warehouse(**warehouse.dict())
     db.add(new_warehouse)
-    db.flush()  # 获取新仓库的ID
+    db.flush()
 
-    # 自动将新仓库分配给所有管理员
-    admin_users = db.query(User).filter(User.role == UserRole.ADMIN).all()
+    assigned_admins = []
+    admin_users = db.query(User).filter(User.role == UserRole.ADMIN).order_by(User.id).all()
     for admin in admin_users:
-        # 检查是否已经分配（理论上不会，因为是新建的仓库）
-        existing = db.query(UserWarehouse).filter(
-            UserWarehouse.user_id == admin.id,
-            UserWarehouse.warehouse_id == new_warehouse.id
-        ).first()
-        if not existing:
-            user_warehouse = UserWarehouse(
+        is_default = admin.current_warehouse_id is None
+        db.add(
+            UserWarehouse(
                 user_id=admin.id,
                 warehouse_id=new_warehouse.id,
-                is_default=False  # 不设为默认，保持原有默认仓库
+                is_default=is_default,
             )
-            db.add(user_warehouse)
+        )
+        if is_default:
+            admin.current_warehouse_id = new_warehouse.id
+        assigned_admins.append((admin, is_default))
+
+    db.flush()
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="WAREHOUSE_CREATED",
+        entity_type="Warehouse",
+        entity_id=str(new_warehouse.id),
+        reason=reason,
+        before_data=None,
+        after_data={
+            **model_snapshot(new_warehouse),
+            "auto_assigned_admin_user_ids": [admin.id for admin, _ in assigned_admins],
+        },
+        request=request,
+    )
+    for admin, is_default in assigned_admins:
+        write_legacy_audit(
+            db,
+            actor_id=current_user.id,
+            action="USER_WAREHOUSE_ASSIGNED",
+            entity_type="UserWarehouse",
+            entity_id=f"{admin.id}:{new_warehouse.id}",
+            reason=reason,
+            before_data=None,
+            after_data={
+                "user_id": admin.id,
+                "warehouse_id": new_warehouse.id,
+                "warehouse_code": new_warehouse.code,
+                "warehouse_name": new_warehouse.name,
+                "is_default": is_default,
+                "assignment_source": "WAREHOUSE_CREATION",
+            },
+            request=request,
+        )
 
     db.commit()
     db.refresh(new_warehouse)
@@ -1407,21 +1557,39 @@ async def get_warehouse(id: int, current_user: User = Depends(get_current_user),
 @router.put("/warehouses/{id}", response_model=WarehouseResponse, summary="修改仓库信息")
 async def update_warehouse(
     id: int,
-    warehouse: WarehouseUpdate,  # 使用 Pydantic 模型
+    warehouse: WarehouseUpdate,
+    request: Request,
+    reason: str = Query(..., min_length=3, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="无权限操作")
+    reason = normalize_legacy_audit_reason(reason)
 
     db_warehouse = db.query(Warehouse).filter(Warehouse.id == id).first()
     if not db_warehouse:
         raise HTTPException(status_code=404, detail="仓库未找到")
 
-    # 只更新提供的字段
+    before = model_snapshot(db_warehouse)
     for key, value in warehouse.dict(exclude_unset=True).items():
         setattr(db_warehouse, key, value)
 
+    after = model_snapshot(db_warehouse)
+    if before == after:
+        raise HTTPException(status_code=400, detail="未提供有效变更")
+
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="WAREHOUSE_UPDATED",
+        entity_type="Warehouse",
+        entity_id=str(id),
+        reason=reason,
+        before_data=before,
+        after_data=after,
+        request=request,
+    )
     db.commit()
     db.refresh(db_warehouse)
     return db_warehouse
@@ -1430,16 +1598,20 @@ async def update_warehouse(
 @router.post("/locations/", response_model=LocationResponse, summary="新增库位")
 async def create_location(
     location: LocationCreate,
+    request: Request,
+    reason: str = Query(..., min_length=3, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # 检查用户是否有权限在该仓库操作
-    user_warehouse = db.query(UserWarehouse).filter(
-        UserWarehouse.user_id == current_user.id,
-        UserWarehouse.warehouse_id == location.warehouse_id
-    ).first()
-    if not user_warehouse:
-        raise HTTPException(status_code=403, detail="无权限在此仓库操作")
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="无权限操作")
+    reason = normalize_legacy_audit_reason(reason)
+
+    warehouse = db.query(Warehouse).filter(Warehouse.id == location.warehouse_id).first()
+    if not warehouse:
+        raise HTTPException(status_code=404, detail="仓库不存在")
+    if warehouse.is_active is False:
+        raise HTTPException(status_code=400, detail="不能在已停用仓库中新建库位")
 
     db_location = db.query(Location).filter(Location.location_code == location.location_code).first()
     if db_location:
@@ -1447,6 +1619,18 @@ async def create_location(
 
     new_location = Location(**location.dict())
     db.add(new_location)
+    db.flush()
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="LOCATION_CREATED",
+        entity_type="Location",
+        entity_id=str(new_location.id),
+        reason=reason,
+        before_data=None,
+        after_data=model_snapshot(new_location),
+        request=request,
+    )
     db.commit()
     db.refresh(new_location)
     return new_location
@@ -1506,26 +1690,47 @@ async def get_locations(
 async def update_location(
     id: int,
     location: LocationUpdate,
+    request: Request,
+    reason: str = Query(..., min_length=3, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # 检查权限
     db_location = db.query(Location).filter(Location.id == id).first()
     if not db_location:
         raise HTTPException(status_code=404, detail="库位未找到")
-
     if current_user.role != UserRole.ADMIN:
-        # 检查用户是否有权限操作这个仓库
-        user_warehouse = db.query(UserWarehouse).filter(
-            UserWarehouse.user_id == current_user.id,
-            UserWarehouse.warehouse_id == db_location.warehouse_id
-        ).first()
-        if not user_warehouse:
-            raise HTTPException(status_code=403, detail="无权限操作")
+        raise HTTPException(status_code=403, detail="无权限操作")
+    reason = normalize_legacy_audit_reason(reason)
 
+    target_warehouse_id = (
+        location.warehouse_id
+        if location.warehouse_id is not None
+        else db_location.warehouse_id
+    )
+    warehouse = db.query(Warehouse).filter(Warehouse.id == target_warehouse_id).first()
+    if not warehouse:
+        raise HTTPException(status_code=404, detail="仓库不存在")
+    if warehouse.is_active is False:
+        raise HTTPException(status_code=400, detail="不能将库位设置到已停用仓库")
+
+    before = model_snapshot(db_location)
     for key, value in location.dict(exclude_unset=True).items():
         setattr(db_location, key, value)
+    after = model_snapshot(db_location)
+    if before == after:
+        raise HTTPException(status_code=400, detail="未提供有效变更")
 
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="LOCATION_UPDATED",
+        entity_type="Location",
+        entity_id=str(id),
+        reason=reason,
+        before_data=before,
+        after_data=after,
+        request=request,
+    )
     db.commit()
     db.refresh(db_location)
     return db_location
@@ -1533,16 +1738,31 @@ async def update_location(
 @router.delete("/locations/{id}", summary="删除库位")
 async def delete_location(
     id: int,
+    request: Request,
+    reason: str = Query(..., min_length=3, max_length=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="无权限操作")
+    reason = normalize_legacy_audit_reason(reason)
 
     db_location = db.query(Location).filter(Location.id == id).first()
     if not db_location:
         raise HTTPException(status_code=404, detail="库位未找到")
 
+    before = model_snapshot(db_location)
+    write_legacy_audit(
+        db,
+        actor_id=current_user.id,
+        action="LOCATION_DELETED",
+        entity_type="Location",
+        entity_id=str(id),
+        reason=reason,
+        before_data=before,
+        after_data=None,
+        request=request,
+    )
     db.delete(db_location)
     db.commit()
     return {"message": "删除成功"}
@@ -1790,6 +2010,13 @@ def write_legacy_audit(
         after_data=after_data,
         source_ip=request.client.host if request.client else None,
     )
+
+
+def normalize_legacy_audit_reason(reason: str) -> str:
+    normalized = (reason or "").strip()
+    if len(normalized) < 3:
+        raise HTTPException(status_code=422, detail="变更原因不能少于3个字")
+    return normalized
 
 
 @router.post("/inventory/scan", summary="扫码出入库")
