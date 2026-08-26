@@ -13,6 +13,7 @@ from app.gsp.models import (
     GspDrugBatch,
     GspDrugProfile,
     GspPartnerDocument,
+    GspQualityHold,
 )
 from app.gsp.procurement_receiving.models import GspPurchaseOrderItem, GspReceiptItem
 from app.gsp.procurement_receiving.schemas import (
@@ -33,6 +34,7 @@ from app.gsp.procurement_receiving.service import (
     record_receipt_sampling,
     submit_purchase_order,
 )
+from app.gsp.quality_disposition.models import GspNonconformingRecord
 from app.legacy import Goods, Location, User, UserRole, Warehouse, ensure_not_gsp_managed_goods
 from tests.gsp_seed_helpers import add_verified_partner_evidence
 
@@ -103,7 +105,16 @@ def _seed_qualified_purchase_data(db):
     return users, warehouse, location, goods, supplier
 
 
-def test_controlled_purchase_receipt_and_inspection_flow():
+@pytest.mark.parametrize(
+    ("accepted_quantity", "rejected_quantity", "inspection_status", "stock_status"),
+    [
+        (Decimal("12.000"), Decimal("0"), "ACCEPTED", "AVAILABLE"),
+        (Decimal("10.000"), Decimal("2.000"), "PARTIALLY_ACCEPTED", "HOLD"),
+    ],
+)
+def test_controlled_purchase_receipt_and_inspection_flow(
+    accepted_quantity, rejected_quantity, inspection_status, stock_status
+):
     # Importing the composition root registers and creates every table for the
     # in-memory test database.
     import main  # noqa: F401
@@ -203,9 +214,9 @@ def test_controlled_purchase_receipt_and_inspection_flow():
             source_ip="127.0.0.1",
         )
         inspection = ReceiptInspection(
-            accepted_quantity=Decimal("12.000"),
-            rejected_quantity=Decimal("0"),
-            conclusion="票账货相符，验收合格",
+            accepted_quantity=accepted_quantity,
+            rejected_quantity=rejected_quantity,
+            conclusion="票账货相符，按检验结果分别入库和拒收",
             reason="按验收规程逐项检查",
         )
         with pytest.raises(WorkflowError, match="必须分离"):
@@ -273,15 +284,27 @@ def test_controlled_purchase_receipt_and_inspection_flow():
         stock = db.query(GspBatchStock).filter(GspBatchStock.batch_id == batch.id).one()
         assert order.status == "COMPLETED"
         assert receipt.status == "COMPLETED"
-        assert receipt_item.inspection_status == "ACCEPTED"
+        assert receipt_item.inspection_status == inspection_status
         assert batch.status == "RELEASED"
-        assert stock.quantity == Decimal("12.000")
-        assert stock.stock_status == "AVAILABLE"
+        assert stock.quantity == accepted_quantity
+        assert stock.stock_status == stock_status
         assert print_record.document_type == "RECEIPT_INSPECTION"
         assert print_record.status == "GENERATED"
         assert print_record.snapshot_data["receipt_no"] == receipt.receipt_no
-        assert print_record.snapshot_data["items"][0]["inspection_status"] == "ACCEPTED"
+        assert print_record.snapshot_data["items"][0]["inspection_status"] == inspection_status
         assert len(print_record.content_hash) == 64
+        if rejected_quantity:
+            nonconforming = (
+                db.query(GspNonconformingRecord)
+                .filter(
+                    GspNonconformingRecord.source_entity_type == "GspReceiptItem",
+                    GspNonconformingRecord.source_entity_id == receipt_item.id,
+                )
+                .one()
+            )
+            assert nonconforming.quantity == rejected_quantity
+            assert nonconforming.quality_hold_id is not None
+            assert db.query(GspQualityHold).filter_by(id=nonconforming.quality_hold_id).one().status == "ACTIVE"
     finally:
         db.close()
 

@@ -111,6 +111,7 @@ class GspPartnerDocument(Base):
     file_size_bytes = Column(Integer, nullable=True)
     person_name = Column(String(200), nullable=True)
     person_role = Column(String(50), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     verified_at = Column(DateTime, nullable=True)
     status = Column(String(30), nullable=False, default="PENDING")

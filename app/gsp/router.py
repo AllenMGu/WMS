@@ -648,6 +648,8 @@ async def approve_partner(
     partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == partner_id).first()
     if not partner:
         raise HTTPException(404, "合作方不存在")
+    if partner.created_by == current_user.id:
+        raise HTTPException(409, "合作方首营建档人与质量审批人必须分离")
     result = evaluate_partner_evidence(db, partner, status="APPROVED")
     if not result.qualified:
         raise HTTPException(
@@ -747,6 +749,7 @@ async def create_partner_document(
         file_size_bytes=payload.file_size_bytes,
         person_name=payload.person_name,
         person_role=payload.person_role,
+        created_by=current_user.id,
         status="PENDING",
     )
     db.add(document)
@@ -792,6 +795,8 @@ async def verify_partner_document(
     )
     if document is None:
         raise HTTPException(404, "合作方资质文件不存在")
+    if document.created_by == current_user.id:
+        raise HTTPException(409, "资质文件上传人与核验人必须分离")
     if document.valid_to < date.today():
         raise HTTPException(409, "已过期资质文件不能核验通过")
     if not document.file_sha256 or not document.file_size_bytes:

@@ -117,6 +117,24 @@ def register_rejected_material(
     )
     db.add(record)
     db.flush()
+    hold = _lock_batch_stock(
+        db,
+        batch_id,
+        actor_id,
+        f"不合格品 {record_no}：{description}",
+    )
+    record.quality_hold_id = hold.id
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="QUALITY_HOLD_CREATED_FOR_NONCONFORMING",
+        entity_type="GspQualityHold",
+        entity_id=str(hold.id),
+        reason=description,
+        after_data=model_snapshot(hold),
+        source_ip=source_ip,
+    )
     write_audit_event(
         db,
         actor_user_id=actor_id,

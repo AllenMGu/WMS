@@ -101,6 +101,9 @@ class PartnerResponse(OrmModel):
     quality_agreement_valid_to: Optional[date]
     status: str
     suspension_reason: Optional[str]
+    created_by: int
+    approved_by: Optional[int]
+    approved_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
 
@@ -129,6 +132,7 @@ class PartnerDocumentResponse(OrmModel):
     file_size_bytes: Optional[int]
     person_name: Optional[str]
     person_role: Optional[str]
+    created_by: int
     verified_by: Optional[int]
     verified_at: Optional[datetime]
     status: str

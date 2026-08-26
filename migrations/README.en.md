@@ -24,5 +24,6 @@ the `20260820_00` baseline.
 Before release, rehearse backup, upgrade, rollback, re-upgrade, and data reconciliation on a same-version database
 copy. Retain commands, output, executor, reviewer, and timestamps in the change record.
 
-The current migration head is `20260824_21`, which adds the expiry-alert review-cycle field. Production readiness
-checks require the database to be at this reviewed revision.
+The current migration head is `20260826_22`, which records the uploader of each partner qualification document so
+that uploader and verifier separation can be enforced. Production readiness checks require the database to be at
+this reviewed revision.
