@@ -242,10 +242,13 @@ def test_warehouse_and_user_creation_audit_automatic_access_assignments():
             )
         )
         created = _event(db, "WAREHOUSE_CREATED", str(warehouse.id))
-        assert set(created.after_data["auto_assigned_admin_user_ids"]) == {
-            actor.id,
-            other_admin.id,
+        active_admin_ids = {
+            user_id
+            for (user_id,) in db.query(User.id)
+            .filter(User.role == UserRole.ADMIN, User.is_active.is_(True))
+            .all()
         }
+        assert set(created.after_data["auto_assigned_admin_user_ids"]) == active_admin_ids
         for admin in (actor, other_admin):
             assignment_event = _event(
                 db,
