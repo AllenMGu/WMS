@@ -6,8 +6,9 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.gsp.models import GspBusinessPartner, GspPartnerDocument
-from app.gsp.rules import Finding, QualificationResult, evaluate_partner
+from app.gsp.models import GspBusinessPartner, GspDrugProfile, GspPartnerDocument
+from app.gsp.quality_system.models import GspRegulatedScopeAuthorization
+from app.gsp.rules import Finding, QualificationResult, evaluate_partner, evaluate_product
 
 SUPPLIER_DOCUMENTS = {
     "BUSINESS_LICENSE",
@@ -41,11 +42,7 @@ def evaluate_partner_evidence(
     status: str | None = None,
     on_date: date | None = None,
 ) -> QualificationResult:
-    documents = (
-        db.query(GspPartnerDocument)
-        .filter(GspPartnerDocument.partner_id == partner.id)
-        .all()
-    )
+    documents = db.query(GspPartnerDocument).filter(GspPartnerDocument.partner_id == partner.id).all()
     verified: dict[str, GspPartnerDocument] = {}
     for item in documents:
         current = verified.get(item.document_type)
@@ -80,4 +77,47 @@ def evaluate_partner_evidence(
                     f"{document_type}缺少授权人员姓名或岗位",
                 )
             )
+    return QualificationResult(not findings, tuple(findings))
+
+
+def evaluate_product_evidence(
+    db: Session,
+    profile: GspDrugProfile,
+    *,
+    status: str | None = None,
+    on_date: date | None = None,
+) -> QualificationResult:
+    """Evaluate product approval plus any specially regulated business scope."""
+    today = on_date or date.today()
+    findings = list(
+        evaluate_product(
+            status=status or profile.status,
+            registration_valid_to=profile.registration_valid_to,
+            registration_document_ref=profile.registration_document_ref,
+            nmpa_verification_ref=profile.nmpa_verification_ref,
+            on_date=today,
+        ).findings
+    )
+    category = profile.regulatory_category or "GENERAL"
+    if profile.is_special_controlled and category == "GENERAL":
+        category = "SPECIAL_CONTROLLED"
+    if category != "GENERAL":
+        authorization = (
+            db.query(GspRegulatedScopeAuthorization)
+            .filter(
+                GspRegulatedScopeAuthorization.category == category,
+                GspRegulatedScopeAuthorization.status == "APPROVED",
+                GspRegulatedScopeAuthorization.valid_to >= today,
+            )
+            .order_by(GspRegulatedScopeAuthorization.valid_to.desc())
+            .first()
+        )
+        if authorization is None:
+            existing = (
+                db.query(GspRegulatedScopeAuthorization)
+                .filter(GspRegulatedScopeAuthorization.category == category)
+                .first()
+            )
+            code = "REGULATED_SCOPE_INVALID" if existing else "REGULATED_SCOPE_MISSING"
+            findings.append(Finding(code, f"缺少有效且已批准的{category}经营范围授权"))
     return QualificationResult(not findings, tuple(findings))

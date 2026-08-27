@@ -60,6 +60,7 @@ class GspDrugProfile(Base):
     max_temperature = Column(Float, nullable=True)
     is_prescription = Column(Boolean, nullable=False, default=True)
     is_special_controlled = Column(Boolean, nullable=False, default=False)
+    regulatory_category = Column(String(40), nullable=False, default="GENERAL", index=True)
     traceability_required = Column(Boolean, nullable=False, default=True)
     registration_valid_to = Column(Date, nullable=True)
     registration_document_ref = Column(String(500), nullable=True)

@@ -40,8 +40,10 @@ flowchart TB
 | Transport | `app/gsp/transport/` | Carrier, vehicle/driver, transit exception and delivery evidence |
 | Environment | `app/gsp/environment/` | Device approval, assignments, readings, alarms and deviations |
 | Electronic signature | `app/gsp/electronic_signature/` | Reauthentication, one-time challenges and signature chain |
+| Quality-system governance | `app/gsp/quality_system/` | Partner review, risk/CAPA, quality events, training, document control, equipment qualification and regulated scope |
 | Operational compliance | `app/gsp/operations/` | Secret rotation, backup evidence and restore exercises |
 | Compatibility WMS | `app/legacy.py` | Transitional legacy API; further decomposition remains desirable |
+| Traceability adapter | planned independent adapter | Deferred until the formal platform protocol and code scheme are confirmed |
 | JZT adapter | planned `app/integrations/jzt/` | Explicitly excluded until formal specifications are available |
 
 ## Data Ownership

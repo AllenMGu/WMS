@@ -14,7 +14,7 @@ if settings.database_url.startswith("sqlite"):
 engine = create_engine(settings.database_url, **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-EXPECTED_SCHEMA_REVISION = "20260826_22"
+EXPECTED_SCHEMA_REVISION = "20260826_23"
 
 
 def get_db():

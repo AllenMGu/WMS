@@ -53,6 +53,7 @@ from app.gsp.qualification import (
     AUTHORIZED_DOCUMENTS,
     PARTNER_DOCUMENT_TYPES,
     evaluate_partner_evidence,
+    evaluate_product_evidence,
 )
 from app.gsp.quality_disposition.models import (
     GspNonconformingRecord,
@@ -68,7 +69,7 @@ from app.gsp.returns_recalls.models import (
     GspRecallTarget,
     GspSalesReturnItem,
 )
-from app.gsp.rules import evaluate_batch, evaluate_product
+from app.gsp.rules import evaluate_batch
 from app.gsp.sales_shipping.models import GspSalesOrder, GspShipment
 from app.gsp.schemas import (
     AuditEventResponse,
@@ -889,9 +890,14 @@ async def upsert_drug_profile(
         raise HTTPException(404, "WMS货物主数据不存在")
     if payload.storage_condition not in {"NORMAL", "COOL", "COLD", "FROZEN", "SPECIAL"}:
         raise HTTPException(422, "storage_condition值无效")
+    regulatory_category = payload.regulatory_category.upper()
+    if regulatory_category not in {"GENERAL", "SPECIAL_CONTROLLED", "VACCINE"}:
+        raise HTTPException(422, "regulatory_category值无效")
     profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == goods_id).first()
     before = _snapshot(profile) if profile else None
     values = payload.dict(exclude={"reason"})
+    values["regulatory_category"] = regulatory_category
+    values["is_special_controlled"] = regulatory_category != "GENERAL"
     if profile:
         for key, value in values.items():
             setattr(profile, key, value)
@@ -949,12 +955,7 @@ async def approve_drug_profile(
         raise HTTPException(409, "注册批准档案缺少SHA-256或文件大小证据")
     if profile.updated_by == current_user.id:
         raise HTTPException(409, "质量档案维护人与批准核验人必须分离")
-    result = evaluate_product(
-        status="APPROVED",
-        registration_valid_to=profile.registration_valid_to,
-        registration_document_ref=profile.registration_document_ref,
-        nmpa_verification_ref=profile.nmpa_verification_ref,
-    )
+    result = evaluate_product_evidence(db, profile, status="APPROVED")
     if not result.qualified:
         raise HTTPException(409, {"message": "品种不满足审批条件", "findings": _findings_detail(result)})
     before = _snapshot(profile)
@@ -1220,14 +1221,7 @@ async def release_quality_hold(
         )
         findings = (
             _findings_detail(evaluate_partner_evidence(db, partner))
-            + _findings_detail(
-                evaluate_product(
-                    status=profile.status,
-                    registration_valid_to=profile.registration_valid_to,
-                    registration_document_ref=profile.registration_document_ref,
-                    nmpa_verification_ref=profile.nmpa_verification_ref,
-                )
-            )
+            + _findings_detail(evaluate_product_evidence(db, profile))
             + _findings_detail(
                 evaluate_batch(
                     status=batch.status,

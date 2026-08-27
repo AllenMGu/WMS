@@ -43,6 +43,7 @@ class DrugProfileUpsert(ChangeReason):
     max_temperature: Optional[float] = None
     is_prescription: bool = True
     is_special_controlled: bool = False
+    regulatory_category: str = "GENERAL"
     traceability_required: bool = True
     registration_valid_to: Optional[date] = None
     registration_document_ref: str = Field(..., min_length=3, max_length=500)
@@ -65,6 +66,7 @@ class DrugProfileResponse(OrmModel):
     max_temperature: Optional[float]
     is_prescription: bool
     is_special_controlled: bool
+    regulatory_category: str
     traceability_required: bool
     status: str
     registration_valid_to: Optional[date]

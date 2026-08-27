@@ -17,8 +17,8 @@ from app.gsp.models import (
     GspQualityHold,
 )
 from app.gsp.outbox import enqueue_integration_message
-from app.gsp.qualification import evaluate_partner_evidence
-from app.gsp.rules import evaluate_batch, evaluate_product
+from app.gsp.qualification import evaluate_partner_evidence, evaluate_product_evidence
+from app.gsp.rules import evaluate_batch
 from app.gsp.sales_shipping.models import (
     GspSalesOrder,
     GspSalesOrderItem,
@@ -206,12 +206,7 @@ def _qualified_customer_and_products(
             continue
         findings.extend(
             _finding_dicts(
-                evaluate_product(
-                    status=profile.status,
-                    registration_valid_to=profile.registration_valid_to,
-                    registration_document_ref=profile.registration_document_ref,
-                    nmpa_verification_ref=profile.nmpa_verification_ref,
-                )
+                evaluate_product_evidence(db, profile)
             )
         )
     if findings:

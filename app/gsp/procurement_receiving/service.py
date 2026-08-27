@@ -33,9 +33,8 @@ from app.gsp.procurement_receiving.schemas import (
     ReceiptInspection,
     ReceiptSampling,
 )
-from app.gsp.qualification import evaluate_partner_evidence
+from app.gsp.qualification import evaluate_partner_evidence, evaluate_product_evidence
 from app.gsp.quality_disposition.service import register_rejected_material
-from app.gsp.rules import evaluate_product
 from app.gsp.snapshots import model_snapshot
 from app.gsp.stocktaking.service import ensure_stock_not_frozen
 from app.legacy import Location, Warehouse
@@ -107,12 +106,7 @@ def _qualified_master_data(
                 }
             )
             continue
-        result = evaluate_product(
-            status=profile.status,
-            registration_valid_to=profile.registration_valid_to,
-            registration_document_ref=profile.registration_document_ref,
-            nmpa_verification_ref=profile.nmpa_verification_ref,
-        )
+        result = evaluate_product_evidence(db, profile)
         findings.extend(_finding_dicts(result))
     if findings:
         raise WorkflowError(409, "供货方或经营品种不满足 GSP 采购条件", findings)

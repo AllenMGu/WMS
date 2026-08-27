@@ -38,10 +38,12 @@ flowchart TB
 | 承运与在途 | `app/gsp/transport/` | 已独立，覆盖承运资质、在途异常、签收凭证与独立关闭 |
 | 温湿度监测 | `app/gsp/environment/` | 已独立，覆盖校准设备、仓库/运输监测分配、不可变读数与告警偏差 |
 | 电子签名 | `app/gsp/electronic_signature/` | 已独立，覆盖身份再确认、短时挑战、关键操作门禁与不可变签名链 |
+| 质量体系管理 | `app/gsp/quality_system/` | 已独立，覆盖年度评审、风险/CAPA、质量事件、培训考核、受控文件、设备验证校准与专项范围 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
 | Web 前端 | [`AllenMGu/WMS-frontend`](https://github.com/AllenMGu/WMS-frontend) | 独立部署，当前仅覆盖兼容期旧 WMS |
 | 微信小程序 | [`AllenMGu/WMS-miniprogram`](https://github.com/AllenMGu/WMS-miniprogram) | 原生微信客户端，独立发布 |
-| 九州通适配器 | 计划为 `app/integrations/jzt/` | 等正式接口规范 |
+| 药品追溯平台 | 计划为独立适配器 | 暂缓，等待正式平台规范与码制确认 |
+| 九州通适配器 | 计划为 `app/integrations/jzt/` | 暂缓，等待正式接口规范 |
 
 ## WMS 后续拆分顺序
 

@@ -16,6 +16,7 @@ from app.gsp.models import (
     GspQualityHold,
 )
 from app.gsp.outbox import enqueue_integration_message
+from app.gsp.qualification import evaluate_product_evidence
 from app.gsp.quality_disposition.service import register_rejected_material
 from app.gsp.returns_recalls.models import (
     GspBusinessCalendarDay,
@@ -40,7 +41,7 @@ from app.gsp.returns_recalls.schemas import (
     SalesReturnCreate,
     SalesReturnInspection,
 )
-from app.gsp.rules import evaluate_batch, evaluate_product
+from app.gsp.rules import evaluate_batch
 from app.gsp.sales_shipping.models import (
     GspSalesOrder,
     GspSalesOrderItem,
@@ -217,12 +218,7 @@ def _validate_return_batch_for_restock(
     )
     if not profile:
         raise WorkflowError(409, "退回药品缺少质量主数据，不能重新入库")
-    product_result = evaluate_product(
-        status=profile.status,
-        registration_valid_to=profile.registration_valid_to,
-        registration_document_ref=profile.registration_document_ref,
-        nmpa_verification_ref=profile.nmpa_verification_ref,
-    )
+    product_result = evaluate_product_evidence(db, profile)
     batch_result = evaluate_batch(
         status=batch.status,
         expiry_date=batch.expiry_date,

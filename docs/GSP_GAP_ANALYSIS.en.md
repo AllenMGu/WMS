@@ -27,6 +27,7 @@ The authoritative regulatory references are listed in the [Chinese matrix](GSP_G
 | P1 | Transport | Carrier evidence, vehicles/drivers, transit events, exceptions, delivery evidence and independent closure | Real carrier migration and mobile-operation PQ |
 | P1 | JZT integration | Deterministic outbox, concurrent claims, retry, dead letter and signed replay | Formal adapter, joint testing, reconciliation and replay tests |
 | P1 | Stocktaking | Automatic scope, freeze, blind count, variance/CAPA, controlled adjustment and immutable print evidence | Approved stocktake SOP and on-site PQ execution |
+| P1 | Quality-system governance | Partner periodic reviews and surveys, risk/CAPA, audits, deviations, quality information, complaints/incidents/adverse reactions, training/job assessment, controlled-document recall, and equipment qualification/calibration with failure lockout | Approved company procedures, classifications, templates and retention; legacy-record migration and on-site PQ |
 | P2 | CSV | Validation-plan skeleton and automated engineering gates | Complete VP/URS/RA/FS/DS/RTM/IQ/OQ/PQ/report/release package |
 
 ## Current Release Decision
@@ -34,4 +35,4 @@ The authoritative regulatory references are listed in the [Chinese matrix](GSP_G
 The current version is suitable as a development and prototype-validation baseline only. It must not be released as
 a controlled production system until target-environment qualification, secret migration and rotation, scheduled
 backup and restore evidence, approved SOPs and access, and the complete CSV package are available. The physical
-environmental gateway, formal JZT integration, and complete CSV package remain explicitly excluded deliverables.
+traceability platform, physical environmental gateway, formal JZT integration, and complete CSV package remain explicitly deferred deliverables.
