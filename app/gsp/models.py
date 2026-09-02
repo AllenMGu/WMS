@@ -122,6 +122,43 @@ class GspPartnerDocument(Base):
     )
 
 
+class GspSupplierProductAuthorization(Base):
+    """Approved supplier-to-product scope established during first-business review."""
+
+    __tablename__ = "gsp_supplier_product_authorizations"
+    id = Column(Integer, primary_key=True)
+    supplier_id = Column(Integer, ForeignKey("gsp_business_partners.id"), nullable=False, index=True)
+    goods_id = Column(Integer, ForeignKey("goods.id"), nullable=False, index=True)
+    authorization_ref = Column(String(500), nullable=False)
+    authorization_sha256 = Column(String(64), nullable=True)
+    authorization_size_bytes = Column(Integer, nullable=True)
+    scope_description = Column(String(500), nullable=False)
+    valid_from = Column(Date, nullable=False, index=True)
+    valid_to = Column(Date, nullable=False, index=True)
+    status = Column(String(30), nullable=False, default="PENDING", index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    suspended_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    suspended_at = Column(DateTime, nullable=True)
+    suspension_reason = Column(String(500), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("supplier_id", "goods_id", name="uq_gsp_supplier_product_authorization"),
+        CheckConstraint(
+            "status IN ('PENDING','APPROVED','SUSPENDED')",
+            name="ck_gsp_supplier_product_authorization_status",
+        ),
+        CheckConstraint("valid_to >= valid_from", name="ck_gsp_supplier_product_authorization_dates"),
+        CheckConstraint(
+            "authorization_size_bytes IS NULL OR authorization_size_bytes > 0",
+            name="ck_gsp_supplier_product_authorization_size",
+        ),
+    )
+
+
 class GspDrugBatch(Base):
     __tablename__ = "gsp_drug_batches"
     id = Column(Integer, primary_key=True)

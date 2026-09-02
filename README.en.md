@@ -17,7 +17,7 @@ automated tests, controlled-operation scripts, and validation design material. T
 Compatibility-period WMS endpoints remain under `/api`; controlled pharmaceutical workflows are under `/api/gsp`.
 See the [repository split guide](docs/REPOSITORY_SPLIT.en.md) for release and deployment boundaries.
 
-Current version: `0.16.0`. This is an engineering baseline for further development and validation, not a
+Current version: `0.17.0`. This is an engineering baseline for further development and validation, not a
 commercial product approved for direct use in regulated pharmaceutical operations.
 
 > Software alone does not demonstrate GSP compliance. Production release also requires approved procedures,
@@ -28,7 +28,8 @@ commercial product approved for direct use in regulated pharmaceutical operation
 
 The software baseline now covers:
 
-- quality master data, partner qualification, product approval, and batch-controlled stock;
+- quality master data, partner qualification, product approval, supplier-specific authorized product catalogues,
+  and batch-controlled stock;
 - approved purchasing, receipt, independent acceptance, sampling, and controlled printing;
 - approved sales, FEFO reservation, picking, packing, trace-code verification, independent dispatch review, and shipment;
 - carrier qualification, vehicle/driver control, transit events, excursions, proof of delivery, and independent closure;
@@ -73,6 +74,8 @@ compensating controls. The three switches are mutually exclusive.
 
 - Partners, licences, agreements, authorized representatives, products, and registration evidence use independent
   review and expiry gates.
+- Each supplier-product authorization has its own evidence, validity period, independent approval, and suspension
+  state; purchase creation, approval, receipt, and acceptance recheck the relationship.
 - Changes return approved records to review; expired or unapproved records block regulated transactions.
 - GSP items cannot use legacy non-batch inventory paths.
 

@@ -6,7 +6,12 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.gsp.models import GspBusinessPartner, GspDrugProfile, GspPartnerDocument
+from app.gsp.models import (
+    GspBusinessPartner,
+    GspDrugProfile,
+    GspPartnerDocument,
+    GspSupplierProductAuthorization,
+)
 from app.gsp.quality_system.models import GspRegulatedScopeAuthorization
 from app.gsp.rules import Finding, QualificationResult, evaluate_partner, evaluate_product
 
@@ -120,4 +125,54 @@ def evaluate_product_evidence(
             )
             code = "REGULATED_SCOPE_INVALID" if existing else "REGULATED_SCOPE_MISSING"
             findings.append(Finding(code, f"缺少有效且已批准的{category}经营范围授权"))
+    return QualificationResult(not findings, tuple(findings))
+
+
+def evaluate_supplier_product_authorization(
+    db: Session,
+    *,
+    supplier_id: int,
+    goods_id: int,
+    on_date: date | None = None,
+) -> QualificationResult:
+    """Verify that this approved supplier may supply this exact product SKU."""
+    today = on_date or date.today()
+    authorization = (
+        db.query(GspSupplierProductAuthorization)
+        .filter(
+            GspSupplierProductAuthorization.supplier_id == supplier_id,
+            GspSupplierProductAuthorization.goods_id == goods_id,
+        )
+        .first()
+    )
+    if authorization is None:
+        findings = (
+            Finding(
+                "SUPPLIER_PRODUCT_AUTHORIZATION_MISSING",
+                f"供货方未获准供应货物 {goods_id}",
+            ),
+        )
+        return QualificationResult(False, findings)
+    findings: list[Finding] = []
+    if authorization.status != "APPROVED":
+        findings.append(
+            Finding(
+                "SUPPLIER_PRODUCT_AUTHORIZATION_NOT_APPROVED",
+                f"供货方与货物 {goods_id} 的供货品种关联未批准",
+            )
+        )
+    if not authorization.authorization_sha256 or not authorization.authorization_size_bytes:
+        findings.append(
+            Finding(
+                "SUPPLIER_PRODUCT_AUTHORIZATION_EVIDENCE_INCOMPLETE",
+                f"供货方与货物 {goods_id} 的供货授权证据不完整",
+            )
+        )
+    if authorization.valid_from > today or authorization.valid_to < today:
+        findings.append(
+            Finding(
+                "SUPPLIER_PRODUCT_AUTHORIZATION_EXPIRED",
+                f"供货方与货物 {goods_id} 的供货授权不在有效期内",
+            )
+        )
     return QualificationResult(not findings, tuple(findings))
