@@ -96,6 +96,7 @@ from app.gsp.schemas import (
     RoleGrant,
     RoleReview,
     RoleRevoke,
+    UserDirectoryItem,
 )
 from app.gsp.snapshots import model_snapshot
 from app.gsp.stocktaking.models import GspStocktakeItem, GspStocktakePlan
@@ -509,6 +510,15 @@ async def list_my_roles(
         "roles": [row.role for row in assignments],
         "assignments": [_role_assignment_response(row) for row in assignments],
     }
+
+
+@router.get("/reference/users", response_model=list[UserDirectoryItem])
+async def list_quality_user_directory(
+    _: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """Return only fields needed to assign quality records to active users."""
+    return db.query(User).filter(User.is_active.is_(True)).order_by(User.full_name, User.id).all()
 
 
 @router.get("/roles")

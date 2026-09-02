@@ -91,6 +91,8 @@ from app.legacy import User
 
 router = APIRouter(prefix="/gsp/quality-system", tags=["GSP质量体系管理"])
 QUALITY_ROLES = ("QUALITY_MANAGER", "QUALITY_REVIEWER")
+QUALITY_READ_ROLES = (*QUALITY_ROLES, "AUDITOR")
+require_quality_system_read = require_gsp_roles(*QUALITY_READ_ROLES)
 T = TypeVar("T")
 
 
@@ -116,7 +118,7 @@ def _execute(db: Session, operation: Callable[[], T]) -> T:
 async def list_partner_reviews(
     status: str | None = None,
     partner_id: int | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspPartnerReview)
@@ -223,7 +225,7 @@ async def close_periodic_partner_review_actions(
 @router.get("/risks", response_model=list[QualityRiskResponse])
 async def list_quality_risks(
     status: str | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspQualityRisk)
@@ -300,7 +302,7 @@ async def review_risk(
 async def list_quality_events(
     status: str | None = None,
     event_type: str | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspQualityEvent)
@@ -378,7 +380,7 @@ async def close_event(
 @router.get("/capas", response_model=list[CapaResponse])
 async def list_capas(
     status: str | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspCapaAction)
@@ -448,7 +450,7 @@ async def verify_capa_action(
 async def list_training(
     status: str | None = None,
     user_id: int | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspTrainingRecord)
@@ -456,6 +458,18 @@ async def list_training(
         query = query.filter(GspTrainingRecord.status == status.upper())
     if user_id:
         query = query.filter(GspTrainingRecord.user_id == user_id)
+    return query.order_by(GspTrainingRecord.id.desc()).all()
+
+
+@router.get("/training/me", response_model=list[TrainingResponse])
+async def list_my_training(
+    status: str | None = None,
+    current_user: User = Depends(require_any_gsp_role),
+    db: Session = Depends(get_db),
+):
+    query = db.query(GspTrainingRecord).filter(GspTrainingRecord.user_id == current_user.id)
+    if status:
+        query = query.filter(GspTrainingRecord.status == status.upper())
     return query.order_by(GspTrainingRecord.id.desc()).all()
 
 
@@ -515,7 +529,7 @@ async def verify_training_record(
 @router.get("/documents", response_model=list[ControlledDocumentResponse])
 async def list_documents(
     status: str | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspControlledDocument)
@@ -542,7 +556,7 @@ async def new_document(
 @router.get("/documents/revisions", response_model=list[DocumentRevisionResponse])
 async def list_document_revisions(
     document_id: int | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspDocumentRevision)
@@ -631,7 +645,7 @@ async def approve_revision(
 @router.get("/documents/copies", response_model=list[DocumentCopyResponse])
 async def list_document_copies(
     status: str | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspDocumentCopy)
@@ -683,7 +697,7 @@ async def dispose_copy(
 @router.get("/equipment", response_model=list[EquipmentResponse])
 async def list_equipment(
     status: str | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspQualityEquipment)
@@ -743,7 +757,7 @@ async def approve_quality_equipment(
 @router.get("/equipment/activities", response_model=list[EquipmentActivityResponse])
 async def list_equipment_activities(
     equipment_id: int | None = None,
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspEquipmentActivity)
@@ -811,7 +825,7 @@ async def review_activity(
 
 @router.get("/regulated-scopes", response_model=list[ScopeAuthorizationResponse])
 async def list_regulated_scopes(
-    current_user: User = Depends(require_any_gsp_role),
+    current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
     return db.query(GspRegulatedScopeAuthorization).order_by(GspRegulatedScopeAuthorization.id.desc()).all()

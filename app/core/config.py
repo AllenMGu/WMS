@@ -61,6 +61,10 @@ class Settings:
         return "PLAINTEXT"
 
     def validate(self) -> None:
+        if self.environment == "production" and self.auto_create_schema:
+            raise RuntimeError(
+                "生产环境必须设置 AUTO_CREATE_SCHEMA=false，并通过经过评审的 Alembic 迁移管理结构"
+            )
         if self.environment == "production" and (
             self.secret_key == "development-only-change-me" or len(self.secret_key) < 32
         ):

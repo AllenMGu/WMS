@@ -247,6 +247,14 @@ class CurrentUserRolesResponse(BaseModel):
     assignments: list[EffectiveRoleAssignmentResponse]
 
 
+class UserDirectoryItem(OrmModel):
+    """Minimal user reference exposed to authorized GSP quality workflows."""
+
+    id: int
+    username: str
+    full_name: Optional[str]
+
+
 class AuditEventResponse(OrmModel):
     id: int
     actor_user_id: int

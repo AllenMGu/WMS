@@ -8,6 +8,7 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/token" in paths
     assert "/api/gsp/compliance/summary" in paths
     assert "/api/gsp/roles/me" in paths
+    assert "/api/gsp/reference/users" in paths
     assert "/api/gsp/products" in paths
     assert "/api/gsp/batches" in paths
     assert "/api/gsp/batch-stock" in paths
@@ -36,6 +37,7 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/gsp/operations/backups/{evidence_id}/review" in paths
     assert "/api/gsp/operations/recovery-drills/{drill_id}/execute" in paths
     assert "/api/gsp/operations/recovery-drills/{drill_id}/verify" in paths
+    assert "/api/gsp/quality-system/training/me" in paths
     assert "/api/gsp/electronic-signatures/challenges" in paths
     assert "/api/gsp/electronic-signatures/verify-chain/all" in paths
     assert "/health" in paths
