@@ -23,7 +23,7 @@ class GspLegacyImportBatch(Base):
     __tablename__ = "gsp_legacy_import_batches"
 
     id = Column(Integer, primary_key=True)
-    batch_no = Column(String(100), nullable=False, unique=True, index=True)
+    batch_no = Column(String(100), nullable=False, unique=True)
     source_system = Column(String(100), nullable=False, index=True)
     source_instance = Column(String(200), nullable=False)
     manifest_version = Column(String(50), nullable=False)

@@ -57,7 +57,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("batch_no"),
     )
-    for column in ("batch_no", "source_system", "retention_until", "status"):
+    for column in ("source_system", "retention_until", "status"):
         op.create_index(
             op.f(f"ix_gsp_legacy_import_batches_{column}"),
             "gsp_legacy_import_batches",
@@ -142,7 +142,7 @@ def downgrade() -> None:
             table_name="gsp_legacy_archive_records",
         )
     op.drop_table("gsp_legacy_archive_records")
-    for column in ("status", "retention_until", "source_system", "batch_no"):
+    for column in ("status", "retention_until", "source_system"):
         op.drop_index(
             op.f(f"ix_gsp_legacy_import_batches_{column}"),
             table_name="gsp_legacy_import_batches",
