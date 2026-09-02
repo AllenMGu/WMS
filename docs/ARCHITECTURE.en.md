@@ -40,8 +40,10 @@ flowchart TB
 | Transport | `app/gsp/transport/` | Carrier, vehicle/driver, transit exception and delivery evidence |
 | Environment | `app/gsp/environment/` | Device approval, assignments, readings, alarms and deviations |
 | Electronic signature | `app/gsp/electronic_signature/` | Reauthentication, one-time challenges and signature chain |
+| Quality-system governance | `app/gsp/quality_system/` | Partner review, risk/CAPA, quality events, training, document control, equipment qualification and regulated scope |
 | Operational compliance | `app/gsp/operations/` | Secret rotation, backup evidence and restore exercises |
 | Compatibility WMS | `app/legacy.py` | Transitional legacy API; further decomposition remains desirable |
+| Traceability adapter | planned independent adapter | Deferred until the formal platform protocol and code scheme are confirmed |
 | JZT adapter | planned `app/integrations/jzt/` | Explicitly excluded until formal specifications are available |
 
 ## Data Ownership
@@ -69,6 +71,9 @@ flowchart TB
 Major workflows use explicit state transitions and independent decision points:
 
 - procurement: draft → quality approved → received → sampled → accepted/rejected → batch stock;
+- generic manual batch creation, manual batch acceptance, and direct batch-stock receipt routes are disabled;
+  authoritative batch stock can arise only from controlled receipt acceptance, inspected sales returns, or an
+  approved stocktake adjustment;
 - sales: draft → quality approved → reserved → picked → packed → independently reviewed → shipped;
 - transport: approved assignment → dispatched → in transit → delivered → independently closed;
 - returns: received in quarantine → inspected → returned to stock/rejected;
@@ -76,6 +81,10 @@ Major workflows use explicit state transitions and independent decision points:
 - maintenance: planned → approved → checked → exception resolution → independently completed;
 - stocktaking: selected/frozen → blind count → variance review/CAPA → approved adjustment → closed;
 - nonconforming stock: held → independent disposition approval → return/destruction → witness evidence → closed.
+
+Before the final active hold on a batch is released, the system revalidates supplier evidence, product approval,
+batch release and traceability, and the configured stop-sale shelf-life threshold. Stock remains `HOLD` if any
+blocking finding remains.
 
 Critical approvals consume a short-lived, single-use electronic-signature challenge bound to the operation, record,
 meaning, and request digest. Closing an environmental alarm never automatically releases its quality hold.

@@ -53,6 +53,7 @@ from app.gsp.qualification import (
     AUTHORIZED_DOCUMENTS,
     PARTNER_DOCUMENT_TYPES,
     evaluate_partner_evidence,
+    evaluate_product_evidence,
 )
 from app.gsp.quality_disposition.models import (
     GspNonconformingRecord,
@@ -68,7 +69,7 @@ from app.gsp.returns_recalls.models import (
     GspRecallTarget,
     GspSalesReturnItem,
 )
-from app.gsp.rules import evaluate_product
+from app.gsp.rules import evaluate_batch
 from app.gsp.sales_shipping.models import GspSalesOrder, GspShipment
 from app.gsp.schemas import (
     AuditEventResponse,
@@ -95,16 +96,16 @@ from app.gsp.schemas import (
     RoleGrant,
     RoleReview,
     RoleRevoke,
+    UserDirectoryItem,
 )
 from app.gsp.snapshots import model_snapshot
 from app.gsp.stocktaking.models import GspStocktakeItem, GspStocktakePlan
-from app.gsp.stocktaking.service import ensure_stock_not_frozen
 from app.gsp.transport.models import (
     GspCarrier,
     GspTransportException,
     GspTransportTask,
 )
-from app.legacy import Goods, Location, User, get_current_user
+from app.legacy import Goods, User, get_current_user
 
 router = APIRouter(prefix="/gsp", tags=["GSP合规"])
 
@@ -511,6 +512,15 @@ async def list_my_roles(
     }
 
 
+@router.get("/reference/users", response_model=list[UserDirectoryItem])
+async def list_quality_user_directory(
+    _: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """Return only fields needed to assign quality records to active users."""
+    return db.query(User).filter(User.is_active.is_(True)).order_by(User.full_name, User.id).all()
+
+
 @router.get("/roles")
 async def list_roles(
     user_id: int | None = None,
@@ -648,6 +658,8 @@ async def approve_partner(
     partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == partner_id).first()
     if not partner:
         raise HTTPException(404, "合作方不存在")
+    if partner.created_by == current_user.id:
+        raise HTTPException(409, "合作方首营建档人与质量审批人必须分离")
     result = evaluate_partner_evidence(db, partner, status="APPROVED")
     if not result.qualified:
         raise HTTPException(
@@ -747,6 +759,7 @@ async def create_partner_document(
         file_size_bytes=payload.file_size_bytes,
         person_name=payload.person_name,
         person_role=payload.person_role,
+        created_by=current_user.id,
         status="PENDING",
     )
     db.add(document)
@@ -792,6 +805,8 @@ async def verify_partner_document(
     )
     if document is None:
         raise HTTPException(404, "合作方资质文件不存在")
+    if document.created_by == current_user.id:
+        raise HTTPException(409, "资质文件上传人与核验人必须分离")
     if document.valid_to < date.today():
         raise HTTPException(409, "已过期资质文件不能核验通过")
     if not document.file_sha256 or not document.file_size_bytes:
@@ -885,9 +900,14 @@ async def upsert_drug_profile(
         raise HTTPException(404, "WMS货物主数据不存在")
     if payload.storage_condition not in {"NORMAL", "COOL", "COLD", "FROZEN", "SPECIAL"}:
         raise HTTPException(422, "storage_condition值无效")
+    regulatory_category = payload.regulatory_category.upper()
+    if regulatory_category not in {"GENERAL", "SPECIAL_CONTROLLED", "VACCINE"}:
+        raise HTTPException(422, "regulatory_category值无效")
     profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == goods_id).first()
     before = _snapshot(profile) if profile else None
     values = payload.dict(exclude={"reason"})
+    values["regulatory_category"] = regulatory_category
+    values["is_special_controlled"] = regulatory_category != "GENERAL"
     if profile:
         for key, value in values.items():
             setattr(profile, key, value)
@@ -945,12 +965,7 @@ async def approve_drug_profile(
         raise HTTPException(409, "注册批准档案缺少SHA-256或文件大小证据")
     if profile.updated_by == current_user.id:
         raise HTTPException(409, "质量档案维护人与批准核验人必须分离")
-    result = evaluate_product(
-        status="APPROVED",
-        registration_valid_to=profile.registration_valid_to,
-        registration_document_ref=profile.registration_document_ref,
-        nmpa_verification_ref=profile.nmpa_verification_ref,
-    )
+    result = evaluate_product_evidence(db, profile, status="APPROVED")
     if not result.qualified:
         raise HTTPException(409, {"message": "品种不满足审批条件", "findings": _findings_detail(result)})
     before = _snapshot(profile)
@@ -1012,48 +1027,10 @@ async def create_batch(
     current_user: User = Depends(require_gsp_roles("RECEIVER", "INSPECTOR", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
-    if payload.expiry_date <= payload.production_date:
-        raise HTTPException(422, "有效期必须晚于生产日期")
-    partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == payload.supplier_id).first()
-    profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == payload.goods_id).first()
-    if not partner or not profile:
-        raise HTTPException(409, "缺少已建档的供货方或药品质量主数据")
-    if partner.partner_type not in {"SUPPLIER", "BOTH"}:
-        raise HTTPException(409, "所选合作方不是合格供货方")
-    partner_result = evaluate_partner_evidence(db, partner)
-    product_result = evaluate_product(
-        status=profile.status,
-        registration_valid_to=profile.registration_valid_to,
-        registration_document_ref=profile.registration_document_ref,
-        nmpa_verification_ref=profile.nmpa_verification_ref,
+    raise HTTPException(
+        409,
+        "手工批次建档入口已停用；批次必须由受控采购收货流程自动生成",
     )
-    findings = _findings_detail(partner_result) + _findings_detail(product_result)
-    if findings:
-        raise HTTPException(409, {"message": "收货被GSP质量规则阻止", "findings": findings})
-    if profile.traceability_required and not payload.traceability_code:
-        raise HTTPException(409, "该品种必须录入药品追溯信息")
-    if profile.storage_condition in {"COLD", "FROZEN"} and not payload.temperature_record_ref:
-        raise HTTPException(409, "冷藏/冷冻药品必须关联运输温度记录")
-    batch = GspDrugBatch(
-        **payload.dict(exclude={"reason"}),
-        status="PENDING_INSPECTION",
-        created_by=current_user.id,
-    )
-    db.add(batch)
-    db.flush()
-    write_audit_event(
-        db,
-        actor_user_id=current_user.id,
-        action="BATCH_RECEIVED",
-        entity_type="GspDrugBatch",
-        entity_id=str(batch.id),
-        reason=payload.reason,
-        after_data=_snapshot(batch),
-        source_ip=_source_ip(request),
-    )
-    db.commit()
-    db.refresh(batch)
-    return batch
 
 
 @router.post(
@@ -1071,61 +1048,10 @@ async def accept_batch(
     current_user: User = Depends(require_gsp_roles("INSPECTOR", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
-    batch = db.query(GspDrugBatch).filter(GspDrugBatch.id == batch_id).first()
-    if not batch:
-        raise HTTPException(404, "批次不存在")
-    if batch.status != "PENDING_INSPECTION":
-        raise HTTPException(409, "只有待验批次可以验收放行")
-    profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == batch.goods_id).first()
-    if not batch.inspection_report_no:
-        raise HTTPException(409, "缺少检验报告书编号，不能验收放行")
-    partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == batch.supplier_id).first()
-    if not profile or not partner:
-        raise HTTPException(409, "供货方或药品质量主数据缺失")
-    partner_result = evaluate_partner_evidence(db, partner)
-    product_result = evaluate_product(
-        status=profile.status,
-        registration_valid_to=profile.registration_valid_to,
-        registration_document_ref=profile.registration_document_ref,
-        nmpa_verification_ref=profile.nmpa_verification_ref,
+    raise HTTPException(
+        409,
+        "手工批次放行入口已停用；请在受控收货明细中完成抽样和独立验收",
     )
-    findings = _findings_detail(partner_result) + _findings_detail(product_result)
-    if findings:
-        raise HTTPException(409, {"message": "验收放行被GSP规则阻止", "findings": findings})
-    if profile and profile.storage_condition in {"COLD", "FROZEN"}:
-        if batch.transport_temperature_min is None or batch.transport_temperature_max is None:
-            raise HTTPException(409, "冷藏/冷冻药品缺少运输温度范围")
-        if profile.min_temperature is not None and batch.transport_temperature_min < profile.min_temperature:
-            raise HTTPException(409, "运输最低温度超出品种允许范围")
-        if profile.max_temperature is not None and batch.transport_temperature_max > profile.max_temperature:
-            raise HTTPException(409, "运输最高温度超出品种允许范围")
-    before = _snapshot(batch)
-    batch.status = "RELEASED"
-    batch.accepted_by = current_user.id
-    batch.accepted_at = utc_now()
-    batch.acceptance_conclusion = payload.conclusion
-    enqueue_integration_message(
-        db,
-        destination="JZT",
-        message_type="BATCH_ACCEPTED",
-        aggregate_type="GspDrugBatch",
-        aggregate_id=str(batch.id),
-        payload=_snapshot(batch),
-    )
-    write_audit_event(
-        db,
-        actor_user_id=current_user.id,
-        action="BATCH_ACCEPTED",
-        entity_type="GspDrugBatch",
-        entity_id=str(batch.id),
-        reason=payload.reason,
-        before_data=before,
-        after_data=_snapshot(batch),
-        source_ip=_source_ip(request),
-    )
-    db.commit()
-    db.refresh(batch)
-    return batch
 
 
 @router.get("/batch-stock", response_model=list[BatchStockResponse])
@@ -1157,49 +1083,10 @@ async def receive_batch_stock(
     current_user: User = Depends(require_gsp_roles("WAREHOUSE_CUSTODIAN", "RECEIVER")),
     db: Session = Depends(get_db),
 ):
-    batch = db.query(GspDrugBatch).filter(GspDrugBatch.id == payload.batch_id).first()
-    location = db.query(Location).filter(Location.id == payload.location_id).first()
-    if not batch or batch.status != "RELEASED":
-        raise HTTPException(409, "只有验收放行批次可以形成可用库存")
-    if not location or location.warehouse_id != payload.warehouse_id:
-        raise HTTPException(422, "库位不属于指定仓库")
-    stock = (
-        db.query(GspBatchStock)
-        .filter(
-            GspBatchStock.batch_id == payload.batch_id,
-            GspBatchStock.warehouse_id == payload.warehouse_id,
-            GspBatchStock.location_id == payload.location_id,
-        )
-        .with_for_update()
-        .first()
+    raise HTTPException(
+        409,
+        "直接增加批号库存入口已停用；库存只能由受控验收、退货检验或批准的盘点调整形成",
     )
-    before = _snapshot(stock) if stock else None
-    if stock:
-        ensure_stock_not_frozen(db, [stock.id])
-        stock.quantity += payload.quantity
-        stock.lock_version += 1
-    else:
-        stock = GspBatchStock(
-            batch_id=payload.batch_id,
-            warehouse_id=payload.warehouse_id,
-            location_id=payload.location_id,
-            quantity=payload.quantity,
-        )
-        db.add(stock)
-    db.flush()
-    write_audit_event(
-        db,
-        actor_user_id=current_user.id,
-        action="BATCH_STOCK_RECEIVED",
-        entity_type="GspBatchStock",
-        entity_id=str(stock.id),
-        reason=payload.reason,
-        before_data=before,
-        after_data=_snapshot(stock),
-        source_ip=_source_ip(request),
-    )
-    db.commit()
-    return {"id": stock.id, "quantity": stock.quantity, "status": stock.stock_status}
 
 
 @router.get("/quality-holds", response_model=list[QualityHoldResponse])
@@ -1273,7 +1160,12 @@ async def release_quality_hold(
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
-    hold = db.query(GspQualityHold).filter(GspQualityHold.id == hold_id).first()
+    hold = (
+        db.query(GspQualityHold)
+        .filter(GspQualityHold.id == hold_id)
+        .with_for_update()
+        .first()
+    )
     if not hold:
         raise HTTPException(404, "质量锁定记录不存在")
     if hold.status != "ACTIVE":
@@ -1303,11 +1195,14 @@ async def release_quality_hold(
             raise HTTPException(409, "不合格品尚未完成批准处置，不能解除对应质量锁定")
     if hold.initiated_by == current_user.id:
         raise HTTPException(409, "质量锁定发起人不能自行解除，需由另一名质量授权人员复核")
-    before = _snapshot(hold)
-    hold.status = "RELEASED"
-    hold.released_by = current_user.id
-    hold.released_at = utc_now()
-    hold.release_reason = payload.reason
+    batch = (
+        db.query(GspDrugBatch)
+        .filter(GspDrugBatch.id == hold.batch_id)
+        .with_for_update()
+        .first()
+    )
+    if batch is None:
+        raise HTTPException(409, "锁定关联批次不存在，不能解除")
     other_holds = (
         db.query(GspQualityHold)
         .filter(
@@ -1317,6 +1212,47 @@ async def release_quality_hold(
         )
         .count()
     )
+    if not other_holds:
+        profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == batch.goods_id).first()
+        partner = db.query(GspBusinessPartner).filter(
+            GspBusinessPartner.id == batch.supplier_id
+        ).first()
+        if profile is None or partner is None:
+            raise HTTPException(409, "批次关联品种或供货方质量档案缺失，不能解除锁定")
+        if partner.partner_type not in {"SUPPLIER", "BOTH"}:
+            raise HTTPException(409, "批次关联合作方不是有效供货方，不能解除锁定")
+        stop_sale_setting = db.query(GspComplianceSetting).filter(
+            GspComplianceSetting.key == "STOP_SALE_DAYS"
+        ).first()
+        stop_sale_days = (
+            stop_sale_setting.integer_value
+            if stop_sale_setting is not None
+            else COMPLIANCE_SETTING_DEFAULTS["STOP_SALE_DAYS"]
+        )
+        findings = (
+            _findings_detail(evaluate_partner_evidence(db, partner))
+            + _findings_detail(evaluate_product_evidence(db, profile))
+            + _findings_detail(
+                evaluate_batch(
+                    status=batch.status,
+                    expiry_date=batch.expiry_date,
+                    has_active_hold=False,
+                    traceability_required=profile.traceability_required,
+                    traceability_code=batch.traceability_code,
+                    minimum_remaining_days=stop_sale_days,
+                )
+            )
+        )
+        if findings:
+            raise HTTPException(
+                409,
+                {"message": "批次重新放行条件不满足，不能解除最后一个质量锁定", "findings": findings},
+            )
+    before = _snapshot(hold)
+    hold.status = "RELEASED"
+    hold.released_by = current_user.id
+    hold.released_at = utc_now()
+    hold.release_reason = payload.reason
     if not other_holds:
         for stock in db.query(GspBatchStock).filter(GspBatchStock.batch_id == hold.batch_id):
             stock.stock_status = "AVAILABLE"

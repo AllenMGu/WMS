@@ -77,6 +77,15 @@ SIGNATURE_POLICIES: dict[str, tuple[str, str]] = {
     "BUSINESS_CALENDAR_SET": ("GspBusinessCalendarDay", "APPROVAL"),
     "COMPLIANCE_SETTING_SET": ("GspComplianceSetting", "APPROVAL"),
     "EXPIRY_ALERT_RESOLVE": ("GspExpiryAlert", "REVIEW"),
+    "PARTNER_PERIODIC_REVIEW": ("GspPartnerReview", "APPROVAL"),
+    "PARTNER_REVIEW_ACTIONS_CLOSE": ("GspPartnerReview", "REVIEW"),
+    "QUALITY_RISK_REVIEW": ("GspQualityRisk", "REVIEW"),
+    "QUALITY_EVENT_CLOSE": ("GspQualityEvent", "REVIEW"),
+    "CAPA_EFFECTIVENESS_VERIFY": ("GspCapaAction", "REVIEW"),
+    "CONTROLLED_DOCUMENT_APPROVE": ("GspDocumentRevision", "APPROVAL"),
+    "QUALITY_EQUIPMENT_APPROVE": ("GspQualityEquipment", "APPROVAL"),
+    "EQUIPMENT_ACTIVITY_REVIEW": ("GspEquipmentActivity", "REVIEW"),
+    "REGULATED_SCOPE_APPROVE": ("GspRegulatedScopeAuthorization", "APPROVAL"),
 }
 
 

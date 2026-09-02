@@ -303,7 +303,16 @@ def _seed_dispatched_batch(db):
     return users, warehouse, location, batch, stock, shipment, allocation
 
 
-def test_sales_return_is_quarantined_until_independent_inspection():
+@pytest.mark.parametrize(
+    ("accepted_quantity", "rejected_quantity", "expected_stock", "expected_status"),
+    [
+        (Decimal("2.000"), Decimal("0"), Decimal("3.000"), "AVAILABLE"),
+        (Decimal("1.000"), Decimal("1.000"), Decimal("2.000"), "HOLD"),
+    ],
+)
+def test_sales_return_is_quarantined_until_independent_inspection(
+    accepted_quantity, rejected_quantity, expected_stock, expected_status
+):
     import main  # noqa: F401
 
     db = SessionLocal()
@@ -364,10 +373,11 @@ def test_sales_return_is_quarantined_until_independent_inspection():
             return_id=sales_return.id,
             item_id=return_item.id,
             payload=SalesReturnInspection(
-                accepted_quantity=Decimal("2.000"),
-                rejected_quantity=Decimal("0"),
-                conclusion="包装、储存和追溯信息复核合格",
+                accepted_quantity=accepted_quantity,
+                rejected_quantity=rejected_quantity,
+                conclusion="包装、储存和追溯信息已复核，按结论分别回库和隔离",
                 accepted_location_id=location.id,
+                rejection_disposition="QUARANTINE" if rejected_quantity else None,
                 package_intact=True,
                 storage_conditions_confirmed=True,
                 traceability_verified=True,
@@ -380,7 +390,20 @@ def test_sales_return_is_quarantined_until_independent_inspection():
         db.refresh(stock)
         db.refresh(sales_return)
         assert sales_return.status == "COMPLETED"
-        assert stock.quantity == Decimal("3.000")
+        assert stock.quantity == expected_stock
+        assert stock.stock_status == expected_status
+        if rejected_quantity:
+            nonconforming = (
+                db.query(GspNonconformingRecord)
+                .filter(
+                    GspNonconformingRecord.source_entity_type == "GspSalesReturnItem",
+                    GspNonconformingRecord.source_entity_id == return_item.id,
+                )
+                .one()
+            )
+            assert nonconforming.quantity == rejected_quantity
+            assert nonconforming.quality_hold_id is not None
+            assert db.query(GspQualityHold).filter_by(id=nonconforming.quality_hold_id).one().status == "ACTIVE"
         message_types = {
             row.message_type
             for row in db.query(GspIntegrationMessage)

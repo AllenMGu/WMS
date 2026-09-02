@@ -1,9 +1,11 @@
+import asyncio
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from app.core.database import SessionLocal
 from app.gsp.errors import WorkflowError
@@ -13,6 +15,7 @@ from app.gsp.models import (
     GspDrugBatch,
     GspDrugProfile,
     GspPartnerDocument,
+    GspQualityHold,
 )
 from app.gsp.procurement_receiving.models import GspPurchaseOrderItem, GspReceiptItem
 from app.gsp.procurement_receiving.schemas import (
@@ -32,6 +35,14 @@ from app.gsp.procurement_receiving.service import (
     inspect_receipt_item,
     record_receipt_sampling,
     submit_purchase_order,
+)
+from app.gsp.quality_disposition.models import GspNonconformingRecord
+from app.gsp.router import accept_batch, create_batch, receive_batch_stock, release_quality_hold
+from app.gsp.schemas import (
+    BatchAcceptance,
+    BatchCreate,
+    BatchStockReceipt,
+    QualityHoldRelease,
 )
 from app.legacy import Goods, Location, User, UserRole, Warehouse, ensure_not_gsp_managed_goods
 from tests.gsp_seed_helpers import add_verified_partner_evidence
@@ -103,7 +114,16 @@ def _seed_qualified_purchase_data(db):
     return users, warehouse, location, goods, supplier
 
 
-def test_controlled_purchase_receipt_and_inspection_flow():
+@pytest.mark.parametrize(
+    ("accepted_quantity", "rejected_quantity", "inspection_status", "stock_status"),
+    [
+        (Decimal("12.000"), Decimal("0"), "ACCEPTED", "AVAILABLE"),
+        (Decimal("10.000"), Decimal("2.000"), "PARTIALLY_ACCEPTED", "HOLD"),
+    ],
+)
+def test_controlled_purchase_receipt_and_inspection_flow(
+    accepted_quantity, rejected_quantity, inspection_status, stock_status
+):
     # Importing the composition root registers and creates every table for the
     # in-memory test database.
     import main  # noqa: F401
@@ -203,9 +223,9 @@ def test_controlled_purchase_receipt_and_inspection_flow():
             source_ip="127.0.0.1",
         )
         inspection = ReceiptInspection(
-            accepted_quantity=Decimal("12.000"),
-            rejected_quantity=Decimal("0"),
-            conclusion="票账货相符，验收合格",
+            accepted_quantity=accepted_quantity,
+            rejected_quantity=rejected_quantity,
+            conclusion="票账货相符，按检验结果分别入库和拒收",
             reason="按验收规程逐项检查",
         )
         with pytest.raises(WorkflowError, match="必须分离"):
@@ -273,15 +293,27 @@ def test_controlled_purchase_receipt_and_inspection_flow():
         stock = db.query(GspBatchStock).filter(GspBatchStock.batch_id == batch.id).one()
         assert order.status == "COMPLETED"
         assert receipt.status == "COMPLETED"
-        assert receipt_item.inspection_status == "ACCEPTED"
+        assert receipt_item.inspection_status == inspection_status
         assert batch.status == "RELEASED"
-        assert stock.quantity == Decimal("12.000")
-        assert stock.stock_status == "AVAILABLE"
+        assert stock.quantity == accepted_quantity
+        assert stock.stock_status == stock_status
         assert print_record.document_type == "RECEIPT_INSPECTION"
         assert print_record.status == "GENERATED"
         assert print_record.snapshot_data["receipt_no"] == receipt.receipt_no
-        assert print_record.snapshot_data["items"][0]["inspection_status"] == "ACCEPTED"
+        assert print_record.snapshot_data["items"][0]["inspection_status"] == inspection_status
         assert len(print_record.content_hash) == 64
+        if rejected_quantity:
+            nonconforming = (
+                db.query(GspNonconformingRecord)
+                .filter(
+                    GspNonconformingRecord.source_entity_type == "GspReceiptItem",
+                    GspNonconformingRecord.source_entity_id == receipt_item.id,
+                )
+                .one()
+            )
+            assert nonconforming.quantity == rejected_quantity
+            assert nonconforming.quality_hold_id is not None
+            assert db.query(GspQualityHold).filter_by(id=nonconforming.quality_hold_id).one().status == "ACTIVE"
     finally:
         db.close()
 
@@ -309,6 +341,173 @@ def test_gsp_managed_product_cannot_use_legacy_stock_mutation():
             Stock.goods_id.notin_(gsp_managed_goods_query(db))
         )
         assert visible_legacy_stock.count() == 0
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_manual_batch_and_stock_mutation_routes_are_disabled():
+    import main  # noqa: F401
+
+    db = SessionLocal()
+    try:
+        users, warehouse, location, goods, supplier = _seed_qualified_purchase_data(db)
+        request = Request({"type": "http", "client": ("127.0.0.1", 12345)})
+        manual_batch = BatchCreate(
+            goods_id=goods.id,
+            batch_no=f"MANUAL-{uuid4().hex[:8]}",
+            production_date=date.today() - timedelta(days=30),
+            expiry_date=date.today() + timedelta(days=365),
+            supplier_id=supplier.id,
+            receipt_document_no=f"MANUAL-RCV-{uuid4().hex[:8]}",
+            inspection_report_no="MANUAL-REPORT",
+            traceability_code="MANUAL-TRACE",
+            reason="尝试绕过受控采购收货流程",
+        )
+        with pytest.raises(HTTPException, match="手工批次建档入口已停用") as create_error:
+            asyncio.run(
+                create_batch(
+                    payload=manual_batch,
+                    request=request,
+                    current_user=users[2],
+                    db=db,
+                )
+            )
+        assert create_error.value.status_code == 409
+
+        with pytest.raises(HTTPException, match="手工批次放行入口已停用") as accept_error:
+            asyncio.run(
+                accept_batch(
+                    batch_id=999999,
+                    payload=BatchAcceptance(conclusion="验收合格", reason="尝试手工放行批次"),
+                    request=request,
+                    current_user=users[3],
+                    db=db,
+                )
+            )
+        assert accept_error.value.status_code == 409
+
+        with pytest.raises(HTTPException, match="直接增加批号库存入口已停用") as stock_error:
+            asyncio.run(
+                receive_batch_stock(
+                    payload=BatchStockReceipt(
+                        batch_id=999999,
+                        warehouse_id=warehouse.id,
+                        location_id=location.id,
+                        quantity=Decimal("1.000"),
+                        reason="尝试绕过验收直接增加库存",
+                    ),
+                    request=request,
+                    current_user=users[2],
+                    db=db,
+                )
+            )
+        assert stock_error.value.status_code == 409
+        assert db.query(GspDrugBatch).filter(GspDrugBatch.batch_no == manual_batch.batch_no).count() == 0
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_last_quality_hold_release_revalidates_qualification_and_shelf_life():
+    import main  # noqa: F401
+
+    db = SessionLocal()
+    try:
+        users, warehouse, location, goods, supplier = _seed_qualified_purchase_data(db)
+        quality, inspector = users[1], users[3]
+        batch = GspDrugBatch(
+            goods_id=goods.id,
+            batch_no=f"HOLD-{uuid4().hex[:8]}",
+            production_date=date.today() - timedelta(days=30),
+            expiry_date=date.today() + timedelta(days=10),
+            supplier_id=supplier.id,
+            receipt_document_no=f"HOLD-RCV-{uuid4().hex[:8]}",
+            inspection_report_no="HOLD-REPORT",
+            traceability_code="HOLD-TRACE",
+            status="RELEASED",
+            accepted_by=inspector.id,
+            accepted_at=datetime.now(),
+            created_by=users[2].id,
+        )
+        db.add(batch)
+        db.flush()
+        stock = GspBatchStock(
+            batch_id=batch.id,
+            warehouse_id=warehouse.id,
+            location_id=location.id,
+            quantity=Decimal("10.000"),
+            reserved_quantity=Decimal("0"),
+            stock_status="HOLD",
+        )
+        hold = GspQualityHold(
+            batch_id=batch.id,
+            reason_code="STORAGE_ANOMALY",
+            reason="储存异常待质量复核",
+            status="ACTIVE",
+            initiated_by=quality.id,
+        )
+        db.add_all([stock, hold])
+        db.flush()
+        request = Request({"type": "http", "client": ("127.0.0.1", 12345)})
+        payload = QualityHoldRelease(reason="质量复核后申请解除锁定")
+
+        with pytest.raises(HTTPException, match="批次重新放行条件不满足") as shelf_error:
+            asyncio.run(
+                release_quality_hold(
+                    hold_id=hold.id,
+                    payload=payload,
+                    request=request,
+                    current_user=inspector,
+                    db=db,
+                )
+            )
+        assert shelf_error.value.status_code == 409
+        assert hold.status == "ACTIVE"
+        assert stock.stock_status == "HOLD"
+
+        batch.expiry_date = date.today() + timedelta(days=365)
+        supplier.status = "SUSPENDED"
+        with pytest.raises(HTTPException, match="批次重新放行条件不满足"):
+            asyncio.run(
+                release_quality_hold(
+                    hold_id=hold.id,
+                    payload=payload,
+                    request=request,
+                    current_user=inspector,
+                    db=db,
+                )
+            )
+        assert hold.status == "ACTIVE"
+        assert stock.stock_status == "HOLD"
+
+        supplier.status = "APPROVED"
+        supplier.partner_type = "CUSTOMER"
+        with pytest.raises(HTTPException, match="不是有效供货方"):
+            asyncio.run(
+                release_quality_hold(
+                    hold_id=hold.id,
+                    payload=payload,
+                    request=request,
+                    current_user=inspector,
+                    db=db,
+                )
+            )
+        assert hold.status == "ACTIVE"
+        assert stock.stock_status == "HOLD"
+
+        supplier.partner_type = "SUPPLIER"
+        released = asyncio.run(
+            release_quality_hold(
+                hold_id=hold.id,
+                payload=payload,
+                request=request,
+                current_user=inspector,
+                db=db,
+            )
+        )
+        assert released.status == "RELEASED"
+        assert stock.stock_status == "AVAILABLE"
     finally:
         db.rollback()
         db.close()

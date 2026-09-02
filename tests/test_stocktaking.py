@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.core.database import SessionLocal
@@ -125,7 +126,7 @@ def _approved_plan(db, context):
     return plan
 
 
-def test_frozen_stock_cannot_be_changed_through_direct_receipt_route():
+def test_direct_stock_receipt_route_is_disabled_even_for_frozen_stock():
     import main  # noqa: F401
 
     db = SessionLocal()
@@ -133,7 +134,7 @@ def test_frozen_stock_cannot_be_changed_through_direct_receipt_route():
         context = _stocktake_context(db)
         _approved_plan(db, context)
         request = Request({"type": "http", "client": ("127.0.0.1", 12345)})
-        with pytest.raises(WorkflowError, match="盘点冻结"):
+        with pytest.raises(HTTPException, match="直接增加批号库存入口已停用") as error:
             asyncio.run(
                 receive_batch_stock(
                     payload=BatchStockReceipt(
@@ -148,6 +149,7 @@ def test_frozen_stock_cannot_be_changed_through_direct_receipt_route():
                     db=db,
                 )
             )
+        assert error.value.status_code == 409
     finally:
         db.rollback()
         db.close()

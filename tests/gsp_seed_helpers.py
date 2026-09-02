@@ -31,6 +31,7 @@ def add_verified_partner_evidence(
                 file_ref=f"test://partner/{partner.id}/{document_type}",
                 person_name="测试授权人员" if authorized else None,
                 person_role="授权业务员" if authorized else None,
+                created_by=verifier_id,
                 verified_by=verifier_id,
                 verified_at=utc_now(),
                 status="VERIFIED",

@@ -17,7 +17,7 @@ automated tests, controlled-operation scripts, and validation design material. T
 Compatibility-period WMS endpoints remain under `/api`; controlled pharmaceutical workflows are under `/api/gsp`.
 See the [repository split guide](docs/REPOSITORY_SPLIT.en.md) for release and deployment boundaries.
 
-Current version: `0.13.0`. This is an engineering baseline for further development and validation, not a
+Current version: `0.15.0`. This is an engineering baseline for further development and validation, not a
 commercial product approved for direct use in regulated pharmaceutical operations.
 
 > Software alone does not demonstrate GSP compliance. Production release also requires approved procedures,
@@ -39,12 +39,15 @@ The software baseline now covers:
 - append-only audit, electronic-signature, and environmental-reading hash chains with PostgreSQL serialization;
 - deterministic transactional outbox claims, retry, dead-letter handling, and signed replay;
 - persistent account/IP login protection, production readiness checks, backup evidence, and restore governance.
+- partner periodic review, quality-system surveys, risk/CAPA, audits, deviations, complaints, incidents and adverse reactions;
+- training and job assessment, controlled-document lifecycle, and facility/equipment qualification and calibration.
 
-Three items are intentionally excluded from this delivery:
+Four items are intentionally deferred from this delivery:
 
-1. connection to the physical temperature/humidity gateway and external alert channels;
-2. the production JZT adapter and formal joint integration testing;
-3. the complete approved CSV validation package.
+1. the formal pharmaceutical traceability-platform adapter;
+2. connection to the physical temperature/humidity gateway and external alert channels;
+3. the production JZT adapter and formal joint integration testing;
+4. the complete approved CSV validation package.
 
 ## LDAP Transport Modes
 

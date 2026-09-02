@@ -43,6 +43,7 @@ class DrugProfileUpsert(ChangeReason):
     max_temperature: Optional[float] = None
     is_prescription: bool = True
     is_special_controlled: bool = False
+    regulatory_category: str = "GENERAL"
     traceability_required: bool = True
     registration_valid_to: Optional[date] = None
     registration_document_ref: str = Field(..., min_length=3, max_length=500)
@@ -65,6 +66,7 @@ class DrugProfileResponse(OrmModel):
     max_temperature: Optional[float]
     is_prescription: bool
     is_special_controlled: bool
+    regulatory_category: str
     traceability_required: bool
     status: str
     registration_valid_to: Optional[date]
@@ -101,6 +103,9 @@ class PartnerResponse(OrmModel):
     quality_agreement_valid_to: Optional[date]
     status: str
     suspension_reason: Optional[str]
+    created_by: int
+    approved_by: Optional[int]
+    approved_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
 
@@ -129,6 +134,7 @@ class PartnerDocumentResponse(OrmModel):
     file_size_bytes: Optional[int]
     person_name: Optional[str]
     person_role: Optional[str]
+    created_by: int
     verified_by: Optional[int]
     verified_at: Optional[datetime]
     status: str
@@ -239,6 +245,14 @@ class CurrentUserRolesResponse(BaseModel):
     user_id: int
     roles: list[str]
     assignments: list[EffectiveRoleAssignmentResponse]
+
+
+class UserDirectoryItem(OrmModel):
+    """Minimal user reference exposed to authorized GSP quality workflows."""
+
+    id: int
+    username: str
+    full_name: Optional[str]
 
 
 class AuditEventResponse(OrmModel):

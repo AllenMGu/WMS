@@ -120,6 +120,7 @@ def test_catalog_queries_supply_frontend_read_models_and_filters():
             valid_to=date.today() + timedelta(days=365),
             file_ref=f"internal://partner/{suffix}",
             status="VERIFIED",
+            created_by=actor.id,
         )
         db.add_all([profile, batch, document])
         db.flush()
