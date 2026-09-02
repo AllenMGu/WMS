@@ -41,6 +41,7 @@ flowchart TB
 | Environment | `app/gsp/environment/` | Device approval, assignments, readings, alarms and deviations |
 | Electronic signature | `app/gsp/electronic_signature/` | Reauthentication, one-time challenges and signature chain |
 | Quality-system governance | `app/gsp/quality_system/` | Partner review, risk/CAPA, quality events, training, document control, equipment qualification and regulated scope |
+| Legacy GSP archive | `app/gsp/legacy_archive/` | Controlled import, digest verification, independent reconciliation, immutable search and export |
 | Operational compliance | `app/gsp/operations/` | Secret rotation, backup evidence and restore exercises |
 | Compatibility WMS | `app/legacy.py` | Transitional legacy API; further decomposition remains desirable |
 | Traceability adapter | planned independent adapter | Deferred until the formal platform protocol and code scheme are confirmed |

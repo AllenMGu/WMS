@@ -16,6 +16,8 @@ from app.gsp.electronic_signature.router import router as electronic_signature_r
 from app.gsp.environment import models as environment_models  # noqa: F401
 from app.gsp.environment.router import router as environment_router
 from app.gsp.integration_router import router as integration_router
+from app.gsp.legacy_archive import models as legacy_archive_models  # noqa: F401
+from app.gsp.legacy_archive.router import router as legacy_archive_router
 from app.gsp.maintenance.router import router as maintenance_router
 from app.gsp.operations import models as operations_models  # noqa: F401 - registers tables
 from app.gsp.operations.router import router as operations_router
@@ -32,7 +34,7 @@ from app.gsp.transport.router import router as transport_router
 from app.legacy import app
 
 app.title = "药品GSP仓储与质量管理系统 API"
-app.version = "0.15.0"
+app.version = "0.16.0"
 app.description = (
     "WMS兼容接口与独立GSP质量域。GSP接口默认位于 /api/gsp；对接九州通等外部平台时通过集成出站箱解耦。"
 )
@@ -49,6 +51,7 @@ app.include_router(transport_router, prefix="/api")
 app.include_router(environment_router, prefix="/api")
 app.include_router(electronic_signature_router, prefix="/api")
 app.include_router(integration_router, prefix="/api")
+app.include_router(legacy_archive_router, prefix="/api")
 
 if settings.auto_create_schema:
     # Existing deployments keep their current start-up behavior.  Controlled

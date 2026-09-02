@@ -21,13 +21,14 @@ The authoritative regulatory references are listed in the [Chinese matrix](GSP_G
 | P0 | Quality holds | Holds rechecked across allocation, picking, review, shipment and affected environmental events | End-to-end execution with company deviation/recall cases |
 | P0 | Audit trail and signatures | Serialized immutable chains, scheduled verification evidence, reauthentication and request-bound one-time signatures | Approved signature meanings and target LDAP failure/timeout/replay/concurrency tests |
 | P0 | Backup and recovery | Self-checking backup, automatic evidence registration, offsite reference, failure evidence and governed restore exercise | Real media, alerting, scheduling and first independent restore exercise |
+| P0 | Legacy GSP history | Controlled batches, manifest/mapping versions, package and record digests, separated validation, idempotent import, independent count reconciliation, immutable search, print and JSONL export | Approve real mappings, cleaning and retention; execute PQ for integrity, readability, retrieval, export, access, restore and media lifecycle |
 | P1 | Shipping and traceability | FEFO, packing, box/trace-code quantities, independent review and shipment decrement | Approved packing SOP and formal traceability-platform protocol |
 | P1 | Environment | Device approval, assignments, readings, alarms, holds, deviation/CAPA decisions and reading chains | Physical gateway, alert channels, mapping, calibration, offline replay and time synchronization |
 | P1 | Returns, recalls and disposition | Quarantine, independent inspection, recall timelines, recovery reconciliation, destruction and purchase returns | Approved calendar, reporting process and retention policy |
 | P1 | Transport | Carrier evidence, vehicles/drivers, transit events, exceptions, delivery evidence and independent closure | Real carrier migration and mobile-operation PQ |
 | P1 | JZT integration | Deterministic outbox, concurrent claims, retry, dead letter and signed replay | Formal adapter, joint testing, reconciliation and replay tests |
 | P1 | Stocktaking | Automatic scope, freeze, blind count, variance/CAPA, controlled adjustment and immutable print evidence | Approved stocktake SOP and on-site PQ execution |
-| P1 | Quality-system governance | Partner periodic reviews and surveys, risk/CAPA, audits, deviations, quality information, complaints/incidents/adverse reactions, training/job assessment, controlled-document recall, and equipment qualification/calibration with failure lockout | Approved company procedures, classifications, templates and retention; legacy-record migration and on-site PQ |
+| P1 | Quality-system governance | Partner reviews, risk/CAPA, owner-only CAPA/training tasks, audits, deviations, complaints/incidents/adverse reactions, controlled-document recall, and equipment qualification/calibration | Approved company procedures, classifications, templates, retention and on-site PQ |
 | P2 | CSV | Validation-plan skeleton and automated engineering gates | Complete VP/URS/RA/FS/DS/RTM/IQ/OQ/PQ/report/release package |
 
 ## Current Release Decision

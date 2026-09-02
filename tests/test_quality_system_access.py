@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.database import SessionLocal, get_db
 from app.core.time import utc_now
 from app.gsp.models import GspRoleAssignment
-from app.gsp.quality_system.models import GspTrainingRecord
+from app.gsp.quality_system.models import GspCapaAction, GspQualityRisk, GspTrainingRecord
 from app.legacy import User, UserRole, get_current_user
 
 
@@ -43,6 +43,8 @@ def test_quality_reads_are_restricted_while_trainees_can_read_their_own_records(
     current = {}
     users: list[User] = []
     training_ids: list[int] = []
+    capa_ids: list[int] = []
+    risk_ids: list[int] = []
 
     async def override_current_user():
         return current["user"]
@@ -83,8 +85,51 @@ def test_quality_reads_are_restricted_while_trainees_can_read_their_own_records(
             ),
         ]
         db.add_all(records)
+        risk = GspQualityRisk(
+            risk_no=f"ACCESS-RISK-{uuid4().hex[:8]}",
+            category="PROCESS",
+            source_type="SELF_INSPECTION",
+            title="本人任务访问范围测试",
+            description="验证普通岗位只能读取本人 CAPA",
+            initial_likelihood=2,
+            initial_severity=2,
+            initial_detectability=2,
+            initial_rpn=8,
+            controls="限制本人查询",
+            owner_id=trainee.id,
+            review_due_date=date.today() + timedelta(days=30),
+            status="DRAFT",
+            created_by=auditor.id,
+        )
+        db.add(risk)
+        db.flush()
+        capas = [
+            GspCapaAction(
+                action_no=f"SELF-CAPA-{uuid4().hex[:8]}",
+                risk_id=risk.id,
+                action_type="CORRECTIVE",
+                description="本人负责措施",
+                owner_id=trainee.id,
+                due_date=date.today() + timedelta(days=7),
+                status="OPEN",
+                created_by=auditor.id,
+            ),
+            GspCapaAction(
+                action_no=f"OTHER-CAPA-{uuid4().hex[:8]}",
+                risk_id=risk.id,
+                action_type="PREVENTIVE",
+                description="他人负责措施",
+                owner_id=auditor.id,
+                due_date=date.today() + timedelta(days=7),
+                status="OPEN",
+                created_by=auditor.id,
+            ),
+        ]
+        db.add_all(capas)
         db.commit()
         training_ids.extend(record.id for record in records)
+        risk_ids.append(risk.id)
+        capa_ids.extend(capa.id for capa in capas)
 
         client = TestClient(app)
         current["user"] = trainee
@@ -94,6 +139,10 @@ def test_quality_reads_are_restricted_while_trainees_can_read_their_own_records(
         own = client.get("/api/gsp/quality-system/training/me")
         assert own.status_code == 200
         assert [item["user_id"] for item in own.json()] == [trainee.id]
+        assert client.get("/api/gsp/quality-system/capas").status_code == 403
+        own_capas = client.get("/api/gsp/quality-system/capas/me")
+        assert own_capas.status_code == 200
+        assert [item["owner_id"] for item in own_capas.json()] == [trainee.id]
         assert client.get("/api/gsp/reference/users").status_code == 403
 
         current["user"] = auditor
@@ -111,6 +160,10 @@ def test_quality_reads_are_restricted_while_trainees_can_read_their_own_records(
         app.dependency_overrides.pop(get_current_user, None)
         app.dependency_overrides.pop(get_db, None)
         db.rollback()
+        if capa_ids:
+            db.query(GspCapaAction).filter(GspCapaAction.id.in_(capa_ids)).delete(synchronize_session=False)
+        if risk_ids:
+            db.query(GspQualityRisk).filter(GspQualityRisk.id.in_(risk_ids)).delete(synchronize_session=False)
         if training_ids:
             db.query(GspTrainingRecord).filter(GspTrainingRecord.id.in_(training_ids)).delete(
                 synchronize_session=False

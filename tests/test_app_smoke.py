@@ -38,6 +38,9 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/gsp/operations/recovery-drills/{drill_id}/execute" in paths
     assert "/api/gsp/operations/recovery-drills/{drill_id}/verify" in paths
     assert "/api/gsp/quality-system/training/me" in paths
+    assert "/api/gsp/quality-system/capas/me" in paths
+    assert "/api/gsp/legacy-archive/batches" in paths
+    assert "/api/gsp/legacy-archive/records" in paths
     assert "/api/gsp/electronic-signatures/challenges" in paths
     assert "/api/gsp/electronic-signatures/verify-chain/all" in paths
     assert "/health" in paths

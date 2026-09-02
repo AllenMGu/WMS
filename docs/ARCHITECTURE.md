@@ -39,6 +39,7 @@ flowchart TB
 | 温湿度监测 | `app/gsp/environment/` | 已独立，覆盖校准设备、仓库/运输监测分配、不可变读数与告警偏差 |
 | 电子签名 | `app/gsp/electronic_signature/` | 已独立，覆盖身份再确认、短时挑战、关键操作门禁与不可变签名链 |
 | 质量体系管理 | `app/gsp/quality_system/` | 已独立，覆盖年度评审、风险/CAPA、质量事件、培训考核、受控文件、设备验证校准与专项范围 |
+| 老 GSP 历史归档 | `app/gsp/legacy_archive/` | 已独立，覆盖受控迁移、摘要校验、独立核对、不可变检索与导出 |
 | 通用 WMS | `app/legacy.py` | 兼容运行，仍需继续拆分 |
 | Web 前端 | [`AllenMGu/WMS-frontend`](https://github.com/AllenMGu/WMS-frontend) | 独立部署，当前仅覆盖兼容期旧 WMS |
 | 微信小程序 | [`AllenMGu/WMS-miniprogram`](https://github.com/AllenMGu/WMS-miniprogram) | 原生微信客户端，独立发布 |

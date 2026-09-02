@@ -70,7 +70,7 @@ Closing an alert does not automatically release a quality hold.
 ## 5. Readiness and Audit Verification
 
 - `/health` is liveness only.
-- readiness verifies database access, the expected Alembic revision (`20260826_22`), and operational warnings.
+- readiness verifies database access, the expected Alembic revision (`20260902_24`), and operational warnings.
 - scheduled audit-chain verification persists event count, break position, result, and evidence reference.
 - production supervisors should restart failed processes and alert on readiness failure, timer failure, outbox
   backlog, backup evidence failure, and chain-verification failure.

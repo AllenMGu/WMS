@@ -17,7 +17,7 @@ automated tests, controlled-operation scripts, and validation design material. T
 Compatibility-period WMS endpoints remain under `/api`; controlled pharmaceutical workflows are under `/api/gsp`.
 See the [repository split guide](docs/REPOSITORY_SPLIT.en.md) for release and deployment boundaries.
 
-Current version: `0.15.0`. This is an engineering baseline for further development and validation, not a
+Current version: `0.16.0`. This is an engineering baseline for further development and validation, not a
 commercial product approved for direct use in regulated pharmaceutical operations.
 
 > Software alone does not demonstrate GSP compliance. Production release also requires approved procedures,
@@ -41,6 +41,9 @@ The software baseline now covers:
 - persistent account/IP login protection, production readiness checks, backup evidence, and restore governance.
 - partner periodic review, quality-system surveys, risk/CAPA, audits, deviations, complaints, incidents and adverse reactions;
 - training and job assessment, controlled-document lifecycle, and facility/equipment qualification and calibration.
+- owner-only CAPA task retrieval and evidence submission, followed by independent quality verification;
+- controlled legacy-GSP archive batches with mapping versions, digest verification, independent reconciliation,
+  immutable searchable records, and JSONL export.
 
 Four items are intentionally deferred from this delivery:
 
