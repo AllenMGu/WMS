@@ -16,6 +16,8 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/gsp/roles/{assignment_id}/revoke" in paths
     assert "/api/gsp/partners/{partner_id}/documents" in paths
     assert "/api/gsp/partners/{partner_id}/documents/{document_id}/verify" in paths
+    assert "/api/gsp/partners/{partner_id}/products" in paths
+    assert "/api/gsp/partners/{partner_id}/products/{authorization_id}/approve" in paths
     assert "/api/gsp/quality-holds" in paths
     assert "/api/gsp/stocktaking/plans" in paths
     assert "/api/gsp/procurement/orders" in paths
@@ -38,6 +40,9 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/gsp/operations/recovery-drills/{drill_id}/execute" in paths
     assert "/api/gsp/operations/recovery-drills/{drill_id}/verify" in paths
     assert "/api/gsp/quality-system/training/me" in paths
+    assert "/api/gsp/quality-system/capas/me" in paths
+    assert "/api/gsp/legacy-archive/batches" in paths
+    assert "/api/gsp/legacy-archive/records" in paths
     assert "/api/gsp/electronic-signatures/challenges" in paths
     assert "/api/gsp/electronic-signatures/verify-chain/all" in paths
     assert "/health" in paths

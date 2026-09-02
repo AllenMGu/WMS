@@ -33,7 +33,11 @@ from app.gsp.procurement_receiving.schemas import (
     ReceiptInspection,
     ReceiptSampling,
 )
-from app.gsp.qualification import evaluate_partner_evidence, evaluate_product_evidence
+from app.gsp.qualification import (
+    evaluate_partner_evidence,
+    evaluate_product_evidence,
+    evaluate_supplier_product_authorization,
+)
 from app.gsp.quality_disposition.service import register_rejected_material
 from app.gsp.snapshots import model_snapshot
 from app.gsp.stocktaking.service import ensure_stock_not_frozen
@@ -80,20 +84,14 @@ def _qualified_master_data(
     supplier_id: int,
     goods_ids: set[int],
 ) -> tuple[GspBusinessPartner, dict[int, GspDrugProfile]]:
-    supplier = (
-        db.query(GspBusinessPartner)
-        .filter(GspBusinessPartner.id == supplier_id)
-        .first()
-    )
+    supplier = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == supplier_id).first()
     if not supplier or supplier.partner_type not in {"SUPPLIER", "BOTH"}:
         raise WorkflowError(409, "采购订单必须关联已建档的供货方")
 
     supplier_result = evaluate_partner_evidence(db, supplier)
     profiles = {
         profile.goods_id: profile
-        for profile in db.query(GspDrugProfile)
-        .filter(GspDrugProfile.goods_id.in_(goods_ids))
-        .all()
+        for profile in db.query(GspDrugProfile).filter(GspDrugProfile.goods_id.in_(goods_ids)).all()
     }
     findings = _finding_dicts(supplier_result)
     for goods_id in sorted(goods_ids):
@@ -108,6 +106,12 @@ def _qualified_master_data(
             continue
         result = evaluate_product_evidence(db, profile)
         findings.extend(_finding_dicts(result))
+        authorization_result = evaluate_supplier_product_authorization(
+            db,
+            supplier_id=supplier_id,
+            goods_id=goods_id,
+        )
+        findings.extend(_finding_dicts(authorization_result))
     if findings:
         raise WorkflowError(409, "供货方或经营品种不满足 GSP 采购条件", findings)
     return supplier, profiles
@@ -368,9 +372,7 @@ def create_receipt(
         order_item.received_quantity += line.quantity
 
     db.flush()
-    all_received = all(
-        item.received_quantity == item.ordered_quantity for item in order_items.values()
-    )
+    all_received = all(item.received_quantity == item.ordered_quantity for item in order_items.values())
     order.status = "RECEIVED" if all_received else "PARTIALLY_RECEIVED"
     enqueue_integration_message(
         db,
@@ -430,20 +432,10 @@ def inspect_receipt_item(
 
     batch = db.query(GspDrugBatch).filter(GspDrugBatch.id == item.batch_id).first()
     order_item = (
-        db.query(GspPurchaseOrderItem)
-        .filter(GspPurchaseOrderItem.id == item.purchase_order_item_id)
-        .first()
+        db.query(GspPurchaseOrderItem).filter(GspPurchaseOrderItem.id == item.purchase_order_item_id).first()
     )
-    order = (
-        db.query(GspPurchaseOrder)
-        .filter(GspPurchaseOrder.id == order_item.purchase_order_id)
-        .first()
-    )
-    profile = (
-        db.query(GspDrugProfile)
-        .filter(GspDrugProfile.goods_id == order_item.goods_id)
-        .first()
-    )
+    order = db.query(GspPurchaseOrder).filter(GspPurchaseOrder.id == order_item.purchase_order_id).first()
+    profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == order_item.goods_id).first()
     _qualified_master_data(
         db,
         supplier_id=order.supplier_id,
@@ -460,14 +452,12 @@ def inspect_receipt_item(
             or not item.temperature_record_ref
         ):
             raise WorkflowError(409, "冷藏/冷冻药品缺少完整运输温度证据")
-        if (
-            profile.min_temperature is not None
-            and item.transport_temperature_min < Decimal(str(profile.min_temperature))
+        if profile.min_temperature is not None and item.transport_temperature_min < Decimal(
+            str(profile.min_temperature)
         ):
             raise WorkflowError(409, "运输最低温度超出品种允许范围")
-        if (
-            profile.max_temperature is not None
-            and item.transport_temperature_max > Decimal(str(profile.max_temperature))
+        if profile.max_temperature is not None and item.transport_temperature_max > Decimal(
+            str(profile.max_temperature)
         ):
             raise WorkflowError(409, "运输最高温度超出品种允许范围")
 
@@ -567,9 +557,7 @@ def inspect_receipt_item(
             order.status = "COMPLETED"
 
     event_type = (
-        "RECEIPT_ITEM_ACCEPTED"
-        if payload.rejected_quantity == 0
-        else "RECEIPT_ITEM_INSPECTED_WITH_REJECTION"
+        "RECEIPT_ITEM_ACCEPTED" if payload.rejected_quantity == 0 else "RECEIPT_ITEM_INSPECTED_WITH_REJECTION"
     )
     enqueue_integration_message(
         db,
@@ -653,11 +641,7 @@ def create_receipt_print_record(
     if receipt is None:
         raise WorkflowError(404, "收货单不存在")
     snapshot = receipt_payload(db, receipt)
-    order = (
-        db.query(GspPurchaseOrder)
-        .filter(GspPurchaseOrder.id == receipt.purchase_order_id)
-        .first()
-    )
+    order = db.query(GspPurchaseOrder).filter(GspPurchaseOrder.id == receipt.purchase_order_id).first()
     snapshot["purchase_order_no"] = order.order_no if order else None
     snapshot["template_version"] = payload.template_version
     snapshot["copy_no"] = payload.copy_no

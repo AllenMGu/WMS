@@ -140,6 +140,38 @@ class PartnerDocumentResponse(OrmModel):
     status: str
 
 
+class SupplierProductAuthorizationCreate(ChangeReason):
+    goods_id: int = Field(..., gt=0)
+    authorization_ref: str = Field(..., min_length=3, max_length=500)
+    authorization_sha256: str | None = Field(None, pattern="^[0-9a-f]{64}$")
+    authorization_size_bytes: int | None = Field(None, gt=0)
+    scope_description: str = Field(..., min_length=3, max_length=500)
+    valid_from: date
+    valid_to: date
+
+
+class SupplierProductAuthorizationResponse(OrmModel):
+    id: int
+    supplier_id: int
+    goods_id: int
+    authorization_ref: str
+    authorization_sha256: str | None
+    authorization_size_bytes: int | None
+    scope_description: str
+    valid_from: date
+    valid_to: date
+    status: str
+    created_by: int
+    created_at: datetime
+    updated_by: int
+    updated_at: datetime
+    approved_by: int | None
+    approved_at: datetime | None
+    suspended_by: int | None
+    suspended_at: datetime | None
+    suspension_reason: str | None
+
+
 class BatchCreate(ChangeReason):
     goods_id: int
     batch_no: str

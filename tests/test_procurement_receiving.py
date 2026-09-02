@@ -16,6 +16,7 @@ from app.gsp.models import (
     GspDrugProfile,
     GspPartnerDocument,
     GspQualityHold,
+    GspSupplierProductAuthorization,
 )
 from app.gsp.procurement_receiving.models import GspPurchaseOrderItem, GspReceiptItem
 from app.gsp.procurement_receiving.schemas import (
@@ -105,6 +106,22 @@ def _seed_qualified_purchase_data(db):
     )
     db.add_all([location, supplier, profile])
     db.flush()
+    db.add(
+        GspSupplierProductAuthorization(
+            supplier_id=supplier.id,
+            goods_id=goods.id,
+            authorization_ref="test://supplier-product/purchase",
+            authorization_sha256="a" * 64,
+            authorization_size_bytes=128,
+            scope_description="获准供应本测试药品及规格",
+            valid_from=date.today() - timedelta(days=1),
+            valid_to=date.today() + timedelta(days=365),
+            status="APPROVED",
+            created_by=users[0].id,
+            updated_by=users[0].id,
+            approved_by=users[1].id,
+        )
+    )
     add_verified_partner_evidence(
         db,
         partner=supplier,
@@ -112,6 +129,44 @@ def _seed_qualified_purchase_data(db):
         valid_to=date.today() + timedelta(days=365),
     )
     return users, warehouse, location, goods, supplier
+
+
+def test_purchase_requires_effective_supplier_product_authorization():
+    import main  # noqa: F401
+
+    db = SessionLocal()
+    try:
+        users, warehouse, _, goods, supplier = _seed_qualified_purchase_data(db)
+        authorization = (
+            db.query(GspSupplierProductAuthorization)
+            .filter_by(supplier_id=supplier.id, goods_id=goods.id)
+            .one()
+        )
+        authorization.status = "SUSPENDED"
+        with pytest.raises(WorkflowError) as error:
+            create_purchase_order(
+                db,
+                payload=PurchaseOrderCreate(
+                    order_no=f"PO-BLOCK-{uuid4().hex[:10]}",
+                    supplier_id=supplier.id,
+                    warehouse_id=warehouse.id,
+                    ordered_on=date.today(),
+                    items=[
+                        PurchaseOrderLineCreate(
+                            goods_id=goods.id,
+                            quantity=Decimal("1.000"),
+                            unit="盒",
+                        )
+                    ],
+                    reason="验证未批准供货目录必须阻断",
+                ),
+                actor_id=users[0].id,
+                source_ip="127.0.0.1",
+            )
+        assert error.value.findings[0]["code"] == "SUPPLIER_PRODUCT_AUTHORIZATION_NOT_APPROVED"
+    finally:
+        db.rollback()
+        db.close()
 
 
 @pytest.mark.parametrize(
@@ -175,9 +230,7 @@ def test_controlled_purchase_receipt_and_inspection_flow(
         )
         db.flush()
         order_item = (
-            db.query(GspPurchaseOrderItem)
-            .filter(GspPurchaseOrderItem.purchase_order_id == order.id)
-            .one()
+            db.query(GspPurchaseOrderItem).filter(GspPurchaseOrderItem.purchase_order_id == order.id).one()
         )
 
         receipt = create_receipt(
@@ -205,9 +258,7 @@ def test_controlled_purchase_receipt_and_inspection_flow(
             source_ip="127.0.0.1",
         )
         db.flush()
-        receipt_item = (
-            db.query(GspReceiptItem).filter(GspReceiptItem.receipt_id == receipt.id).one()
-        )
+        receipt_item = db.query(GspReceiptItem).filter(GspReceiptItem.receipt_id == receipt.id).one()
         record_receipt_sampling(
             db,
             receipt_id=receipt.id,
@@ -249,9 +300,7 @@ def test_controlled_purchase_receipt_and_inspection_flow(
             )
         supplier.license_valid_to = date.today() + timedelta(days=365)
         partner_document = (
-            db.query(GspPartnerDocument)
-            .filter(GspPartnerDocument.partner_id == supplier.id)
-            .first()
+            db.query(GspPartnerDocument).filter(GspPartnerDocument.partner_id == supplier.id).first()
         )
         partner_document.valid_to = date.today() - timedelta(days=1)
         with pytest.raises(WorkflowError, match="不满足 GSP"):
@@ -313,7 +362,9 @@ def test_controlled_purchase_receipt_and_inspection_flow(
             )
             assert nonconforming.quantity == rejected_quantity
             assert nonconforming.quality_hold_id is not None
-            assert db.query(GspQualityHold).filter_by(id=nonconforming.quality_hold_id).one().status == "ACTIVE"
+            assert (
+                db.query(GspQualityHold).filter_by(id=nonconforming.quality_hold_id).one().status == "ACTIVE"
+            )
     finally:
         db.close()
 
@@ -337,9 +388,7 @@ def test_gsp_managed_product_cannot_use_legacy_stock_mutation():
         with pytest.raises(HTTPException, match="旧版无批号") as error:
             ensure_not_gsp_managed_goods(db, [goods.id])
         assert error.value.status_code == 409
-        visible_legacy_stock = db.query(Stock).filter(
-            Stock.goods_id.notin_(gsp_managed_goods_query(db))
-        )
+        visible_legacy_stock = db.query(Stock).filter(Stock.goods_id.notin_(gsp_managed_goods_query(db)))
         assert visible_legacy_stock.count() == 0
     finally:
         db.rollback()

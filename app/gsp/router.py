@@ -46,6 +46,7 @@ from app.gsp.models import (
     GspPartnerDocument,
     GspQualityHold,
     GspRoleAssignment,
+    GspSupplierProductAuthorization,
 )
 from app.gsp.operations.models import GspBackupEvidence, GspRecoveryDrill, GspSecretRotation
 from app.gsp.outbox import enqueue_integration_message
@@ -96,6 +97,8 @@ from app.gsp.schemas import (
     RoleGrant,
     RoleReview,
     RoleRevoke,
+    SupplierProductAuthorizationCreate,
+    SupplierProductAuthorizationResponse,
     UserDirectoryItem,
 )
 from app.gsp.snapshots import model_snapshot
@@ -128,6 +131,44 @@ def _snapshot(model) -> dict:
 
 def _findings_detail(result) -> list[dict]:
     return [{"code": item.code, "message": item.message} for item in result.findings]
+
+
+def _invalidate_supplier_product_authorizations(
+    db: Session,
+    *,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+    supplier_id: int | None = None,
+    goods_id: int | None = None,
+) -> None:
+    query = db.query(GspSupplierProductAuthorization).filter(
+        GspSupplierProductAuthorization.status == "APPROVED"
+    )
+    if supplier_id is not None:
+        query = query.filter(GspSupplierProductAuthorization.supplier_id == supplier_id)
+    if goods_id is not None:
+        query = query.filter(GspSupplierProductAuthorization.goods_id == goods_id)
+    for authorization in query.all():
+        before = _snapshot(authorization)
+        authorization.status = "PENDING"
+        authorization.approved_by = None
+        authorization.approved_at = None
+        authorization.updated_by = actor_id
+        authorization.suspended_by = None
+        authorization.suspended_at = None
+        authorization.suspension_reason = None
+        write_audit_event(
+            db,
+            actor_user_id=actor_id,
+            action="SUPPLIER_PRODUCT_AUTHORIZATION_INVALIDATED",
+            entity_type="GspSupplierProductAuthorization",
+            entity_id=str(authorization.id),
+            reason=reason,
+            before_data=before,
+            after_data=_snapshot(authorization),
+            source_ip=source_ip,
+        )
 
 
 @router.get("/compliance/summary")
@@ -180,20 +221,12 @@ async def compliance_summary(
         .count(),
         "pending_sales_orders": db.query(GspSalesOrder)
         .filter(
-            GspSalesOrder.status.in_(
-                ["SUBMITTED", "APPROVED", "ALLOCATED", "PICKED", "PREPARED", "REVIEWED"]
-            )
+            GspSalesOrder.status.in_(["SUBMITTED", "APPROVED", "ALLOCATED", "PICKED", "PREPARED", "REVIEWED"])
         )
         .count(),
-        "pending_outbound_reviews": db.query(GspShipment)
-        .filter(GspShipment.status == "PREPARED")
-        .count(),
-        "pending_carrier_approvals": db.query(GspCarrier)
-        .filter(GspCarrier.status == "PENDING")
-        .count(),
-        "expired_carrier_licenses": db.query(GspCarrier)
-        .filter(GspCarrier.license_valid_to < today)
-        .count(),
+        "pending_outbound_reviews": db.query(GspShipment).filter(GspShipment.status == "PREPARED").count(),
+        "pending_carrier_approvals": db.query(GspCarrier).filter(GspCarrier.status == "PENDING").count(),
+        "expired_carrier_licenses": db.query(GspCarrier).filter(GspCarrier.license_valid_to < today).count(),
         "open_transport_exceptions": db.query(GspTransportException)
         .filter(GspTransportException.status == "PENDING_QUALITY")
         .count(),
@@ -218,9 +251,7 @@ async def compliance_summary(
         "expired_environment_calibrations": db.query(GspEnvironmentDevice)
         .filter(GspEnvironmentDevice.calibration_valid_to < today)
         .count(),
-        "active_environment_assignments_without_reading": db.query(
-            GspEnvironmentAssignment
-        )
+        "active_environment_assignments_without_reading": db.query(GspEnvironmentAssignment)
         .filter(
             GspEnvironmentAssignment.status == "ACTIVE",
             GspEnvironmentAssignment.last_reading_at.is_(None),
@@ -267,12 +298,8 @@ async def compliance_summary(
             GspRecallCompletionReport.id.is_(None),
         )
         .count(),
-        "active_recall_drills": db.query(GspRecallDrill)
-        .filter(GspRecallDrill.status == "ACTIVE")
-        .count(),
-        "failed_recall_drills": db.query(GspRecallDrill)
-        .filter(GspRecallDrill.result == "FAILED")
-        .count(),
+        "active_recall_drills": db.query(GspRecallDrill).filter(GspRecallDrill.status == "ACTIVE").count(),
+        "failed_recall_drills": db.query(GspRecallDrill).filter(GspRecallDrill.result == "FAILED").count(),
         "pending_maintenance_items": db.query(GspMaintenancePlanItem)
         .join(
             GspMaintenancePlan,
@@ -327,9 +354,7 @@ async def compliance_summary(
         "unreviewed_backup_evidence": db.query(GspBackupEvidence)
         .filter(GspBackupEvidence.reviewed_at.is_(None))
         .count(),
-        "failed_backups": db.query(GspBackupEvidence)
-        .filter(GspBackupEvidence.status == "FAILED")
-        .count(),
+        "failed_backups": db.query(GspBackupEvidence).filter(GspBackupEvidence.status == "FAILED").count(),
         "pending_recovery_drills": db.query(GspRecoveryDrill)
         .filter(GspRecoveryDrill.status.in_(["SUBMITTED", "APPROVED", "EXECUTED"]))
         .count(),
@@ -350,9 +375,7 @@ async def compliance_summary(
             GspRecall.status == "ACTIVE",
             GspRecall.notification_due_at < utc_now(),
             GspRecall.id.in_(
-                db.query(GspRecallTarget.recall_id).filter(
-                    GspRecallTarget.notification_status == "PENDING"
-                )
+                db.query(GspRecallTarget.recall_id).filter(GspRecallTarget.notification_status == "PENDING")
             ),
         )
         .count(),
@@ -365,10 +388,7 @@ async def compliance_summary(
         "outstanding_recall_quantity": float(
             db.query(
                 func.coalesce(
-                    func.sum(
-                        GspRecallBatch.target_shipped_quantity
-                        - GspRecallBatch.recovered_quantity
-                    ),
+                    func.sum(GspRecallBatch.target_shipped_quantity - GspRecallBatch.recovered_quantity),
                     0,
                 )
             )
@@ -390,10 +410,16 @@ async def list_compliance_settings(
 @router.post(
     "/compliance/settings/{setting_key}",
     response_model=ComplianceSettingResponse,
-    dependencies=[Depends(require_electronic_signature(
-        "COMPLIANCE_SETTING_SET", "GspComplianceSetting",
-        entity_id_param="setting_key", meaning="APPROVAL",
-    ))],
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "COMPLIANCE_SETTING_SET",
+                "GspComplianceSetting",
+                entity_id_param="setting_key",
+                meaning="APPROVAL",
+            )
+        )
+    ],
 )
 async def set_compliance_setting(
     setting_key: str,
@@ -420,9 +446,7 @@ async def set_compliance_setting(
         <= proposed["MAINTENANCE_SELECTION_DAYS"]
     ):
         raise HTTPException(422, "阈值必须满足停销天数 ≤ 预警天数 ≤ 重点养护选取天数")
-    setting = db.query(GspComplianceSetting).filter(
-        GspComplianceSetting.key == key
-    ).with_for_update().first()
+    setting = db.query(GspComplianceSetting).filter(GspComplianceSetting.key == key).with_for_update().first()
     before = _snapshot(setting) if setting else None
     if setting is None:
         setting = GspComplianceSetting(key=key)
@@ -470,7 +494,11 @@ async def grant_role(
         is not None
     )
     role_value = getattr(current_user.role, "value", current_user.role)
-    if not valid_quality_manager_exists and role_value == "admin" and payload.role.upper() != "QUALITY_MANAGER":
+    if (
+        not valid_quality_manager_exists
+        and role_value == "admin"
+        and payload.role.upper() != "QUALITY_MANAGER"
+    ):
         raise HTTPException(status_code=400, detail="首次GSP授权必须建立QUALITY_MANAGER岗位")
     assignment = grant_gsp_role(
         db,
@@ -538,10 +566,16 @@ async def list_roles(
 
 @router.post(
     "/roles/{assignment_id}/review",
-    dependencies=[Depends(require_electronic_signature(
-        "ROLE_ASSIGNMENT_REVIEW", "GspRoleAssignment",
-        entity_id_param="assignment_id", meaning="REVIEW",
-    ))],
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "ROLE_ASSIGNMENT_REVIEW",
+                "GspRoleAssignment",
+                entity_id_param="assignment_id",
+                meaning="REVIEW",
+            )
+        )
+    ],
 )
 async def review_role(
     assignment_id: int,
@@ -566,10 +600,16 @@ async def review_role(
 
 @router.post(
     "/roles/{assignment_id}/revoke",
-    dependencies=[Depends(require_electronic_signature(
-        "ROLE_ASSIGNMENT_REVOKE", "GspRoleAssignment",
-        entity_id_param="assignment_id", meaning="RESPONSIBILITY",
-    ))],
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "ROLE_ASSIGNMENT_REVOKE",
+                "GspRoleAssignment",
+                entity_id_param="assignment_id",
+                meaning="RESPONSIBILITY",
+            )
+        )
+    ],
 )
 async def revoke_role(
     assignment_id: int,
@@ -643,10 +683,16 @@ async def list_partners(
 @router.post(
     "/partners/{partner_id}/approve",
     response_model=PartnerResponse,
-    dependencies=[Depends(require_electronic_signature(
-        "PARTNER_APPROVE", "GspBusinessPartner",
-        entity_id_param="partner_id", meaning="APPROVAL",
-    ))],
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "PARTNER_APPROVE",
+                "GspBusinessPartner",
+                entity_id_param="partner_id",
+                meaning="APPROVAL",
+            )
+        )
+    ],
 )
 async def approve_partner(
     partner_id: int,
@@ -740,14 +786,19 @@ async def create_partner_document(
         raise HTTPException(422, "资质文件类型不在批准清单中")
     if payload.valid_to < date.today():
         raise HTTPException(422, "不能录入已过期的资质文件")
-    if document_type in AUTHORIZED_DOCUMENTS and (
-        not payload.person_name or not payload.person_role
-    ):
+    if document_type in AUTHORIZED_DOCUMENTS and (not payload.person_name or not payload.person_role):
         raise HTTPException(422, "授权文件必须填写授权人员姓名和岗位")
     if partner.status == "APPROVED":
         partner.status = "PENDING"
         partner.approved_by = None
         partner.approved_at = None
+        _invalidate_supplier_product_authorizations(
+            db,
+            supplier_id=partner.id,
+            actor_id=current_user.id,
+            reason=f"供货方资质变更：{payload.reason}",
+            source_ip=_source_ip(request),
+        )
     document = GspPartnerDocument(
         partner_id=partner.id,
         document_type=document_type,
@@ -782,10 +833,16 @@ async def create_partner_document(
 @router.post(
     "/partners/{partner_id}/documents/{document_id}/verify",
     response_model=PartnerDocumentResponse,
-    dependencies=[Depends(require_electronic_signature(
-        "PARTNER_DOCUMENT_VERIFY", "GspPartnerDocument",
-        entity_id_param="document_id", meaning="REVIEW",
-    ))],
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "PARTNER_DOCUMENT_VERIFY",
+                "GspPartnerDocument",
+                entity_id_param="document_id",
+                meaning="REVIEW",
+            )
+        )
+    ],
 )
 async def verify_partner_document(
     partner_id: int,
@@ -834,10 +891,16 @@ async def verify_partner_document(
 @router.post(
     "/partners/{partner_id}/suspend",
     response_model=PartnerResponse,
-    dependencies=[Depends(require_electronic_signature(
-        "PARTNER_SUSPEND", "GspBusinessPartner",
-        entity_id_param="partner_id", meaning="RESPONSIBILITY",
-    ))],
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "PARTNER_SUSPEND",
+                "GspBusinessPartner",
+                entity_id_param="partner_id",
+                meaning="RESPONSIBILITY",
+            )
+        )
+    ],
 )
 async def suspend_partner(
     partner_id: int,
@@ -866,6 +929,244 @@ async def suspend_partner(
     db.commit()
     db.refresh(partner)
     return partner
+
+
+@router.get(
+    "/partners/{partner_id}/products",
+    response_model=list[SupplierProductAuthorizationResponse],
+)
+async def list_supplier_products(
+    partner_id: int,
+    status: str | None = None,
+    effective_only: bool = False,
+    current_user: User = Depends(require_any_gsp_role),
+    db: Session = Depends(get_db),
+):
+    partner = db.get(GspBusinessPartner, partner_id)
+    if partner is None or partner.partner_type not in {"SUPPLIER", "BOTH"}:
+        raise HTTPException(404, "供货方不存在")
+    query = db.query(GspSupplierProductAuthorization).filter(
+        GspSupplierProductAuthorization.supplier_id == partner_id
+    )
+    if status:
+        query = query.filter(GspSupplierProductAuthorization.status == status.upper())
+    if effective_only:
+        today = date.today()
+        query = query.filter(
+            GspSupplierProductAuthorization.status == "APPROVED",
+            GspSupplierProductAuthorization.valid_from <= today,
+            GspSupplierProductAuthorization.valid_to >= today,
+        )
+    authorizations = query.order_by(GspSupplierProductAuthorization.goods_id).all()
+    if not effective_only:
+        return authorizations
+    if not evaluate_partner_evidence(db, partner).qualified:
+        return []
+    effective_authorizations = []
+    for authorization in authorizations:
+        profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == authorization.goods_id).first()
+        if profile and evaluate_product_evidence(db, profile).qualified:
+            effective_authorizations.append(authorization)
+    return effective_authorizations
+
+
+@router.post(
+    "/partners/{partner_id}/products",
+    response_model=SupplierProductAuthorizationResponse,
+    status_code=201,
+)
+async def upsert_supplier_product(
+    partner_id: int,
+    payload: SupplierProductAuthorizationCreate,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES, "PROCUREMENT")),
+    db: Session = Depends(get_db),
+):
+    partner = db.get(GspBusinessPartner, partner_id)
+    if partner is None or partner.partner_type not in {"SUPPLIER", "BOTH"}:
+        raise HTTPException(404, "供货方不存在")
+    profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == payload.goods_id).first()
+    if profile is None:
+        raise HTTPException(409, "必须先建立药品品种质量档案")
+    if payload.valid_to < payload.valid_from:
+        raise HTTPException(422, "供货授权有效期结束日期不能早于开始日期")
+    if payload.valid_to < date.today():
+        raise HTTPException(422, "不能录入已经过期的供货品种授权")
+    authorization = (
+        db.query(GspSupplierProductAuthorization)
+        .filter(
+            GspSupplierProductAuthorization.supplier_id == partner_id,
+            GspSupplierProductAuthorization.goods_id == payload.goods_id,
+        )
+        .first()
+    )
+    before = _snapshot(authorization) if authorization else None
+    values = payload.model_dump(exclude={"reason", "goods_id"})
+    if authorization is None:
+        authorization = GspSupplierProductAuthorization(
+            supplier_id=partner_id,
+            goods_id=payload.goods_id,
+            **values,
+            status="PENDING",
+            created_by=current_user.id,
+            updated_by=current_user.id,
+        )
+        db.add(authorization)
+    else:
+        for key, value in values.items():
+            setattr(authorization, key, value)
+        authorization.status = "PENDING"
+        authorization.updated_by = current_user.id
+        authorization.approved_by = None
+        authorization.approved_at = None
+        authorization.suspended_by = None
+        authorization.suspended_at = None
+        authorization.suspension_reason = None
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=current_user.id,
+        action="SUPPLIER_PRODUCT_AUTHORIZATION_UPSERTED",
+        entity_type="GspSupplierProductAuthorization",
+        entity_id=str(authorization.id),
+        reason=payload.reason,
+        before_data=before,
+        after_data=_snapshot(authorization),
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    db.refresh(authorization)
+    return authorization
+
+
+@router.post(
+    "/partners/{partner_id}/products/{authorization_id}/approve",
+    response_model=SupplierProductAuthorizationResponse,
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "SUPPLIER_PRODUCT_APPROVE",
+                "GspSupplierProductAuthorization",
+                entity_id_param="authorization_id",
+                meaning="APPROVAL",
+            )
+        )
+    ],
+)
+async def approve_supplier_product(
+    partner_id: int,
+    authorization_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    authorization = (
+        db.query(GspSupplierProductAuthorization)
+        .filter(
+            GspSupplierProductAuthorization.id == authorization_id,
+            GspSupplierProductAuthorization.supplier_id == partner_id,
+        )
+        .first()
+    )
+    if authorization is None:
+        raise HTTPException(404, "供应商供货品种关联不存在")
+    if authorization.status != "PENDING":
+        raise HTTPException(409, "只有待审批的供货品种关联可以批准")
+    if authorization.updated_by == current_user.id:
+        raise HTTPException(409, "供货品种关联维护人与批准人必须分离")
+    if not authorization.authorization_sha256 or not authorization.authorization_size_bytes:
+        raise HTTPException(409, "供货授权证据缺少SHA-256或文件大小")
+    today = date.today()
+    if authorization.valid_from > today or authorization.valid_to < today:
+        raise HTTPException(409, "供货品种授权不在有效期内")
+    supplier = db.get(GspBusinessPartner, partner_id)
+    supplier_result = evaluate_partner_evidence(db, supplier)
+    profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == authorization.goods_id).first()
+    product_result = evaluate_product_evidence(db, profile) if profile else None
+    findings = _findings_detail(supplier_result)
+    if product_result is None:
+        findings.append({"code": "PRODUCT_PROFILE_MISSING", "message": "药品质量档案不存在"})
+    else:
+        findings.extend(_findings_detail(product_result))
+    if findings:
+        raise HTTPException(
+            409,
+            {"message": "供应商或品种首营资料不满足关联批准条件", "findings": findings},
+        )
+    before = _snapshot(authorization)
+    authorization.status = "APPROVED"
+    authorization.approved_by = current_user.id
+    authorization.approved_at = utc_now()
+    write_audit_event(
+        db,
+        actor_user_id=current_user.id,
+        action="SUPPLIER_PRODUCT_AUTHORIZATION_APPROVED",
+        entity_type="GspSupplierProductAuthorization",
+        entity_id=str(authorization.id),
+        reason=payload.reason,
+        before_data=before,
+        after_data=_snapshot(authorization),
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    db.refresh(authorization)
+    return authorization
+
+
+@router.post(
+    "/partners/{partner_id}/products/{authorization_id}/suspend",
+    response_model=SupplierProductAuthorizationResponse,
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "SUPPLIER_PRODUCT_SUSPEND",
+                "GspSupplierProductAuthorization",
+                entity_id_param="authorization_id",
+                meaning="RESPONSIBILITY",
+            )
+        )
+    ],
+)
+async def suspend_supplier_product(
+    partner_id: int,
+    authorization_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    authorization = (
+        db.query(GspSupplierProductAuthorization)
+        .filter(
+            GspSupplierProductAuthorization.id == authorization_id,
+            GspSupplierProductAuthorization.supplier_id == partner_id,
+        )
+        .first()
+    )
+    if authorization is None:
+        raise HTTPException(404, "供应商供货品种关联不存在")
+    if authorization.status != "APPROVED":
+        raise HTTPException(409, "只有已批准的供货品种关联可以暂停")
+    before = _snapshot(authorization)
+    authorization.status = "SUSPENDED"
+    authorization.suspended_by = current_user.id
+    authorization.suspended_at = utc_now()
+    authorization.suspension_reason = payload.reason
+    write_audit_event(
+        db,
+        actor_user_id=current_user.id,
+        action="SUPPLIER_PRODUCT_AUTHORIZATION_SUSPENDED",
+        entity_type="GspSupplierProductAuthorization",
+        entity_id=str(authorization.id),
+        reason=payload.reason,
+        before_data=before,
+        after_data=_snapshot(authorization),
+        source_ip=_source_ip(request),
+    )
+    db.commit()
+    db.refresh(authorization)
+    return authorization
 
 
 @router.get("/products", response_model=list[DrugProfileResponse])
@@ -909,6 +1210,13 @@ async def upsert_drug_profile(
     values["regulatory_category"] = regulatory_category
     values["is_special_controlled"] = regulatory_category != "GENERAL"
     if profile:
+        _invalidate_supplier_product_authorizations(
+            db,
+            goods_id=goods_id,
+            actor_id=current_user.id,
+            reason=f"品种质量档案变更：{payload.reason}",
+            source_ip=_source_ip(request),
+        )
         for key, value in values.items():
             setattr(profile, key, value)
         profile.status = "PENDING"
@@ -946,10 +1254,16 @@ async def upsert_drug_profile(
 @router.post(
     "/products/{goods_id}/approve",
     response_model=DrugProfileResponse,
-    dependencies=[Depends(require_electronic_signature(
-        "DRUG_PROFILE_APPROVE", "GspDrugProfile",
-        entity_id_param="goods_id", meaning="APPROVAL",
-    ))],
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "DRUG_PROFILE_APPROVE",
+                "GspDrugProfile",
+                entity_id_param="goods_id",
+                meaning="APPROVAL",
+            )
+        )
+    ],
 )
 async def approve_drug_profile(
     goods_id: int,
@@ -1036,10 +1350,16 @@ async def create_batch(
 @router.post(
     "/batches/{batch_id}/accept",
     response_model=BatchResponse,
-    dependencies=[Depends(require_electronic_signature(
-        "BATCH_ACCEPT", "GspDrugBatch",
-        entity_id_param="batch_id", meaning="CONFIRMATION",
-    ))],
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "BATCH_ACCEPT",
+                "GspDrugBatch",
+                entity_id_param="batch_id",
+                meaning="CONFIRMATION",
+            )
+        )
+    ],
 )
 async def accept_batch(
     batch_id: int,
@@ -1148,10 +1468,16 @@ async def create_quality_hold(
 @router.post(
     "/quality-holds/{hold_id}/release",
     response_model=QualityHoldResponse,
-    dependencies=[Depends(require_electronic_signature(
-        "QUALITY_HOLD_RELEASE", "GspQualityHold",
-        entity_id_param="hold_id", meaning="RELEASE",
-    ))],
+    dependencies=[
+        Depends(
+            require_electronic_signature(
+                "QUALITY_HOLD_RELEASE",
+                "GspQualityHold",
+                entity_id_param="hold_id",
+                meaning="RELEASE",
+            )
+        )
+    ],
 )
 async def release_quality_hold(
     hold_id: int,
@@ -1160,12 +1486,7 @@ async def release_quality_hold(
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
-    hold = (
-        db.query(GspQualityHold)
-        .filter(GspQualityHold.id == hold_id)
-        .with_for_update()
-        .first()
-    )
+    hold = db.query(GspQualityHold).filter(GspQualityHold.id == hold_id).with_for_update().first()
     if not hold:
         raise HTTPException(404, "质量锁定记录不存在")
     if hold.status != "ACTIVE":
@@ -1195,12 +1516,7 @@ async def release_quality_hold(
             raise HTTPException(409, "不合格品尚未完成批准处置，不能解除对应质量锁定")
     if hold.initiated_by == current_user.id:
         raise HTTPException(409, "质量锁定发起人不能自行解除，需由另一名质量授权人员复核")
-    batch = (
-        db.query(GspDrugBatch)
-        .filter(GspDrugBatch.id == hold.batch_id)
-        .with_for_update()
-        .first()
-    )
+    batch = db.query(GspDrugBatch).filter(GspDrugBatch.id == hold.batch_id).with_for_update().first()
     if batch is None:
         raise HTTPException(409, "锁定关联批次不存在，不能解除")
     other_holds = (
@@ -1214,16 +1530,14 @@ async def release_quality_hold(
     )
     if not other_holds:
         profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == batch.goods_id).first()
-        partner = db.query(GspBusinessPartner).filter(
-            GspBusinessPartner.id == batch.supplier_id
-        ).first()
+        partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == batch.supplier_id).first()
         if profile is None or partner is None:
             raise HTTPException(409, "批次关联品种或供货方质量档案缺失，不能解除锁定")
         if partner.partner_type not in {"SUPPLIER", "BOTH"}:
             raise HTTPException(409, "批次关联合作方不是有效供货方，不能解除锁定")
-        stop_sale_setting = db.query(GspComplianceSetting).filter(
-            GspComplianceSetting.key == "STOP_SALE_DAYS"
-        ).first()
+        stop_sale_setting = (
+            db.query(GspComplianceSetting).filter(GspComplianceSetting.key == "STOP_SALE_DAYS").first()
+        )
         stop_sale_days = (
             stop_sale_setting.integer_value
             if stop_sale_setting is not None
@@ -1284,36 +1598,16 @@ async def trace_batch(
         raise HTTPException(404, "未找到该批号")
     result = []
     for batch in batches:
-        quality_holds = (
-            db.query(GspQualityHold).filter(GspQualityHold.batch_id == batch.id).all()
-        )
-        sales_returns = (
-            db.query(GspSalesReturnItem)
-            .filter(GspSalesReturnItem.batch_id == batch.id)
-            .all()
-        )
-        recalls = (
-            db.query(GspRecallBatch).filter(GspRecallBatch.batch_id == batch.id).all()
-        )
-        recall_drills = (
-            db.query(GspRecallDrillBatch)
-            .filter(GspRecallDrillBatch.batch_id == batch.id)
-            .all()
-        )
+        quality_holds = db.query(GspQualityHold).filter(GspQualityHold.batch_id == batch.id).all()
+        sales_returns = db.query(GspSalesReturnItem).filter(GspSalesReturnItem.batch_id == batch.id).all()
+        recalls = db.query(GspRecallBatch).filter(GspRecallBatch.batch_id == batch.id).all()
+        recall_drills = db.query(GspRecallDrillBatch).filter(GspRecallDrillBatch.batch_id == batch.id).all()
         maintenance_items = (
-            db.query(GspMaintenancePlanItem)
-            .filter(GspMaintenancePlanItem.batch_id == batch.id)
-            .all()
+            db.query(GspMaintenancePlanItem).filter(GspMaintenancePlanItem.batch_id == batch.id).all()
         )
-        stocktake_items = (
-            db.query(GspStocktakeItem)
-            .filter(GspStocktakeItem.batch_id == batch.id)
-            .all()
-        )
+        stocktake_items = db.query(GspStocktakeItem).filter(GspStocktakeItem.batch_id == batch.id).all()
         nonconforming_records = (
-            db.query(GspNonconformingRecord)
-            .filter(GspNonconformingRecord.batch_id == batch.id)
-            .all()
+            db.query(GspNonconformingRecord).filter(GspNonconformingRecord.batch_id == batch.id).all()
         )
         nonconforming_ids = [item.id for item in nonconforming_records]
         purchase_return_items = (
@@ -1323,13 +1617,9 @@ async def trace_batch(
             if nonconforming_ids
             else []
         )
-        purchase_return_ids = {
-            item.purchase_return_id for item in purchase_return_items
-        }
+        purchase_return_ids = {item.purchase_return_id for item in purchase_return_items}
         purchase_returns = (
-            db.query(GspPurchaseReturn)
-            .filter(GspPurchaseReturn.id.in_(purchase_return_ids))
-            .all()
+            db.query(GspPurchaseReturn).filter(GspPurchaseReturn.id.in_(purchase_return_ids)).all()
             if purchase_return_ids
             else []
         )
@@ -1355,12 +1645,8 @@ async def trace_batch(
                 "recall_drills": [_snapshot(item) for item in recall_drills],
                 "maintenance_items": [_snapshot(item) for item in maintenance_items],
                 "stocktake_items": [_snapshot(item) for item in stocktake_items],
-                "nonconforming_records": [
-                    _snapshot(item) for item in nonconforming_records
-                ],
-                "purchase_returns": [
-                    _snapshot(item) for item in purchase_returns
-                ],
+                "nonconforming_records": [_snapshot(item) for item in nonconforming_records],
+                "purchase_returns": [_snapshot(item) for item in purchase_returns],
                 "audit_events": [
                     _snapshot(item)
                     for item in db.query(GspAuditEvent)
@@ -1466,9 +1752,4 @@ async def list_audit_verifications(
     current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
-    return (
-        db.query(GspAuditVerification)
-        .order_by(GspAuditVerification.verified_at.desc())
-        .limit(limit)
-        .all()
-    )
+    return db.query(GspAuditVerification).order_by(GspAuditVerification.verified_at.desc()).limit(limit).all()

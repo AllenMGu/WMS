@@ -389,6 +389,19 @@ async def list_capas(
     return query.order_by(GspCapaAction.id.desc()).all()
 
 
+@router.get("/capas/me", response_model=list[CapaResponse])
+async def list_my_capas(
+    status: str | None = None,
+    current_user: User = Depends(require_any_gsp_role),
+    db: Session = Depends(get_db),
+):
+    """Return only CAPA actions assigned to the current GSP user."""
+    query = db.query(GspCapaAction).filter(GspCapaAction.owner_id == current_user.id)
+    if status:
+        query = query.filter(GspCapaAction.status == status.upper())
+    return query.order_by(GspCapaAction.due_date, GspCapaAction.id.desc()).all()
+
+
 @router.post("/capas", response_model=CapaResponse, status_code=201)
 async def new_capa(
     payload: CapaCreate,

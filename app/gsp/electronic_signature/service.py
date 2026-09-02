@@ -30,6 +30,11 @@ SIGNATURE_POLICIES: dict[str, tuple[str, str]] = {
     "ROLE_ASSIGNMENT_REVIEW": ("GspRoleAssignment", "REVIEW"),
     "ROLE_ASSIGNMENT_REVOKE": ("GspRoleAssignment", "RESPONSIBILITY"),
     "PARTNER_APPROVE": ("GspBusinessPartner", "APPROVAL"),
+    "SUPPLIER_PRODUCT_APPROVE": ("GspSupplierProductAuthorization", "APPROVAL"),
+    "SUPPLIER_PRODUCT_SUSPEND": (
+        "GspSupplierProductAuthorization",
+        "RESPONSIBILITY",
+    ),
     "PARTNER_DOCUMENT_VERIFY": ("GspPartnerDocument", "REVIEW"),
     "PARTNER_SUSPEND": ("GspBusinessPartner", "RESPONSIBILITY"),
     "DRUG_PROFILE_APPROVE": ("GspDrugProfile", "APPROVAL"),
