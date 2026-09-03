@@ -80,6 +80,7 @@ async def list_signatures(
     entity_type: str | None = None,
     entity_id: str | None = None,
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(require_gsp_roles("AUDITOR", "QUALITY_MANAGER", "QUALITY_REVIEWER")),
     db: Session = Depends(get_db),
 ):
@@ -90,7 +91,7 @@ async def list_signatures(
         query = query.filter(GspElectronicSignature.entity_type == entity_type)
     if entity_id:
         query = query.filter(GspElectronicSignature.entity_id == entity_id)
-    return query.order_by(GspElectronicSignature.id.desc()).limit(limit).all()
+    return query.order_by(GspElectronicSignature.id.desc()).offset(offset).limit(limit).all()
 
 
 @router.get("/{signature_ref}/verify", response_model=SignatureVerificationResponse)

@@ -104,6 +104,7 @@ async def create_carrier_record(
 async def list_carriers(
     status: str | None = None,
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(
         require_gsp_roles("TRANSPORT_COORDINATOR", "AUDITOR", *QUALITY_ROLES)
     ),
@@ -112,7 +113,7 @@ async def list_carriers(
     query = db.query(GspCarrier)
     if status:
         query = query.filter(GspCarrier.status == status)
-    return query.order_by(GspCarrier.id.desc()).limit(limit).all()
+    return query.order_by(GspCarrier.id.desc()).offset(offset).limit(limit).all()
 
 
 @router.get(
@@ -408,6 +409,7 @@ async def list_tasks(
     shipment_id: int | None = Query(None, gt=0),
     carrier_id: int | None = Query(None, gt=0),
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(
         require_gsp_roles("TRANSPORT_COORDINATOR", "AUDITOR", *QUALITY_ROLES)
     ),
@@ -420,7 +422,7 @@ async def list_tasks(
         query = query.filter(GspTransportTask.shipment_id == shipment_id)
     if carrier_id:
         query = query.filter(GspTransportTask.carrier_id == carrier_id)
-    return query.order_by(GspTransportTask.id.desc()).limit(limit).all()
+    return query.order_by(GspTransportTask.id.desc()).offset(offset).limit(limit).all()
 
 
 @router.get("/tasks/{task_id}", response_model=TransportTaskResponse)

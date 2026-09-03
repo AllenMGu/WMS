@@ -1870,6 +1870,7 @@ async def list_audit_events(
     entity_type: str | None = None,
     entity_id: str | None = None,
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
@@ -1878,7 +1879,12 @@ async def list_audit_events(
         query = query.filter(GspAuditEvent.entity_type == entity_type)
     if entity_id:
         query = query.filter(GspAuditEvent.entity_id == entity_id)
-    return query.order_by(GspAuditEvent.occurred_at.desc()).limit(limit).all()
+    return (
+        query.order_by(GspAuditEvent.occurred_at.desc(), GspAuditEvent.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.get("/audit-events/verify")
@@ -1913,7 +1919,14 @@ async def create_audit_verification(
 @router.get("/audit-verifications", response_model=list[AuditVerificationResponse])
 async def list_audit_verifications(
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
-    return db.query(GspAuditVerification).order_by(GspAuditVerification.verified_at.desc()).limit(limit).all()
+    return (
+        db.query(GspAuditVerification)
+        .order_by(GspAuditVerification.verified_at.desc(), GspAuditVerification.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )

@@ -97,13 +97,14 @@ async def add_device(
 async def list_devices(
     status: str | None = None,
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(require_gsp_roles(*READ_ROLES)),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspEnvironmentDevice)
     if status:
         query = query.filter(GspEnvironmentDevice.status == status)
-    return query.order_by(GspEnvironmentDevice.id.desc()).limit(limit).all()
+    return query.order_by(GspEnvironmentDevice.id.desc()).offset(offset).limit(limit).all()
 
 
 @router.post(
@@ -216,6 +217,7 @@ async def list_assignments(
     context_type: str | None = None,
     transport_task_id: int | None = Query(None, gt=0),
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(require_gsp_roles(*READ_ROLES)),
     db: Session = Depends(get_db),
 ):
@@ -226,7 +228,7 @@ async def list_assignments(
         query = query.filter(GspEnvironmentAssignment.context_type == context_type)
     if transport_task_id:
         query = query.filter(GspEnvironmentAssignment.transport_task_id == transport_task_id)
-    return query.order_by(GspEnvironmentAssignment.id.desc()).limit(limit).all()
+    return query.order_by(GspEnvironmentAssignment.id.desc()).offset(offset).limit(limit).all()
 
 
 @router.post(
@@ -342,6 +344,7 @@ async def close_monitoring_assignment(
 async def list_readings(
     assignment_id: int,
     limit: int = Query(500, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(require_gsp_roles(*READ_ROLES)),
     db: Session = Depends(get_db),
 ):
@@ -350,6 +353,7 @@ async def list_readings(
         db.query(GspEnvironmentReading)
         .filter(GspEnvironmentReading.assignment_id == assignment_id)
         .order_by(GspEnvironmentReading.observed_at.desc(), GspEnvironmentReading.id.desc())
+        .offset(offset)
         .limit(limit)
         .all()
     )
@@ -372,6 +376,7 @@ async def list_alarms(
     severity: str | None = None,
     assignment_id: int | None = Query(None, gt=0),
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(require_gsp_roles(*READ_ROLES)),
     db: Session = Depends(get_db),
 ):
@@ -382,7 +387,7 @@ async def list_alarms(
         query = query.filter(GspEnvironmentAlarm.severity == severity)
     if assignment_id:
         query = query.filter(GspEnvironmentAlarm.assignment_id == assignment_id)
-    return query.order_by(GspEnvironmentAlarm.id.desc()).limit(limit).all()
+    return query.order_by(GspEnvironmentAlarm.id.desc()).offset(offset).limit(limit).all()
 
 
 @router.post("/alarms/{alarm_id}/acknowledge", response_model=EnvironmentAlarmResponse)

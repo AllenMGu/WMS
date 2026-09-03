@@ -147,12 +147,19 @@ async def confirm_secret_rotation(
 @router.get("/secret-rotations", response_model=list[SecretRotationResponse])
 async def list_secret_rotations(
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(
         require_gsp_roles("SYSTEM_ADMIN", "AUDITOR", "QUALITY_MANAGER", "QUALITY_REVIEWER")
     ),
     db: Session = Depends(get_db),
 ):
-    return db.query(GspSecretRotation).order_by(GspSecretRotation.id.desc()).limit(limit).all()
+    return (
+        db.query(GspSecretRotation)
+        .order_by(GspSecretRotation.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.post("/backups", response_model=BackupEvidenceResponse, status_code=201)
@@ -200,12 +207,19 @@ async def review_backup(
 @router.get("/backups", response_model=list[BackupEvidenceResponse])
 async def list_backups(
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(
         require_gsp_roles("SYSTEM_ADMIN", "AUDITOR", "QUALITY_MANAGER", "QUALITY_REVIEWER")
     ),
     db: Session = Depends(get_db),
 ):
-    return db.query(GspBackupEvidence).order_by(GspBackupEvidence.id.desc()).limit(limit).all()
+    return (
+        db.query(GspBackupEvidence)
+        .order_by(GspBackupEvidence.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.post("/recovery-drills", response_model=RecoveryDrillResponse, status_code=201)
@@ -307,9 +321,16 @@ async def confirm_recovery_drill(
 @router.get("/recovery-drills", response_model=list[RecoveryDrillResponse])
 async def list_recovery_drills(
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(
         require_gsp_roles("SYSTEM_ADMIN", "AUDITOR", "QUALITY_MANAGER", "QUALITY_REVIEWER")
     ),
     db: Session = Depends(get_db),
 ):
-    return db.query(GspRecoveryDrill).order_by(GspRecoveryDrill.id.desc()).limit(limit).all()
+    return (
+        db.query(GspRecoveryDrill)
+        .order_by(GspRecoveryDrill.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
