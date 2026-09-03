@@ -97,6 +97,8 @@ from app.gsp.schemas import (
     RoleGrant,
     RoleReview,
     RoleRevoke,
+    SupplierProductAuthorizationBulkImport,
+    SupplierProductAuthorizationBulkResult,
     SupplierProductAuthorizationCreate,
     SupplierProductAuthorizationResponse,
     UserDirectoryItem,
@@ -117,6 +119,7 @@ COMPLIANCE_SETTING_DEFAULTS = {
     "NEAR_EXPIRY_WARNING_DAYS": 90,
     "STOP_SALE_DAYS": 30,
     "MAINTENANCE_SELECTION_DAYS": 120,
+    "SUPPLIER_PRODUCT_WARNING_DAYS": 30,
 }
 
 
@@ -187,6 +190,11 @@ async def compliance_summary(
         "NEAR_EXPIRY_WARNING_DAYS", COMPLIANCE_SETTING_DEFAULTS["NEAR_EXPIRY_WARNING_DAYS"]
     )
     near_expiry = today + timedelta(days=warning_days)
+    supplier_product_warning_days = configured.get(
+        "SUPPLIER_PRODUCT_WARNING_DAYS",
+        COMPLIANCE_SETTING_DEFAULTS["SUPPLIER_PRODUCT_WARNING_DAYS"],
+    )
+    supplier_product_warning_date = today + timedelta(days=supplier_product_warning_days)
     return {
         "as_of": today,
         "near_expiry_warning_days": warning_days,
@@ -203,6 +211,23 @@ async def compliance_summary(
         .filter(
             GspPartnerDocument.status == "VERIFIED",
             GspPartnerDocument.valid_to < today,
+        )
+        .count(),
+        "supplier_product_warning_days": supplier_product_warning_days,
+        "pending_supplier_product_authorizations": db.query(GspSupplierProductAuthorization)
+        .filter(GspSupplierProductAuthorization.status == "PENDING")
+        .count(),
+        "near_expiry_supplier_product_authorizations": db.query(GspSupplierProductAuthorization)
+        .filter(
+            GspSupplierProductAuthorization.status == "APPROVED",
+            GspSupplierProductAuthorization.valid_to >= today,
+            GspSupplierProductAuthorization.valid_to <= supplier_product_warning_date,
+        )
+        .count(),
+        "expired_supplier_product_authorizations": db.query(GspSupplierProductAuthorization)
+        .filter(
+            GspSupplierProductAuthorization.status == "APPROVED",
+            GspSupplierProductAuthorization.valid_to < today,
         )
         .count(),
         "near_expiry_batches": db.query(GspDrugBatch)
@@ -931,6 +956,82 @@ async def suspend_partner(
     return partner
 
 
+def _upsert_supplier_product_record(
+    db: Session,
+    *,
+    supplier_id: int,
+    goods_id: int,
+    values: dict,
+    actor_id: int,
+) -> tuple[GspSupplierProductAuthorization, dict | None, bool]:
+    authorization = (
+        db.query(GspSupplierProductAuthorization)
+        .filter(
+            GspSupplierProductAuthorization.supplier_id == supplier_id,
+            GspSupplierProductAuthorization.goods_id == goods_id,
+        )
+        .first()
+    )
+    before = _snapshot(authorization) if authorization else None
+    created = authorization is None
+    if authorization is None:
+        authorization = GspSupplierProductAuthorization(
+            supplier_id=supplier_id,
+            goods_id=goods_id,
+            **values,
+            status="PENDING",
+            created_by=actor_id,
+            updated_by=actor_id,
+        )
+        db.add(authorization)
+    else:
+        for key, value in values.items():
+            setattr(authorization, key, value)
+        authorization.status = "PENDING"
+        authorization.updated_by = actor_id
+        authorization.approved_by = None
+        authorization.approved_at = None
+        authorization.suspended_by = None
+        authorization.suspended_at = None
+        authorization.suspension_reason = None
+    return authorization, before, created
+
+
+@router.get(
+    "/supplier-product-authorizations",
+    response_model=list[SupplierProductAuthorizationResponse],
+)
+async def list_supplier_product_authorizations(
+    supplier_id: int | None = Query(None, gt=0),
+    status: str | None = None,
+    alert_only: bool = False,
+    warning_days: int = Query(30, ge=1, le=3650),
+    current_user: User = Depends(require_any_gsp_role),
+    db: Session = Depends(get_db),
+):
+    query = db.query(GspSupplierProductAuthorization)
+    if supplier_id is not None:
+        query = query.filter(GspSupplierProductAuthorization.supplier_id == supplier_id)
+    if status:
+        query = query.filter(GspSupplierProductAuthorization.status == status.upper())
+    if alert_only:
+        today = date.today()
+        warning_date = today + timedelta(days=warning_days)
+        query = query.filter(
+            or_(
+                GspSupplierProductAuthorization.status == "PENDING",
+                and_(
+                    GspSupplierProductAuthorization.status == "APPROVED",
+                    GspSupplierProductAuthorization.valid_to <= warning_date,
+                ),
+            )
+        )
+    return query.order_by(
+        GspSupplierProductAuthorization.valid_to,
+        GspSupplierProductAuthorization.id,
+    ).all()
+
+
 @router.get(
     "/partners/{partner_id}/products",
     response_model=list[SupplierProductAuthorizationResponse],
@@ -992,36 +1093,14 @@ async def upsert_supplier_product(
         raise HTTPException(422, "供货授权有效期结束日期不能早于开始日期")
     if payload.valid_to < date.today():
         raise HTTPException(422, "不能录入已经过期的供货品种授权")
-    authorization = (
-        db.query(GspSupplierProductAuthorization)
-        .filter(
-            GspSupplierProductAuthorization.supplier_id == partner_id,
-            GspSupplierProductAuthorization.goods_id == payload.goods_id,
-        )
-        .first()
-    )
-    before = _snapshot(authorization) if authorization else None
     values = payload.model_dump(exclude={"reason", "goods_id"})
-    if authorization is None:
-        authorization = GspSupplierProductAuthorization(
-            supplier_id=partner_id,
-            goods_id=payload.goods_id,
-            **values,
-            status="PENDING",
-            created_by=current_user.id,
-            updated_by=current_user.id,
-        )
-        db.add(authorization)
-    else:
-        for key, value in values.items():
-            setattr(authorization, key, value)
-        authorization.status = "PENDING"
-        authorization.updated_by = current_user.id
-        authorization.approved_by = None
-        authorization.approved_at = None
-        authorization.suspended_by = None
-        authorization.suspended_at = None
-        authorization.suspension_reason = None
+    authorization, before, _ = _upsert_supplier_product_record(
+        db,
+        supplier_id=partner_id,
+        goods_id=payload.goods_id,
+        values=values,
+        actor_id=current_user.id,
+    )
     db.flush()
     write_audit_event(
         db,
@@ -1037,6 +1116,91 @@ async def upsert_supplier_product(
     db.commit()
     db.refresh(authorization)
     return authorization
+
+
+@router.post(
+    "/partners/{partner_id}/products/bulk-import",
+    response_model=SupplierProductAuthorizationBulkResult,
+)
+async def bulk_import_supplier_products(
+    partner_id: int,
+    payload: SupplierProductAuthorizationBulkImport,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES, "PROCUREMENT")),
+    db: Session = Depends(get_db),
+):
+    partner = db.get(GspBusinessPartner, partner_id)
+    if partner is None or partner.partner_type not in {"SUPPLIER", "BOTH"}:
+        raise HTTPException(404, "供货方不存在")
+
+    barcodes = [row.goods_barcode.strip() for row in payload.rows]
+    if len(barcodes) != len(set(barcodes)):
+        raise HTTPException(422, "批量导入文件中存在重复货物条码")
+    goods_by_barcode = {
+        goods.barcode: goods for goods in db.query(Goods).filter(Goods.barcode.in_(barcodes)).all()
+    }
+    missing_barcodes = sorted(set(barcodes) - set(goods_by_barcode))
+    if missing_barcodes:
+        raise HTTPException(422, f"货物条码不存在：{', '.join(missing_barcodes[:10])}")
+    goods_ids = [goods.id for goods in goods_by_barcode.values()]
+    profiles = {
+        profile.goods_id: profile
+        for profile in db.query(GspDrugProfile).filter(GspDrugProfile.goods_id.in_(goods_ids)).all()
+    }
+
+    prepared = []
+    for row in payload.rows:
+        barcode = row.goods_barcode.strip()
+        goods = goods_by_barcode[barcode]
+        profile = profiles.get(goods.id)
+        if profile is None:
+            raise HTTPException(422, f"货物 {barcode} 尚未建立药品品种质量档案")
+        if profile.approval_no != row.approval_no.strip():
+            raise HTTPException(422, f"货物 {barcode} 的批准文号与品种档案不一致")
+        if row.valid_to < row.valid_from:
+            raise HTTPException(422, f"货物 {barcode} 的授权结束日期早于开始日期")
+        if row.valid_to < date.today():
+            raise HTTPException(422, f"货物 {barcode} 的供货授权已经过期")
+        prepared.append(
+            (
+                goods.id,
+                row.model_dump(exclude={"goods_barcode", "approval_no"}),
+            )
+        )
+
+    created = 0
+    updated = 0
+    authorizations = []
+    for goods_id, values in prepared:
+        authorization, before, is_created = _upsert_supplier_product_record(
+            db,
+            supplier_id=partner_id,
+            goods_id=goods_id,
+            values=values,
+            actor_id=current_user.id,
+        )
+        db.flush()
+        write_audit_event(
+            db,
+            actor_user_id=current_user.id,
+            action="SUPPLIER_PRODUCT_AUTHORIZATION_BULK_UPSERTED",
+            entity_type="GspSupplierProductAuthorization",
+            entity_id=str(authorization.id),
+            reason=payload.reason,
+            before_data=before,
+            after_data=_snapshot(authorization),
+            source_ip=_source_ip(request),
+        )
+        authorizations.append(authorization)
+        created += int(is_created)
+        updated += int(not is_created)
+    db.commit()
+    return SupplierProductAuthorizationBulkResult(
+        created=created,
+        updated=updated,
+        pending_approval=len(authorizations),
+        authorization_ids=[authorization.id for authorization in authorizations],
+    )
 
 
 @router.post(

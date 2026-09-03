@@ -172,6 +172,28 @@ class SupplierProductAuthorizationResponse(OrmModel):
     suspension_reason: str | None
 
 
+class SupplierProductAuthorizationBulkRow(BaseModel):
+    goods_barcode: str = Field(..., min_length=1, max_length=100)
+    approval_no: str = Field(..., min_length=1, max_length=100)
+    authorization_ref: str = Field(..., min_length=3, max_length=500)
+    authorization_sha256: str = Field(..., pattern="^[0-9a-f]{64}$")
+    authorization_size_bytes: int = Field(..., gt=0)
+    scope_description: str = Field(..., min_length=3, max_length=500)
+    valid_from: date
+    valid_to: date
+
+
+class SupplierProductAuthorizationBulkImport(ChangeReason):
+    rows: list[SupplierProductAuthorizationBulkRow] = Field(..., min_length=1, max_length=1000)
+
+
+class SupplierProductAuthorizationBulkResult(BaseModel):
+    created: int
+    updated: int
+    pending_approval: int
+    authorization_ids: list[int]
+
+
 class BatchCreate(ChangeReason):
     goods_id: int
     batch_no: str

@@ -17,6 +17,8 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/api/gsp/partners/{partner_id}/documents" in paths
     assert "/api/gsp/partners/{partner_id}/documents/{document_id}/verify" in paths
     assert "/api/gsp/partners/{partner_id}/products" in paths
+    assert "/api/gsp/partners/{partner_id}/products/bulk-import" in paths
+    assert "/api/gsp/supplier-product-authorizations" in paths
     assert "/api/gsp/partners/{partner_id}/products/{authorization_id}/approve" in paths
     assert "/api/gsp/quality-holds" in paths
     assert "/api/gsp/stocktaking/plans" in paths
