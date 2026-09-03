@@ -50,6 +50,30 @@ def test_application_exposes_legacy_and_gsp_routes():
     assert "/health" in paths
 
 
+def test_capped_list_routes_expose_offset_pagination():
+    module = importlib.import_module("main")
+    schema = module.app.openapi()
+    routes = [
+        "/api/gsp/transport/carriers",
+        "/api/gsp/transport/tasks",
+        "/api/gsp/operations/secret-rotations",
+        "/api/gsp/operations/backups",
+        "/api/gsp/operations/recovery-drills",
+        "/api/gsp/electronic-signatures",
+        "/api/gsp/environment/devices",
+        "/api/gsp/environment/assignments",
+        "/api/gsp/environment/assignments/{assignment_id}/readings",
+        "/api/gsp/environment/alarms",
+        "/api/gsp/audit-events",
+        "/api/gsp/audit-verifications",
+    ]
+
+    for route in routes:
+        params = schema["paths"][route]["get"]["parameters"]
+        query_names = {item["name"] for item in params if item["in"] == "query"}
+        assert {"limit", "offset"} <= query_names, route
+
+
 def test_audit_and_outbox_accept_json_safe_regulated_snapshot():
     from app.core.database import SessionLocal
     from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event

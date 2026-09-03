@@ -34,7 +34,7 @@ from app.gsp.transport.router import router as transport_router
 from app.legacy import app
 
 app.title = "药品GSP仓储与质量管理系统 API"
-app.version = "0.18.0"
+app.version = "0.18.1"
 app.description = (
     "WMS兼容接口与独立GSP质量域。GSP接口默认位于 /api/gsp；对接九州通等外部平台时通过集成出站箱解耦。"
 )
