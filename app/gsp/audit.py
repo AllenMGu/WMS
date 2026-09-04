@@ -96,6 +96,37 @@ def write_audit_event(
     return event
 
 
+def write_stock_audit_event(
+    db: Session,
+    *,
+    actor_user_id: int,
+    action: str,
+    stock,
+    reason: str,
+    source_ip: Optional[str] = None,
+    before_data: Optional[dict[str, Any]] = None,
+    after_data: Optional[dict[str, Any]] = None,
+) -> GspAuditEvent:
+    """Record a before/after snapshot of one ``GspBatchStock`` row change.
+
+    Every quantity/reserved/stock_status mutation of regulated lot stock must
+    be reconstructable from the audit chain alone.  Callers capture the
+    ``before_data`` snapshot before mutating and pass the ``after_data``
+    snapshot (``model_snapshot``) afterwards.
+    """
+    return write_audit_event(
+        db,
+        actor_user_id=actor_user_id,
+        action=action,
+        entity_type="GspBatchStock",
+        entity_id=str(stock.id),
+        reason=reason,
+        before_data=before_data,
+        after_data=after_data,
+        source_ip=source_ip,
+    )
+
+
 def verify_audit_chain(db: Session) -> tuple[bool, int | None]:
     expected_previous_hash = None
     for event in db.query(GspAuditEvent).order_by(GspAuditEvent.id):

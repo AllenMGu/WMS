@@ -21,6 +21,7 @@ from app.gsp.procurement_receiving.schemas import (
 )
 from app.gsp.procurement_receiving.service import (
     approve_purchase_order,
+    cancel_purchase_order,
     create_purchase_order,
     create_receipt,
     create_receipt_print_record,
@@ -28,6 +29,7 @@ from app.gsp.procurement_receiving.service import (
     order_payload,
     receipt_payload,
     record_receipt_sampling,
+    reject_purchase_order,
     submit_purchase_order,
 )
 from app.gsp.schemas import ChangeReason
@@ -128,6 +130,60 @@ async def approve_order(
 ):
     try:
         order = approve_purchase_order(
+            db,
+            order_id=order_id,
+            actor_id=current_user.id,
+            reason=payload.reason,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return order_payload(db, order)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post(
+    "/procurement/orders/{order_id}/cancel",
+    response_model=PurchaseOrderResponse,
+)
+async def cancel_order(
+    order_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles("PROCUREMENT")),
+    db: Session = Depends(get_db),
+):
+    try:
+        order = cancel_purchase_order(
+            db,
+            order_id=order_id,
+            actor_id=current_user.id,
+            reason=payload.reason,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return order_payload(db, order)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post(
+    "/procurement/orders/{order_id}/reject",
+    response_model=PurchaseOrderResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "PURCHASE_ORDER_REJECT", "GspPurchaseOrder",
+        entity_id_param="order_id", meaning="REJECTION",
+    ))],
+)
+async def reject_order(
+    order_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        order = reject_purchase_order(
             db,
             order_id=order_id,
             actor_id=current_user.id,

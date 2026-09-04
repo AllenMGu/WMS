@@ -52,6 +52,9 @@ class NonconformingResponse(OrmModel):
     witnessed_by: int | None
     supervision_organization: str | None
     execution_document_ref: str | None
+    rejected_by: int | None
+    rejected_at: datetime | None
+    rejection_reason: str | None
 
 
 class PurchaseReturnCreate(ChangeReason):
@@ -88,4 +91,7 @@ class PurchaseReturnResponse(OrmModel):
     dispatched_at: datetime | None
     outbound_document_no: str | None
     carrier_name: str | None
+    cancelled_by: int | None
+    cancelled_at: datetime | None
+    cancellation_reason: str | None
     items: list[PurchaseReturnItemResponse]

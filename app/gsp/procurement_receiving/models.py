@@ -37,6 +37,9 @@ class GspPurchaseOrder(Base):
     submitted_at = Column(DateTime, nullable=True)
     quality_approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     quality_approved_at = Column(DateTime, nullable=True)
+    cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancellation_reason = Column(String(500), nullable=True)
 
 
 class GspPurchaseOrderItem(Base):

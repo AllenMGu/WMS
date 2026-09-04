@@ -46,6 +46,9 @@ class GspSalesReturn(Base):
     status = Column(String(30), nullable=False, default="PENDING_INSPECTION", index=True)
     received_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=utc_now)
+    cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancellation_reason = Column(String(500), nullable=True)
 
 
 class GspRecall(Base):

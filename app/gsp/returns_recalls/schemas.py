@@ -69,6 +69,9 @@ class SalesReturnResponse(OrmModel):
     status: str
     received_by: int
     created_at: datetime
+    cancelled_by: int | None
+    cancelled_at: datetime | None
+    cancellation_reason: str | None
     items: list[SalesReturnItemResponse]
 
 

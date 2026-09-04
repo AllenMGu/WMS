@@ -49,6 +49,9 @@ class GspNonconformingRecord(Base):
     witnessed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     supervision_organization = Column(String(200), nullable=True)
     execution_document_ref = Column(String(500), nullable=True)
+    rejected_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    rejected_at = Column(DateTime, nullable=True)
+    rejection_reason = Column(String(500), nullable=True)
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_gsp_nonconforming_quantity_positive"),
     )
@@ -77,6 +80,9 @@ class GspPurchaseReturn(Base):
     dispatched_at = Column(DateTime, nullable=True)
     outbound_document_no = Column(String(100), nullable=True, index=True)
     carrier_name = Column(String(200), nullable=True)
+    cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancellation_reason = Column(String(500), nullable=True)
 
 
 class GspPurchaseReturnItem(Base):
