@@ -105,6 +105,17 @@ def upgrade() -> None:
             ["id"],
         )
 
+    for table_name, constraint_name in (
+        ("gsp_signature_challenges", "ck_gsp_signature_challenge_meaning"),
+        ("gsp_electronic_signatures", "ck_gsp_electronic_signature_meaning"),
+    ):
+        op.drop_constraint(constraint_name, table_name, type_="check")
+        op.create_check_constraint(
+            constraint_name,
+            table_name,
+            "meaning IN ('APPROVAL','REVIEW','RELEASE','CONFIRMATION','RESPONSIBILITY','REJECTION')",
+        )
+
     # A cancelled return no longer occupies the nonconforming record, while its
     # controlled line history remains queryable. Application-level row locking
     # serializes creation for the same nonconforming record.
@@ -121,6 +132,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    for table_name, constraint_name in (
+        ("gsp_electronic_signatures", "ck_gsp_electronic_signature_meaning"),
+        ("gsp_signature_challenges", "ck_gsp_signature_challenge_meaning"),
+    ):
+        op.drop_constraint(constraint_name, table_name, type_="check")
+        op.create_check_constraint(
+            constraint_name,
+            table_name,
+            "meaning IN ('APPROVAL','REVIEW','RELEASE','CONFIRMATION','RESPONSIBILITY')",
+        )
     op.drop_index(
         "ix_gsp_purchase_return_items_nonconforming_record_id",
         table_name="gsp_purchase_return_items",

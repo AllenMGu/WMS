@@ -45,7 +45,7 @@ class GspSignatureChallenge(Base):
             name="ck_gsp_signature_challenge_auth_method",
         ),
         CheckConstraint(
-            "meaning IN ('APPROVAL','REVIEW','RELEASE','CONFIRMATION','RESPONSIBILITY')",
+            "meaning IN ('APPROVAL','REVIEW','RELEASE','CONFIRMATION','RESPONSIBILITY','REJECTION')",
             name="ck_gsp_signature_challenge_meaning",
         ),
         CheckConstraint(
@@ -89,7 +89,7 @@ class GspElectronicSignature(Base):
             name="ck_gsp_electronic_signature_auth_method",
         ),
         CheckConstraint(
-            "meaning IN ('APPROVAL','REVIEW','RELEASE','CONFIRMATION','RESPONSIBILITY')",
+            "meaning IN ('APPROVAL','REVIEW','RELEASE','CONFIRMATION','RESPONSIBILITY','REJECTION')",
             name="ck_gsp_electronic_signature_meaning",
         ),
     )

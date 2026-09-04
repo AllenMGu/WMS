@@ -154,6 +154,50 @@ def test_signature_reconfirms_identity_binds_payload_and_is_single_use():
         db.close()
 
 
+def test_rejection_signature_policy_round_trip():
+    import main  # noqa: F401
+
+    db = SessionLocal()
+    try:
+        suffix = uuid4().hex[:10]
+        signer = User(
+            username=f"rejection-signature-{suffix}",
+            hashed_password=get_password_hash("correct-password"),
+            full_name="质量驳回签署人",
+            role=UserRole.ADMIN,
+            is_active=True,
+            is_ldap_user=False,
+        )
+        db.add(signer)
+        db.flush()
+        request = SignatureChallengeCreate(
+            action="NONCONFORMING_REJECT",
+            entity_type="GspNonconformingRecord",
+            entity_id="73",
+            meaning="REJECTION",
+            payload={"reason": "复核确认登记有误"},
+            reason="复核确认登记有误",
+            password="correct-password",
+        )
+        challenge, token = create_signature_challenge(db, user=signer, payload=request)
+        signature = consume_signature_challenge(
+            db,
+            token=token,
+            actor_id=signer.id,
+            action=request.action,
+            entity_type=request.entity_type,
+            entity_id=request.entity_id,
+            meaning=request.meaning,
+            payload=request.payload,
+        )
+        db.commit()
+        assert challenge.status == "CONSUMED"
+        assert signature.meaning == "REJECTION"
+        assert verify_signature(signature) is True
+    finally:
+        db.close()
+
+
 def test_regulated_routes_publish_signature_header_gate():
     import main
 
