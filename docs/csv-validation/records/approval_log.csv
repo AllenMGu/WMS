@@ -1,0 +1,2 @@
+approval_id,document_or_batch,version_or_baseline,approval_type,role,approver_identity,decision,reason_or_conditions,approved_at,electronic_signature_or_record_ref,evidence_sha256,supersedes_approval_id
+,,,,,,,,,,,

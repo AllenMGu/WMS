@@ -1,0 +1,2 @@
+deviation_id,discovered_at,phase,test_id,execution_id,baseline,expected_result,actual_result,evidence_refs,initial_gxp_impact,severity,immediate_control,root_cause,defect_or_pr,fix_commit,capa_id,affected_tests,retest_execution_ids,residual_risk,owner,target_date,status,closed_by,closed_at,quality_approval_ref
+,,,,,,,,,,,,,,,,,,,,,,,,
