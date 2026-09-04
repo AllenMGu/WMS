@@ -100,7 +100,6 @@ class GspPurchaseReturnItem(Base):
         Integer,
         ForeignKey("gsp_nonconforming_records.id"),
         nullable=False,
-        unique=True,
         index=True,
     )
     batch_id = Column(Integer, ForeignKey("gsp_drug_batches.id"), nullable=False, index=True)

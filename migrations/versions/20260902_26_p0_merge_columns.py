@@ -75,9 +75,72 @@ def upgrade() -> None:
         "gsp_nonconforming_records",
         sa.Column("rejection_reason", sa.String(length=500), nullable=True),
     )
+    for table_name, column_name, constraint_name in (
+        (
+            "gsp_purchase_orders",
+            "cancelled_by",
+            "fk_gsp_purchase_orders_cancelled_by_users",
+        ),
+        (
+            "gsp_purchase_returns",
+            "cancelled_by",
+            "fk_gsp_purchase_returns_cancelled_by_users",
+        ),
+        (
+            "gsp_sales_returns",
+            "cancelled_by",
+            "fk_gsp_sales_returns_cancelled_by_users",
+        ),
+        (
+            "gsp_nonconforming_records",
+            "rejected_by",
+            "fk_gsp_nonconforming_records_rejected_by_users",
+        ),
+    ):
+        op.create_foreign_key(
+            constraint_name,
+            table_name,
+            "users",
+            [column_name],
+            ["id"],
+        )
+
+    # A cancelled return no longer occupies the nonconforming record, while its
+    # controlled line history remains queryable. Application-level row locking
+    # serializes creation for the same nonconforming record.
+    op.drop_index(
+        "ix_gsp_purchase_return_items_nonconforming_record_id",
+        table_name="gsp_purchase_return_items",
+    )
+    op.create_index(
+        "ix_gsp_purchase_return_items_nonconforming_record_id",
+        "gsp_purchase_return_items",
+        ["nonconforming_record_id"],
+        unique=False,
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_gsp_purchase_return_items_nonconforming_record_id",
+        table_name="gsp_purchase_return_items",
+    )
+    op.create_index(
+        "ix_gsp_purchase_return_items_nonconforming_record_id",
+        "gsp_purchase_return_items",
+        ["nonconforming_record_id"],
+        unique=True,
+    )
+    for table_name, constraint_name in (
+        (
+            "gsp_nonconforming_records",
+            "fk_gsp_nonconforming_records_rejected_by_users",
+        ),
+        ("gsp_sales_returns", "fk_gsp_sales_returns_cancelled_by_users"),
+        ("gsp_purchase_returns", "fk_gsp_purchase_returns_cancelled_by_users"),
+        ("gsp_purchase_orders", "fk_gsp_purchase_orders_cancelled_by_users"),
+    ):
+        op.drop_constraint(constraint_name, table_name, type_="foreignkey")
     op.drop_column("gsp_nonconforming_records", "rejection_reason")
     op.drop_column("gsp_nonconforming_records", "rejected_at")
     op.drop_column("gsp_nonconforming_records", "rejected_by")

@@ -655,10 +655,10 @@ def _cancel_purchase_return(
     )
     if not purchase_return:
         raise WorkflowError(404, "购进退出单不存在")
-    allowed = {"DRAFT", "SUBMITTED"} if rejected else {"DRAFT"}
+    allowed = {"SUBMITTED"} if rejected else {"DRAFT"}
     if purchase_return.status not in allowed:
         if rejected:
-            raise WorkflowError(409, "只有草稿或已提交、尚未批准发运的购进退出单可以驳回")
+            raise WorkflowError(409, "只有已提交、尚未批准发运的购进退出单可以驳回")
         raise WorkflowError(409, "只有草稿购进退出单可以由制单人取消")
     if rejected and actor_id in {purchase_return.created_by, purchase_return.submitted_by}:
         raise WorkflowError(409, "购进退出制单/提交人不能驳回自己的单据，需由独立质量人员处理")
@@ -669,11 +669,8 @@ def _cancel_purchase_return(
     purchase_return.cancellation_reason = reason
     db.flush()
     after = purchase_return_payload(db, purchase_return)
-    # 取消/驳回即释放明细占用的不合格品记录，允许重新组织购进退出；
-    # 单据头与快照（含明细）保留在哈希审计链中，不物理删除历史。
-    for item in _purchase_return_items(db, return_id):
-        db.delete(item)
-    db.flush()
+    # 取消/驳回后，创建流程只把未取消单据视为占用，因此原不合格品可重新
+    # 组织退出；原单据明细必须保留，不能依赖审计快照替代受控业务记录。
     action = "PURCHASE_RETURN_REJECTED" if rejected else "PURCHASE_RETURN_CANCELLED"
     write_audit_event(
         db,
