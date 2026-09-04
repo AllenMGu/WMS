@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.gsp.audit import write_audit_event
+from app.gsp.audit import write_audit_event, write_stock_audit_event
 from app.gsp.errors import WorkflowError
 from app.gsp.models import (
     GspBatchStock,
@@ -298,6 +299,11 @@ def create_receipt(
             raise WorkflowError(409, f"采购订单第 {order_item.line_no} 行收货数量超过未收数量")
         if line.expiry_date <= line.production_date:
             raise WorkflowError(422, "有效期必须晚于生产日期")
+        if line.expiry_date < date.today():
+            raise WorkflowError(
+                409,
+                "货物已过有效期，不能办理正常收货；请当场拒收并按不合格品流程登记",
+            )
         location = db.query(Location).filter(Location.id == line.location_id).first()
         if not location or not location.is_active or location.warehouse_id != order.warehouse_id:
             raise WorkflowError(422, "待验库位必须属于采购订单指定的启用仓库")
@@ -350,6 +356,16 @@ def create_receipt(
             )
             db.add(batch)
             db.flush()
+            write_audit_event(
+                db,
+                actor_user_id=actor_id,
+                action="BATCH_CREATED",
+                entity_type="GspDrugBatch",
+                entity_id=str(batch.id),
+                reason=payload.reason,
+                after_data=model_snapshot(batch),
+                source_ip=source_ip,
+            )
 
         db.add(
             GspReceiptItem(
@@ -493,6 +509,11 @@ def inspect_receipt_item(
         )
 
     if payload.accepted_quantity > 0:
+        if batch.expiry_date < date.today():
+            raise WorkflowError(
+                409,
+                "批号已过有效期，不能验收放行；请按拒收/不合格品流程处理",
+            )
         active_hold = (
             db.query(GspQualityHold)
             .filter(
@@ -513,10 +534,12 @@ def inspect_receipt_item(
             .first()
         )
         if stock:
+            stock_before = model_snapshot(stock)
             ensure_stock_not_frozen(db, [stock.id])
             stock.quantity += payload.accepted_quantity
             stock.stock_status = "HOLD" if active_hold else "AVAILABLE"
             stock.lock_version += 1
+            stock_after = model_snapshot(stock)
         else:
             stock = GspBatchStock(
                 batch_id=batch.id,
@@ -526,12 +549,49 @@ def inspect_receipt_item(
                 stock_status="HOLD" if active_hold else "AVAILABLE",
             )
             db.add(stock)
+            db.flush()
+            stock_before = None
+            stock_after = model_snapshot(stock)
+        write_stock_audit_event(
+            db,
+            actor_user_id=actor_id,
+            action="RECEIPT_ACCEPTANCE_STOCKED",
+            stock=stock,
+            reason=payload.reason,
+            source_ip=source_ip,
+            before_data=stock_before,
+            after_data=stock_after,
+        )
+        batch_before = model_snapshot(batch)
         batch.status = "RELEASED"
         batch.accepted_by = actor_id
         batch.accepted_at = item.inspected_at
         batch.acceptance_conclusion = payload.conclusion
+        write_audit_event(
+            db,
+            actor_user_id=actor_id,
+            action="BATCH_RELEASED",
+            entity_type="GspDrugBatch",
+            entity_id=str(batch.id),
+            reason=payload.reason,
+            before_data=batch_before,
+            after_data=model_snapshot(batch),
+            source_ip=source_ip,
+        )
     elif db.query(GspBatchStock).filter(GspBatchStock.batch_id == batch.id).count() == 0:
+        batch_before = model_snapshot(batch)
         batch.status = "REJECTED"
+        write_audit_event(
+            db,
+            actor_user_id=actor_id,
+            action="BATCH_REJECTED",
+            entity_type="GspDrugBatch",
+            entity_id=str(batch.id),
+            reason=payload.reason,
+            before_data=batch_before,
+            after_data=model_snapshot(batch),
+            source_ip=source_ip,
+        )
 
     db.flush()
     pending_items = (
@@ -675,3 +735,86 @@ def create_receipt_print_record(
         source_ip=source_ip,
     )
     return record
+
+
+def _cancel_purchase_order(
+    db: Session,
+    *,
+    order_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+    rejected: bool,
+) -> GspPurchaseOrder:
+    order = (
+        db.query(GspPurchaseOrder)
+        .filter(GspPurchaseOrder.id == order_id)
+        .with_for_update()
+        .first()
+    )
+    if not order:
+        raise WorkflowError(404, "采购订单不存在")
+    allowed = {"SUBMITTED"} if rejected else {"DRAFT"}
+    if order.status not in allowed:
+        if rejected:
+            raise WorkflowError(409, "只有已提交、尚未质量批准的采购订单可以驳回")
+        raise WorkflowError(409, "只有草稿采购订单可以由制单/采购人员取消")
+    if rejected and actor_id in {order.created_by, order.submitted_by}:
+        raise WorkflowError(409, "采购制单/提交人不能驳回自己的订单，需由独立质量人员处理")
+    before = order_payload(db, order)
+    order.status = "CANCELLED"
+    order.cancelled_by = actor_id
+    order.cancelled_at = utc_now()
+    order.cancellation_reason = reason
+    db.flush()
+    action = "PURCHASE_ORDER_REJECTED" if rejected else "PURCHASE_ORDER_CANCELLED"
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action=action,
+        entity_type="GspPurchaseOrder",
+        entity_id=str(order.id),
+        reason=reason,
+        before_data=before,
+        after_data=order_payload(db, order),
+        source_ip=source_ip,
+    )
+    return order
+
+
+def cancel_purchase_order(
+    db: Session,
+    *,
+    order_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+) -> GspPurchaseOrder:
+    """采购/制单人员取消草稿采购订单（建单有误可作废重开，不做物理删除）。"""
+    return _cancel_purchase_order(
+        db,
+        order_id=order_id,
+        actor_id=actor_id,
+        reason=reason,
+        source_ip=source_ip,
+        rejected=False,
+    )
+
+
+def reject_purchase_order(
+    db: Session,
+    *,
+    order_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+) -> GspPurchaseOrder:
+    """质量人员驳回已提交的采购订单（须独立于制单/提交人）。"""
+    return _cancel_purchase_order(
+        db,
+        order_id=order_id,
+        actor_id=actor_id,
+        reason=reason,
+        source_ip=source_ip,
+        rejected=True,
+    )

@@ -34,6 +34,7 @@ from app.gsp.returns_recalls.schemas import (
 from app.gsp.returns_recalls.service import (
     activate_recall,
     activate_recall_drill,
+    cancel_sales_return,
     close_recall,
     complete_recall_drill,
     create_recall,
@@ -166,6 +167,33 @@ async def inspect_sales_return(
             item_id=item_id,
             payload=payload,
             actor_id=current_user.id,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return sales_return_payload(db, sales_return)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post(
+    "/returns/sales/{return_id}/cancel",
+    response_model=SalesReturnResponse,
+)
+async def cancel_sales_return_request(
+    return_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(
+        require_gsp_roles("RETURNS_RECEIVER", "WAREHOUSE_CUSTODIAN", *QUALITY_ROLES)
+    ),
+    db: Session = Depends(get_db),
+):
+    try:
+        sales_return = cancel_sales_return(
+            db,
+            return_id=return_id,
+            actor_id=current_user.id,
+            reason=payload.reason,
             source_ip=_source_ip(request),
         )
         db.commit()

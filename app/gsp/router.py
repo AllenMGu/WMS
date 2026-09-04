@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.time import utc_now
 from app.gsp.access_control import grant_gsp_role, review_gsp_role, revoke_gsp_role
-from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event
+from app.gsp.audit import (
+    record_audit_verification,
+    verify_audit_chain,
+    write_audit_event,
+    write_stock_audit_event,
+)
 from app.gsp.catalog_queries import (
     list_batch_stock,
     list_drug_batches,
@@ -729,6 +734,8 @@ async def approve_partner(
     partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == partner_id).first()
     if not partner:
         raise HTTPException(404, "合作方不存在")
+    if partner.status != "PENDING":
+        raise HTTPException(409, "只有待审批的合作方可以质量审批（资质变更会自动回到待审批）")
     if partner.created_by == current_user.id:
         raise HTTPException(409, "合作方首营建档人与质量审批人必须分离")
     result = evaluate_partner_evidence(db, partner, status="APPROVED")
@@ -937,6 +944,8 @@ async def suspend_partner(
     partner = db.query(GspBusinessPartner).filter(GspBusinessPartner.id == partner_id).first()
     if not partner:
         raise HTTPException(404, "合作方不存在")
+    if partner.status != "APPROVED":
+        raise HTTPException(409, "只有已批准的合作方可以挂起")
     before = _snapshot(partner)
     partner.status = "SUSPENDED"
     partner.suspension_reason = payload.reason
@@ -1439,6 +1448,8 @@ async def approve_drug_profile(
     profile = db.query(GspDrugProfile).filter(GspDrugProfile.goods_id == goods_id).first()
     if not profile:
         raise HTTPException(404, "药品质量主数据不存在")
+    if profile.status != "PENDING":
+        raise HTTPException(409, "只有待审批的品种档案可以质量核验批准（档案更新会自动回到待审批）")
     if not profile.registration_document_sha256 or not profile.registration_document_size_bytes:
         raise HTTPException(409, "注册批准档案缺少SHA-256或文件大小证据")
     if profile.updated_by == current_user.id:
@@ -1603,6 +1614,17 @@ async def create_quality_hold(
     batch = db.query(GspDrugBatch).filter(GspDrugBatch.id == payload.batch_id).first()
     if not batch:
         raise HTTPException(404, "批次不存在")
+    duplicate = (
+        db.query(GspQualityHold)
+        .filter(
+            GspQualityHold.batch_id == payload.batch_id,
+            GspQualityHold.status == "ACTIVE",
+            GspQualityHold.reason_code == payload.reason_code.upper(),
+        )
+        .first()
+    )
+    if duplicate is not None:
+        raise HTTPException(409, "该批次已有同原因生效的质量锁定，不能重复冻结")
     hold = GspQualityHold(
         batch_id=payload.batch_id,
         reason_code=payload.reason_code,
@@ -1612,8 +1634,20 @@ async def create_quality_hold(
     db.add(hold)
     db.flush()
     for stock in db.query(GspBatchStock).filter(GspBatchStock.batch_id == payload.batch_id):
-        stock.stock_status = "HOLD"
-        stock.lock_version += 1
+        if stock.stock_status != "HOLD":
+            stock_before = _snapshot(stock)
+            stock.stock_status = "HOLD"
+            stock.lock_version += 1
+            write_stock_audit_event(
+                db,
+                actor_user_id=current_user.id,
+                action="STOCK_HELD",
+                stock=stock,
+                reason=payload.reason,
+                source_ip=_source_ip(request),
+                before_data=stock_before,
+                after_data=_snapshot(stock),
+            )
     write_audit_event(
         db,
         actor_user_id=current_user.id,
@@ -1733,8 +1767,20 @@ async def release_quality_hold(
     hold.release_reason = payload.reason
     if not other_holds:
         for stock in db.query(GspBatchStock).filter(GspBatchStock.batch_id == hold.batch_id):
-            stock.stock_status = "AVAILABLE"
-            stock.lock_version += 1
+            if stock.stock_status != "AVAILABLE":
+                stock_before = _snapshot(stock)
+                stock.stock_status = "AVAILABLE"
+                stock.lock_version += 1
+                write_stock_audit_event(
+                    db,
+                    actor_user_id=current_user.id,
+                    action="STOCK_UNHELD",
+                    stock=stock,
+                    reason=payload.reason,
+                    source_ip=_source_ip(request),
+                    before_data=stock_before,
+                    after_data=_snapshot(stock),
+                )
     write_audit_event(
         db,
         actor_user_id=current_user.id,

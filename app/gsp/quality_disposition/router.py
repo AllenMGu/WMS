@@ -21,11 +21,14 @@ from app.gsp.quality_disposition.schemas import (
 from app.gsp.quality_disposition.service import (
     approve_disposition,
     approve_purchase_return,
+    cancel_purchase_return,
     create_purchase_return,
     dispatch_purchase_return,
     execute_destruction,
     purchase_return_payload,
     register_nonconforming_stock,
+    reject_nonconforming_record,
+    reject_purchase_return,
     submit_purchase_return,
 )
 from app.gsp.schemas import ChangeReason
@@ -226,6 +229,90 @@ async def approve_supplier_return(
 ):
     try:
         purchase_return = approve_purchase_return(
+            db,
+            return_id=return_id,
+            actor_id=current_user.id,
+            reason=payload.reason,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return purchase_return_payload(db, purchase_return)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post(
+    "/quality/nonconforming/{record_id}/reject",
+    response_model=NonconformingResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "NONCONFORMING_REJECT", "GspNonconformingRecord",
+        entity_id_param="record_id", meaning="REJECTION",
+    ))],
+)
+async def reject_nonconforming(
+    record_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        record = reject_nonconforming_record(
+            db,
+            record_id=record_id,
+            actor_id=current_user.id,
+            reason=payload.reason,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        db.refresh(record)
+        return record
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post(
+    "/procurement/returns/{return_id}/cancel",
+    response_model=PurchaseReturnResponse,
+)
+async def cancel_supplier_return(
+    return_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles("PROCUREMENT")),
+    db: Session = Depends(get_db),
+):
+    try:
+        purchase_return = cancel_purchase_return(
+            db,
+            return_id=return_id,
+            actor_id=current_user.id,
+            reason=payload.reason,
+            source_ip=_source_ip(request),
+        )
+        db.commit()
+        return purchase_return_payload(db, purchase_return)
+    except (WorkflowError, IntegrityError) as error:
+        _rollback_and_raise(db, error)
+
+
+@router.post(
+    "/procurement/returns/{return_id}/reject",
+    response_model=PurchaseReturnResponse,
+    dependencies=[Depends(require_electronic_signature(
+        "PURCHASE_RETURN_REJECT", "GspPurchaseReturn",
+        entity_id_param="return_id", meaning="REJECTION",
+    ))],
+)
+async def reject_supplier_return(
+    return_id: int,
+    payload: ChangeReason,
+    request: Request,
+    current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
+    db: Session = Depends(get_db),
+):
+    try:
+        purchase_return = reject_purchase_return(
             db,
             return_id=return_id,
             actor_id=current_user.id,

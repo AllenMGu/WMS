@@ -12,7 +12,7 @@ class SignatureChallengeCreate(BaseModel):
     entity_id: str = Field(..., min_length=1, max_length=100)
     meaning: str = Field(
         ...,
-        pattern="^(APPROVAL|REVIEW|RELEASE|CONFIRMATION|RESPONSIBILITY)$",
+        pattern="^(APPROVAL|REVIEW|RELEASE|CONFIRMATION|RESPONSIBILITY|REJECTION)$",
     )
     payload: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(..., min_length=3, max_length=500)

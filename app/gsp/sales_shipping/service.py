@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.gsp.audit import write_audit_event
+from app.gsp.audit import write_audit_event, write_stock_audit_event
 from app.gsp.errors import WorkflowError
 from app.gsp.models import (
     GspBatchStock,
@@ -30,6 +30,7 @@ from app.gsp.sales_shipping.models import (
 from app.gsp.sales_shipping.schemas import SalesOrderCreate, ShipmentPackageCreate, ShipmentPrepare
 from app.gsp.snapshots import model_snapshot
 from app.gsp.stocktaking.service import ensure_stock_not_frozen
+from app.gsp.transport.models import GspTransportTask
 from app.gsp.transport.service import (
     create_transport_task,
     start_transport_task,
@@ -736,9 +737,20 @@ def dispatch_shipment(
     for allocation, stock, _batch, item in validated:
         quantity = Decimal(allocation.quantity)
         ensure_stock_not_frozen(db, [stock.id])
+        stock_before = model_snapshot(stock)
         stock.quantity -= quantity
         stock.reserved_quantity -= quantity
         stock.lock_version += 1
+        write_stock_audit_event(
+            db,
+            actor_user_id=actor_id,
+            action="SHIPMENT_STOCK_DISPATCHED",
+            stock=stock,
+            reason=reason,
+            source_ip=source_ip,
+            before_data=stock_before,
+            after_data=model_snapshot(stock),
+        )
         allocation.status = "SHIPPED"
         allocation.shipped_at = dispatched_at
         item.shipped_quantity += quantity
@@ -802,19 +814,64 @@ def cancel_sales_order(
         )
         if allocation.status != "RELEASED":
             ensure_stock_not_frozen(db, [stock.id])
+            stock_before = model_snapshot(stock)
             stock.reserved_quantity = max(
                 Decimal("0"),
                 Decimal(stock.reserved_quantity or 0) - Decimal(allocation.quantity),
             )
             stock.lock_version += 1
+            write_stock_audit_event(
+                db,
+                actor_user_id=actor_id,
+                action="SALES_CANCELLATION_RESERVATION_RELEASED",
+                stock=stock,
+                reason=reason,
+                source_ip=source_ip,
+                before_data=stock_before,
+                after_data=model_snapshot(stock),
+            )
+            order_item = (
+                db.query(GspSalesOrderItem)
+                .filter(GspSalesOrderItem.id == allocation.sales_order_item_id)
+                .one()
+            )
+            order_item.allocated_quantity = max(
+                Decimal("0"),
+                Decimal(order_item.allocated_quantity or 0) - Decimal(allocation.quantity),
+            )
             allocation.status = "RELEASED"
     shipment = db.query(GspShipment).filter(GspShipment.sales_order_id == order.id).first()
+    transport_task = None
     if shipment:
+        transport_task = (
+            db.query(GspTransportTask)
+            .filter(GspTransportTask.shipment_id == shipment.id)
+            .first()
+        )
+        if transport_task is not None and transport_task.status != "PREPARED":
+            raise WorkflowError(
+                409,
+                "运输任务已启动或已完成，不能取消销售订单；请走运输异常与质量处置流程",
+            )
         shipment.status = "CANCELLED"
     order.status = "CANCELLED"
     order.cancelled_by = actor_id
     order.cancelled_at = utc_now()
     order.cancellation_reason = reason
+    if transport_task is not None:
+        task_before = model_snapshot(transport_task)
+        transport_task.status = "CANCELLED"
+        write_audit_event(
+            db,
+            actor_user_id=actor_id,
+            action="TRANSPORT_TASK_CANCELLED_WITH_SALES_ORDER",
+            entity_type="GspTransportTask",
+            entity_id=str(transport_task.id),
+            reason=reason,
+            before_data=task_before,
+            after_data=model_snapshot(transport_task),
+            source_ip=source_ip,
+        )
     write_audit_event(
         db,
         actor_user_id=actor_id,

@@ -41,6 +41,9 @@ class PurchaseOrderResponse(OrmModel):
     submitted_by: int | None
     quality_approved_by: int | None
     created_at: datetime
+    cancelled_by: int | None
+    cancelled_at: datetime | None
+    cancellation_reason: str | None
     items: list[PurchaseOrderLineResponse]
 
 

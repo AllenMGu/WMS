@@ -91,6 +91,9 @@ SIGNATURE_POLICIES: dict[str, tuple[str, str]] = {
     "QUALITY_EQUIPMENT_APPROVE": ("GspQualityEquipment", "APPROVAL"),
     "EQUIPMENT_ACTIVITY_REVIEW": ("GspEquipmentActivity", "REVIEW"),
     "REGULATED_SCOPE_APPROVE": ("GspRegulatedScopeAuthorization", "APPROVAL"),
+    "PURCHASE_ORDER_REJECT": ("GspPurchaseOrder", "REJECTION"),
+    "PURCHASE_RETURN_REJECT": ("GspPurchaseReturn", "REJECTION"),
+    "NONCONFORMING_REJECT": ("GspNonconformingRecord", "REJECTION"),
 }
 
 

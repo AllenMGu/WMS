@@ -6,7 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.gsp.audit import write_audit_event
+from app.gsp.audit import write_audit_event, write_stock_audit_event
 from app.gsp.errors import WorkflowError
 from app.gsp.models import GspBatchStock, GspBusinessPartner, GspDrugBatch, GspQualityHold
 from app.gsp.outbox import enqueue_integration_message
@@ -48,7 +48,11 @@ def purchase_return_payload(db: Session, purchase_return: GspPurchaseReturn) -> 
 
 
 def _lock_batch_stock(
-    db: Session, batch_id: int, actor_id: int, reason: str
+    db: Session,
+    batch_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None = None,
 ) -> GspQualityHold:
     hold = GspQualityHold(
         batch_id=batch_id,
@@ -64,8 +68,21 @@ def _lock_batch_stock(
         .filter(GspBatchStock.batch_id == batch_id)
         .with_for_update()
     ):
+        if stock.stock_status == "HOLD":
+            continue
+        stock_before = model_snapshot(stock)
         stock.stock_status = "HOLD"
         stock.lock_version += 1
+        write_stock_audit_event(
+            db,
+            actor_user_id=actor_id,
+            action="STOCK_HELD",
+            stock=stock,
+            reason=reason,
+            source_ip=source_ip,
+            before_data=stock_before,
+            after_data=model_snapshot(stock),
+        )
     return hold
 
 
@@ -122,6 +139,7 @@ def register_rejected_material(
         batch_id,
         actor_id,
         f"不合格品 {record_no}：{description}",
+        source_ip=source_ip,
     )
     record.quality_hold_id = hold.id
     db.flush()
@@ -200,6 +218,7 @@ def register_nonconforming_stock(
         stock.batch_id,
         actor_id,
         f"不合格品 {payload.record_no}：{payload.description}",
+        source_ip=source_ip,
     )
     record.quality_hold_id = hold.id
     db.flush()
@@ -314,8 +333,19 @@ def execute_destruction(
         if not stock or Decimal(stock.quantity) - Decimal(stock.reserved_quantity) < record.quantity:
             raise WorkflowError(409, "待销毁库存数量不足或仍被销售订单预留")
         ensure_stock_not_frozen(db, [stock.id])
+        stock_before = model_snapshot(stock)
         stock.quantity -= record.quantity
         stock.lock_version += 1
+        write_stock_audit_event(
+            db,
+            actor_user_id=actor_id,
+            action="NONCONFORMING_STOCK_DESTROYED",
+            stock=stock,
+            reason=payload.reason,
+            source_ip=source_ip,
+            before_data=stock_before,
+            after_data=model_snapshot(stock),
+        )
     record.status = "EXECUTED"
     record.executed_by = actor_id
     record.executed_at = utc_now()
@@ -369,10 +399,14 @@ def create_purchase_return(
         for record in records
     ):
         raise WorkflowError(409, "购进退出只能关联已批准退回供货方的不合格品")
-    if db.query(GspPurchaseReturnItem).filter(
-        GspPurchaseReturnItem.nonconforming_record_id.in_(payload.nonconforming_record_ids)
+    if db.query(GspPurchaseReturnItem).join(
+        GspPurchaseReturn,
+        GspPurchaseReturn.id == GspPurchaseReturnItem.purchase_return_id,
+    ).filter(
+        GspPurchaseReturnItem.nonconforming_record_id.in_(payload.nonconforming_record_ids),
+        GspPurchaseReturn.status != "CANCELLED",
     ).count():
-        raise WorkflowError(409, "不合格品记录已经关联其他购进退出单")
+        raise WorkflowError(409, "不合格品记录已经关联其他进行中的购进退出单")
     batches = {
         batch.id: batch
         for batch in db.query(GspDrugBatch)
@@ -558,8 +592,19 @@ def dispatch_purchase_return(
             if not stock or Decimal(stock.quantity) - Decimal(stock.reserved_quantity) < item.quantity:
                 raise WorkflowError(409, "待退供库存数量不足或仍被销售订单预留")
             ensure_stock_not_frozen(db, [stock.id])
+            stock_before = model_snapshot(stock)
             stock.quantity -= item.quantity
             stock.lock_version += 1
+            write_stock_audit_event(
+                db,
+                actor_user_id=actor_id,
+                action="PURCHASE_RETURN_STOCK_DISPATCHED",
+                stock=stock,
+                reason=payload.reason,
+                source_ip=source_ip,
+                before_data=stock_before,
+                after_data=model_snapshot(stock),
+            )
         record.status = "EXECUTED"
         record.executed_by = actor_id
         record.executed_at = utc_now()
@@ -591,3 +636,134 @@ def dispatch_purchase_return(
         source_ip=source_ip,
     )
     return purchase_return
+
+
+def _cancel_purchase_return(
+    db: Session,
+    *,
+    return_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+    rejected: bool,
+) -> GspPurchaseReturn:
+    purchase_return = (
+        db.query(GspPurchaseReturn)
+        .filter(GspPurchaseReturn.id == return_id)
+        .with_for_update()
+        .first()
+    )
+    if not purchase_return:
+        raise WorkflowError(404, "购进退出单不存在")
+    allowed = {"SUBMITTED"} if rejected else {"DRAFT"}
+    if purchase_return.status not in allowed:
+        if rejected:
+            raise WorkflowError(409, "只有已提交、尚未批准发运的购进退出单可以驳回")
+        raise WorkflowError(409, "只有草稿购进退出单可以由制单人取消")
+    if rejected and actor_id in {purchase_return.created_by, purchase_return.submitted_by}:
+        raise WorkflowError(409, "购进退出制单/提交人不能驳回自己的单据，需由独立质量人员处理")
+    before = purchase_return_payload(db, purchase_return)
+    purchase_return.status = "CANCELLED"
+    purchase_return.cancelled_by = actor_id
+    purchase_return.cancelled_at = utc_now()
+    purchase_return.cancellation_reason = reason
+    db.flush()
+    after = purchase_return_payload(db, purchase_return)
+    # 取消/驳回后，创建流程只把未取消单据视为占用，因此原不合格品可重新
+    # 组织退出；原单据明细必须保留，不能依赖审计快照替代受控业务记录。
+    action = "PURCHASE_RETURN_REJECTED" if rejected else "PURCHASE_RETURN_CANCELLED"
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action=action,
+        entity_type="GspPurchaseReturn",
+        entity_id=str(purchase_return.id),
+        reason=reason,
+        before_data=before,
+        after_data=after,
+        source_ip=source_ip,
+    )
+    return purchase_return
+
+
+def cancel_purchase_return(
+    db: Session,
+    *,
+    return_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+) -> GspPurchaseReturn:
+    """制单人取消草稿购进退出单。"""
+    return _cancel_purchase_return(
+        db,
+        return_id=return_id,
+        actor_id=actor_id,
+        reason=reason,
+        source_ip=source_ip,
+        rejected=False,
+    )
+
+
+def reject_purchase_return(
+    db: Session,
+    *,
+    return_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+) -> GspPurchaseReturn:
+    """质量人员驳回草稿或已提交的购进退出单（须独立于制单/提交人）。"""
+    return _cancel_purchase_return(
+        db,
+        return_id=return_id,
+        actor_id=actor_id,
+        reason=reason,
+        source_ip=source_ip,
+        rejected=True,
+    )
+
+
+def reject_nonconforming_record(
+    db: Session,
+    *,
+    record_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+) -> GspNonconformingRecord:
+    """质量人员驳回不合格品登记（误登记/证据不足），退回待复核。
+
+    记录转入 REJECTED 后，关联质量锁定仍保持 ACTIVE，需由质量人员走
+    带电子签名的解冻接口复核放行（解冻前会重新核验供货方/品种/批次停售效期）。
+    """
+    record = (
+        db.query(GspNonconformingRecord)
+        .filter(GspNonconformingRecord.id == record_id)
+        .with_for_update()
+        .first()
+    )
+    if not record:
+        raise WorkflowError(404, "不合格品记录不存在")
+    if record.status != "PENDING_APPROVAL":
+        raise WorkflowError(409, "只有待审批的不合格品记录可以驳回")
+    if record.registered_by == actor_id:
+        raise WorkflowError(409, "不合格品登记人不能驳回自己的登记，需由独立质量人员处理")
+    before = model_snapshot(record)
+    record.status = "REJECTED"
+    record.rejected_by = actor_id
+    record.rejected_at = utc_now()
+    record.rejection_reason = reason
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="NONCONFORMING_REJECTED",
+        entity_type="GspNonconformingRecord",
+        entity_id=str(record.id),
+        reason=reason,
+        before_data=before,
+        after_data=model_snapshot(record),
+        source_ip=source_ip,
+    )
+    return record

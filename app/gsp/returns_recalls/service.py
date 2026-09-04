@@ -7,7 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
-from app.gsp.audit import write_audit_event
+from app.gsp.audit import write_audit_event, write_stock_audit_event
 from app.gsp.errors import WorkflowError
 from app.gsp.models import (
     GspBatchStock,
@@ -466,9 +466,11 @@ def inspect_sales_return_item(
         if stock and stock.stock_status != "AVAILABLE":
             raise WorkflowError(409, "目标批号库存当前不可回库")
         if stock:
+            stock_before = model_snapshot(stock)
             ensure_stock_not_frozen(db, [stock.id])
             stock.quantity += payload.accepted_quantity
             stock.lock_version += 1
+            stock_after = model_snapshot(stock)
         else:
             stock = GspBatchStock(
                 batch_id=batch.id,
@@ -479,6 +481,19 @@ def inspect_sales_return_item(
                 stock_status="AVAILABLE",
             )
             db.add(stock)
+            db.flush()
+            stock_before = None
+            stock_after = model_snapshot(stock)
+        write_stock_audit_event(
+            db,
+            actor_user_id=actor_id,
+            action="RETURN_RESTOCKED_AS_AVAILABLE",
+            stock=stock,
+            reason=payload.reason,
+            source_ip=source_ip,
+            before_data=stock_before,
+            after_data=stock_after,
+        )
 
     item.accepted_quantity = payload.accepted_quantity
     item.rejected_quantity = payload.rejected_quantity
@@ -1205,3 +1220,49 @@ def complete_recall_drill(
         source_ip=source_ip,
     )
     return drill
+
+
+def cancel_sales_return(
+    db: Session,
+    *,
+    return_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None,
+) -> GspSalesReturn:
+    """取消尚未开始质量检验的销后退回单（退货收货有误/客户撤销）。
+
+    一旦任一行进入质量检验（不再为 PENDING），必须走完检验与后续处置，
+    不允许整单取消，保证退回货物流向可追溯。
+    """
+    sales_return = (
+        db.query(GspSalesReturn)
+        .filter(GspSalesReturn.id == return_id)
+        .with_for_update()
+        .first()
+    )
+    if not sales_return:
+        raise WorkflowError(404, "销后退回单不存在")
+    if sales_return.status != "PENDING_INSPECTION":
+        raise WorkflowError(409, "只有待检验的销后退回单可以取消")
+    items = _return_items(db, return_id)
+    if any(item.inspection_status != "PENDING" for item in items):
+        raise WorkflowError(409, "退货明细已开始质量检验，不能取消整单；请完成检验与处置")
+    before = sales_return_payload(db, sales_return)
+    sales_return.status = "CANCELLED"
+    sales_return.cancelled_by = actor_id
+    sales_return.cancelled_at = utc_now()
+    sales_return.cancellation_reason = reason
+    db.flush()
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="SALES_RETURN_CANCELLED",
+        entity_type="GspSalesReturn",
+        entity_id=str(sales_return.id),
+        reason=reason,
+        before_data=before,
+        after_data=sales_return_payload(db, sales_return),
+        source_ip=source_ip,
+    )
+    return sales_return
