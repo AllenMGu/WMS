@@ -1,0 +1,2 @@
+execution_id,test_id,protocol_version,backend_sha,frontend_sha,schema_revision,environment,test_data_refs,started_at,completed_at,executed_by,actual_result,result,evidence_refs,deviation_id,retest_of_execution_id,reviewed_by,reviewed_at,review_result,comments
+,,,,,,,,,,,,,,,,,,,

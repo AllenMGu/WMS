@@ -1,0 +1,2 @@
+reconciliation_id,migration_batch_id,object_name,source_name,source_count,target_name,target_count,rejected_count,expected_difference,actual_difference,count_result,key_field_checks,date_checks,quantity_checks,hash_or_digest,source_sample_refs,target_sample_refs,exception_ids,data_owner_result,reviewed_by,reviewed_at
+,,,,,,,,,,,,,,,,,,,,
