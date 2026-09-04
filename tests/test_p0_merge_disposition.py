@@ -178,6 +178,18 @@ def test_nc_misregistration_reject_and_purchase_return_cancel_reject():
             actor_id=procurement.id,
             source_ip="127.0.0.1",
         )
+        # 同一不合格品同一时刻只能关联一张未取消退出单。
+        with pytest.raises(WorkflowError, match="已经关联其他进行中的"):
+            create_purchase_return(
+                db,
+                payload=PurchaseReturnCreate(
+                    return_no=f"PR-D-{uuid4().hex[:6]}",
+                    nonconforming_record_ids=[nc.id],
+                    reason="重复有效退出单应被拒绝",
+                ),
+                actor_id=procurement.id,
+                source_ip="127.0.0.1",
+            )
         with pytest.raises(WorkflowError, match="只有已提交"):
             reject_purchase_return(
                 db, return_id=pr2.id, actor_id=approver.id, reason="草稿不能质量驳回", source_ip="127.0.0.1"
