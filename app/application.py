@@ -11,7 +11,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import settings
 from app.core.database import EXPECTED_SCHEMA_REVISION, Base, SessionLocal, engine
 from app.gsp import models as gsp_models  # noqa: F401 - registers tables
-from app.gsp.reports.router import router as reports_router
 from app.gsp.attachments import models as attachments_models  # noqa: F401
 from app.gsp.attachments.router import router as attachments_router
 from app.gsp.electronic_signature import models as electronic_signature_models  # noqa: F401
@@ -28,6 +27,7 @@ from app.gsp.procurement_receiving.router import router as procurement_receiving
 from app.gsp.quality_disposition.router import router as quality_disposition_router
 from app.gsp.quality_system import models as quality_system_models  # noqa: F401
 from app.gsp.quality_system.router import router as quality_system_router
+from app.gsp.reports.router import router as reports_router
 from app.gsp.returns_recalls.router import router as returns_recalls_router
 from app.gsp.router import router as gsp_router
 from app.gsp.sales_shipping.router import router as sales_shipping_router
