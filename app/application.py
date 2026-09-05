@@ -4,16 +4,14 @@ Legacy WMS routes are preserved while the GSP bounded context evolves behind
 its own router and database tables.
 """
 
-from pathlib import Path
-
 from fastapi import HTTPException
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.core.database import EXPECTED_SCHEMA_REVISION, Base, SessionLocal, engine
 from app.gsp import models as gsp_models  # noqa: F401 - registers tables
+from app.gsp.reports.router import router as reports_router
 from app.gsp.attachments import models as attachments_models  # noqa: F401
 from app.gsp.attachments.router import router as attachments_router
 from app.gsp.electronic_signature import models as electronic_signature_models  # noqa: F401
@@ -30,7 +28,6 @@ from app.gsp.procurement_receiving.router import router as procurement_receiving
 from app.gsp.quality_disposition.router import router as quality_disposition_router
 from app.gsp.quality_system import models as quality_system_models  # noqa: F401
 from app.gsp.quality_system.router import router as quality_system_router
-from app.gsp.reports.router import router as reports_router
 from app.gsp.returns_recalls.router import router as returns_recalls_router
 from app.gsp.router import router as gsp_router
 from app.gsp.sales_shipping.router import router as sales_shipping_router
@@ -45,8 +42,8 @@ app.description = (
     "WMS兼容接口与独立GSP质量域。GSP接口默认位于 /api/gsp；对接九州通等外部平台时通过集成出站箱解耦。"
 )
 app.include_router(gsp_router, prefix="/api")
-app.include_router(attachments_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(attachments_router, prefix="/api")
 app.include_router(procurement_receiving_router, prefix="/api")
 app.include_router(quality_disposition_router, prefix="/api")
 app.include_router(quality_system_router, prefix="/api")
@@ -111,15 +108,3 @@ async def readiness():
         raise HTTPException(status_code=503, detail={"status": "not_ready", "database": "failed"})
     finally:
         db.close()
-
-
-# 前端静态资源：frontend/ 目录由本应用同源提供（页面内相对路径 "api" 即 /api）。
-# 本地演示/部署集成 overlay（上游 AllenMGu/WMS 仓库不含 frontend/，本段为本地重加）。
-# 挂载放在最后，保证 /api、/docs、/health 等路由优先匹配。
-_frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
-if _frontend_dir.is_dir():
-    app.mount(
-        "/",
-        StaticFiles(directory=str(_frontend_dir), html=True),
-        name="frontend",
-    )
