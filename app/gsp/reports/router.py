@@ -159,7 +159,12 @@ def print_report(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="报表不存在") from exc
 
-    copy_no = f"RPT-{report_key[:8].upper()}-{uuid.uuid4().hex[:12].upper()}"
+    is_preview = not definition.production_ready and payload.preview
+    copy_no = (
+        f"PREVIEW-{report_key[:8].upper()}-{uuid.uuid4().hex[:12].upper()}"
+        if is_preview
+        else f"RPT-{report_key[:8].upper()}-{uuid.uuid4().hex[:12].upper()}"
+    )
     html = render_printable_html(
         result,
         meta={
@@ -169,6 +174,7 @@ def print_report(
             "reason": payload.reason,
             "filters": result["filters"],
             "truncated": truncated,
+            "is_preview": is_preview,
         },
     )
     record = record_print(
@@ -182,12 +188,13 @@ def print_report(
         copy_no=copy_no,
         template_version=definition.template_version,
         truncated=truncated,
-        preview=not definition.production_ready,
+        preview=is_preview,
+        status="PREVIEW" if is_preview else "GENERATED",
     )
     write_audit_event(
         db,
         actor_user_id=current_user.id,
-        action="REPORT_PRINTED",
+        action="REPORT_PREVIEW_PRINTED" if is_preview else "REPORT_PRINTED",
         entity_type="GspControlledPrintRecord",
         entity_id=str(record.id),
         reason=payload.reason,
@@ -227,7 +234,7 @@ def list_print_records(
     items = [
         {
             "id": r.id, "copy_no": r.copy_no, "document_type": r.document_type,
-            "purpose": r.purpose, "content_hash": r.content_hash,
+            "status": r.status, "purpose": r.purpose, "content_hash": r.content_hash,
             "printed_by": r.printed_by, "printed_at": r.printed_at,
             "snapshot": {
                 "title": (r.snapshot_data or {}).get("title"),

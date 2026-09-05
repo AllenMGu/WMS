@@ -172,6 +172,10 @@ def run_full_print_rows(db: Session, key: str, filters=None) -> dict:
         raise KeyError(key)
     filters = {str(k): str(v).strip() for k, v in (filters or {}).items() if v not in (None, "")}
     if db.bind is not None and db.bind.dialect.name == "postgresql":
+        # Earlier ACL queries autobegan a transaction on this session; the
+        # isolation level can only be changed on a fresh transaction.
+        if db.in_transaction():
+            db.rollback()
         db.connection().execution_options(isolation_level="REPEATABLE READ")
     base = _apply_filters(db.query(report.entity), report, filters)
     total = base.count()
@@ -250,6 +254,11 @@ def render_printable_html(result: dict, meta: dict) -> str:
         if truncated
         else ""
     )
+    preview_banner = (
+        "<div class='preview'>开发预览—非受控：禁止作为正式GSP记录归档/放行</div>"
+        if meta.get("is_preview")
+        else ""
+    )
     filters_txt = json.dumps(meta.get("filters") or {}, ensure_ascii=False) or "无"
     now = datetime.now().isoformat(timespec="seconds")
     return f"""<!DOCTYPE html>
@@ -260,8 +269,10 @@ h1{{font-size:20px}} h2{{font-size:13px;font-weight:normal;color:#444}}
 table{{border-collapse:collapse;width:100%;font-size:12px}}
 th,td{{border:1px solid #999;padding:4px 6px;text-align:left}}
 th{{background:#eef2f7}} .warn{{color:#b00}} .foot{{margin-top:12px;font-size:11px;color:#555}}
+.preview{{border:2px solid #b00;color:#b00;font-weight:bold;padding:6px;margin:8px 0;text-align:center}}
 .meta{{font-size:11px;color:#333;border:1px dashed #888;padding:6px;margin:8px 0}}
 </style></head><body>
+{preview_banner}
 <h1>{esc(result['title'])}</h1>
 <div class="meta">
 受控编号：{esc(meta['copy_no'])} · 模板版本：{esc(meta['template_version'])}<br>
@@ -289,6 +300,7 @@ def record_print(
     truncated: bool,
     as_of_max_id: int | None = None,
     preview: bool = False,
+    status: str = "GENERATED",
 ) -> GspControlledPrintRecord:
     snapshot = {
         "document_type": f"REPORT:{key}",

@@ -178,17 +178,36 @@ def test_print_meta_and_truncation_and_full_hash_tamper(ctx):
     assert "共 4 行" in r2.json()["html"] and "已截断" not in r2.json()["html"]
     rec2 = ctx["db"].get(GspControlledPrintRecord, r2.json()["print_id"])
     assert rec2.snapshot_data["truncated"] is False and rec2.snapshot_data["total"] == 4
-    # tamper with controlled snapshot fields -> verify must fail
-    assert client.post(f"/api/gsp/reports/prints/{r2.json()['print_id']}/verify").json()["valid"] is True
-    rec2.snapshot_data = {**rec2.snapshot_data, "total": rec2.snapshot_data["total"] + 1}
+    # tamper detection: one independent record per field (never mutate twice)
+    def make_print():
+        rr = client.post("/api/gsp/reports/audit_event_ledger/print",
+                         json={"reason": "tamper 用例", "limit": 5})
+        assert rr.status_code == 200
+        return ctx["db"].get(GspControlledPrintRecord, rr.json()["print_id"])
+
+    rec_total = make_print()
+    rec_total.snapshot_data = {**rec_total.snapshot_data, "total": rec_total.snapshot_data["total"] + 1}
     ctx["db"].commit()
-    assert client.post(f"/api/gsp/reports/prints/{r2.json()['print_id']}/verify").json()["valid"] is False
-    rec2.snapshot_data = {**rec2.snapshot_data, "generated_at": "2099-01-01T00:00:00"}
+    assert client.post(f"/api/gsp/reports/prints/{rec_total.id}/verify").json()["valid"] is False
+
+    rec_gen = make_print()
+    rec_gen.snapshot_data = {**rec_gen.snapshot_data, "generated_at": "2099-01-01T00:00:00"}
     ctx["db"].commit()
-    assert client.post(f"/api/gsp/reports/prints/{r2.json()['print_id']}/verify").json()["valid"] is False
-    rec2.copy_no = "RPT-TAMPERED"
+    assert client.post(f"/api/gsp/reports/prints/{rec_gen.id}/verify").json()["valid"] is False
+
+    rec_copy = make_print()
+    rec_copy.copy_no = "RPT-TAMPERED"
     ctx["db"].commit()
-    assert client.post(f"/api/gsp/reports/prints/{r2.json()['print_id']}/verify").json()["valid"] is False
+    assert client.post(f"/api/gsp/reports/prints/{rec_copy.id}/verify").json()["valid"] is False
+
+    rec_outer_tpl = make_print()
+    rec_outer_tpl.template_version = "v999"
+    ctx["db"].commit()
+    assert client.post(f"/api/gsp/reports/prints/{rec_outer_tpl.id}/verify").json()["valid"] is False
+
+    # an untouched record still verifies
+    ok = make_print()
+    assert client.post(f"/api/gsp/reports/prints/{ok.id}/verify").json()["valid"] is True
 
 
 def test_unknown_filter_and_pagination(ctx):
