@@ -2,8 +2,11 @@
 
 All operations require an active GSP role and write to the append-only audit
 trail.  Disabling (the only lifecycle change, no delete) additionally requires
-a quality manager.  Every handler validates server-side truth: hashes are
-computed by the store and client-declared hashes are cross-checked.
+a quality manager.  Every handler validates server-side truth: hashes and the
+content type are decided by the server, and downloads re-verify the stored
+bytes before any are returned.  Business-row creation and its audit event are
+committed in a single database transaction so an audit failure cannot leave a
+controlled file without its FILE_UPLOADED trail.
 """
 
 from __future__ import annotations
@@ -50,6 +53,22 @@ def _audit(db: Session, actor: User, action: str, entity_id: str, reason: str) -
     )
 
 
+def _commit_with_audit(
+    db: Session, actor: User, action: str, entity_id: str, reason: str
+) -> None:
+    """Append the audit event and commit as one transaction.
+
+    If the audit write or the commit fails, the whole transaction is rolled
+    back so a business change can never survive without its audit trail.
+    """
+    try:
+        _audit(db, actor, action, entity_id, reason)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
 def _get_or_404(db: Session, object_key: str) -> GspControlledFile:
     obj = (
         db.query(GspControlledFile)
@@ -59,6 +78,15 @@ def _get_or_404(db: Session, object_key: str) -> GspControlledFile:
     if obj is None:
         raise HTTPException(status_code=404, detail="受控文件不存在")
     return obj
+
+
+def _integrity_ok(obj: GspControlledFile) -> bool:
+    result = storage.verify_stored(obj.sha256, obj.size_bytes, full_hash=True)
+    return bool(
+        result["exists_on_disk"]
+        and result["size_matches"]
+        and result["sha256_matches"]
+    )
 
 
 @router.post("", status_code=201, response_model=ControlledFileOut)
@@ -85,7 +113,7 @@ def upload_file(
     obj = GspControlledFile(
         object_key=uuid.uuid4().hex,
         file_name=file_name,
-        content_type=_content_type_label(file),
+        content_type=stored.content_type,
         size_bytes=stored.size_bytes,
         sha256=stored.sha256,
         purpose=request.purpose,
@@ -95,24 +123,21 @@ def upload_file(
         note=request.note,
     )
     db.add(obj)
-    db.commit()
+    try:
+        db.flush()  # assign obj.id inside the same transaction as the audit row
+        _commit_with_audit(
+            db,
+            current_user,
+            "FILE_UPLOADED",
+            str(obj.id),
+            f"上传受控文件 {file_name}（{request.purpose}，{stored.size_bytes} 字节，"
+            f"{stored.content_type}）",
+        )
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(obj)
-    _audit(
-        db,
-        current_user,
-        "FILE_UPLOADED",
-        str(obj.id),
-        f"上传受控文件 {file_name}（{request.purpose}，{stored.size_bytes} 字节）",
-    )
-    db.commit()
     return ControlledFileOut.from_model(obj)
-
-
-def _content_type_label(file: UploadFile) -> str:
-    normalized = (file.content_type or "").split(";")[0].strip().lower()
-    if normalized in storage.ALLOWED_CONTENT_TYPES:
-        return normalized
-    return "application/octet-stream"
 
 
 @router.get("/{object_key}", response_model=ControlledFileOut)
@@ -130,16 +155,30 @@ def file_content(
     current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
+    """Download only after re-verifying size + SHA-256 of the stored bytes."""
     obj = _get_or_404(db, object_key)
     if obj.status != STATUS_ACTIVE:
         raise HTTPException(status_code=410, detail="受控文件已停用，禁止下载")
+    if not _integrity_ok(obj):
+        try:
+            _commit_with_audit(
+                db,
+                current_user,
+                "FILE_INTEGRITY_LOST",
+                str(obj.id),
+                "下载前完整性校验失败（大小或 SHA-256 不符），已拒绝返回内容",
+            )
+        except Exception:
+            db.rollback()
+            raise
+        raise HTTPException(
+            status_code=410,
+            detail="受控文件完整性校验失败，已拒绝下载，请联系质量部门",
+        )
     path = storage.content_path(obj.sha256)
-    if not os.path.exists(path):
-        _audit(db, current_user, "FILE_INTEGRITY_LOST", str(obj.id), "下载时发现受控文件缺失")
-        db.commit()
-        raise HTTPException(status_code=410, detail="受控文件在存储中缺失，请联系质量部门")
-    _audit(db, current_user, "FILE_DOWNLOADED", str(obj.id), f"下载受控文件 {obj.file_name}")
-    db.commit()
+    _commit_with_audit(
+        db, current_user, "FILE_DOWNLOADED", str(obj.id), f"下载受控文件 {obj.file_name}"
+    )
     return FileResponse(
         path,
         media_type=obj.content_type,
@@ -161,14 +200,13 @@ def verify_file(
         and result["size_matches"]
         and result["sha256_matches"]
     )
-    _audit(
+    _commit_with_audit(
         db,
         current_user,
         "FILE_VERIFIED" if valid else "FILE_VERIFY_FAILED",
         str(obj.id),
         f"完整性校验{'通过' if valid else '失败'}：存储中存在={result['exists_on_disk']}",
     )
-    db.commit()
     return FileVerifyResult(
         object_key=obj.object_key,
         ref=f"gspf:{obj.object_key}",
@@ -192,14 +230,8 @@ def disable_file(
     obj = _get_or_404(db, object_key)
     if obj.status == STATUS_ACTIVE:
         obj.status = STATUS_DISABLED
-        db.commit()
-        db.refresh(obj)
-    _audit(
-        db,
-        current_user,
-        "FILE_DISABLED",
-        str(obj.id),
-        payload.reason,
+    _commit_with_audit(
+        db, current_user, "FILE_DISABLED", str(obj.id), payload.reason
     )
-    db.commit()
+    db.refresh(obj)
     return ControlledFileOut.from_model(obj)
