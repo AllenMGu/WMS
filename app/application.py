@@ -11,6 +11,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import settings
 from app.core.database import EXPECTED_SCHEMA_REVISION, Base, SessionLocal, engine
 from app.gsp import models as gsp_models  # noqa: F401 - registers tables
+from app.gsp.attachments import models as attachments_models  # noqa: F401
+from app.gsp.attachments.router import router as attachments_router
 from app.gsp.electronic_signature import models as electronic_signature_models  # noqa: F401
 from app.gsp.electronic_signature.router import router as electronic_signature_router
 from app.gsp.environment import models as environment_models  # noqa: F401
@@ -39,6 +41,7 @@ app.description = (
     "WMS兼容接口与独立GSP质量域。GSP接口默认位于 /api/gsp；对接九州通等外部平台时通过集成出站箱解耦。"
 )
 app.include_router(gsp_router, prefix="/api")
+app.include_router(attachments_router, prefix="/api")
 app.include_router(procurement_receiving_router, prefix="/api")
 app.include_router(quality_disposition_router, prefix="/api")
 app.include_router(quality_system_router, prefix="/api")
