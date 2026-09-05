@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
+from app.gsp.attachments.bindings import resolve_attachment
 from app.gsp.audit import write_audit_event
 from app.gsp.environment.models import (
     GspEnvironmentAlarm,
@@ -125,12 +126,21 @@ def add_carrier_document(
         carrier.status = "PENDING"
         carrier.approved_by = None
         carrier.approved_at = None
+    file_ref, file_sha256, file_size_bytes = resolve_attachment(
+        db,
+        value=payload.file_ref,
+        expected_purpose="CARRIER_DOCUMENT",
+        declared_sha=payload.file_sha256,
+        declared_size=payload.file_size_bytes,
+    )
     document = GspCarrierDocument(
         carrier_id=carrier.id,
         document_type=payload.document_type,
         document_no=payload.document_no,
         valid_to=payload.valid_to,
-        file_ref=payload.file_ref,
+        file_ref=file_ref,
+        file_sha256=file_sha256,
+        file_size_bytes=file_size_bytes,
         status="PENDING",
         created_by=actor_id,
     )

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.time import utc_now
 from app.gsp.access_control import grant_gsp_role, review_gsp_role, revoke_gsp_role
+from app.gsp.attachments.bindings import resolve_attachment
 from app.gsp.audit import (
     record_audit_verification,
     verify_audit_chain,
@@ -831,15 +832,22 @@ async def create_partner_document(
             reason=f"供货方资质变更：{payload.reason}",
             source_ip=_source_ip(request),
         )
+    file_ref, file_sha256, file_size_bytes = resolve_attachment(
+        db,
+        value=payload.file_ref,
+        expected_purpose="PARTNER_DOCUMENT",
+        declared_sha=payload.file_sha256,
+        declared_size=payload.file_size_bytes,
+    )
     document = GspPartnerDocument(
         partner_id=partner.id,
         document_type=document_type,
         document_no=payload.document_no,
         valid_from=payload.valid_from,
         valid_to=payload.valid_to,
-        file_ref=payload.file_ref,
-        file_sha256=payload.file_sha256,
-        file_size_bytes=payload.file_size_bytes,
+        file_ref=file_ref,
+        file_sha256=file_sha256,
+        file_size_bytes=file_size_bytes,
         person_name=payload.person_name,
         person_role=payload.person_role,
         created_by=current_user.id,
@@ -1006,6 +1014,25 @@ def _upsert_supplier_product_record(
     return authorization, before, created
 
 
+def _bind_supplier_authorization_values(db: Session, values: dict) -> None:
+    """Validate/normalise supplier-product authorisation evidence attachment.
+
+    Token (``gspf:``) references are resolved against the controlled store and
+    the server-side hash/size win; under ATTACHMENT_POLICY=enforce plain
+    references are rejected.  Mutates ``values`` in place.
+    """
+    resolved = resolve_attachment(
+        db,
+        value=values.get("authorization_ref"),
+        expected_purpose="SUPPLIER_PRODUCT_AUTHORIZATION",
+        declared_sha=values.get("authorization_sha256"),
+        declared_size=values.get("authorization_size_bytes"),
+    )
+    values["authorization_ref"] = resolved[0]
+    values["authorization_sha256"] = resolved[1]
+    values["authorization_size_bytes"] = resolved[2]
+
+
 @router.get(
     "/supplier-product-authorizations",
     response_model=list[SupplierProductAuthorizationResponse],
@@ -1103,6 +1130,7 @@ async def upsert_supplier_product(
     if payload.valid_to < date.today():
         raise HTTPException(422, "不能录入已经过期的供货品种授权")
     values = payload.model_dump(exclude={"reason", "goods_id"})
+    _bind_supplier_authorization_values(db, values)
     authorization, before, _ = _upsert_supplier_product_record(
         db,
         supplier_id=partner_id,
@@ -1170,12 +1198,9 @@ async def bulk_import_supplier_products(
             raise HTTPException(422, f"货物 {barcode} 的授权结束日期早于开始日期")
         if row.valid_to < date.today():
             raise HTTPException(422, f"货物 {barcode} 的供货授权已经过期")
-        prepared.append(
-            (
-                goods.id,
-                row.model_dump(exclude={"goods_barcode", "approval_no"}),
-            )
-        )
+        row_values = row.model_dump(exclude={"goods_barcode", "approval_no"})
+        _bind_supplier_authorization_values(db, row_values)
+        prepared.append((goods.id, row_values))
 
     created = 0
     updated = 0
@@ -1382,6 +1407,16 @@ async def upsert_drug_profile(
     values = payload.dict(exclude={"reason"})
     values["regulatory_category"] = regulatory_category
     values["is_special_controlled"] = regulatory_category != "GENERAL"
+    _reg_ref, _reg_sha, _reg_size = resolve_attachment(
+        db,
+        value=values.get("registration_document_ref"),
+        expected_purpose="DRUG_REGISTRATION",
+        declared_sha=values.get("registration_document_sha256"),
+        declared_size=values.get("registration_document_size_bytes"),
+    )
+    values["registration_document_ref"] = _reg_ref
+    values["registration_document_sha256"] = _reg_sha
+    values["registration_document_size_bytes"] = _reg_size
     if profile:
         _invalidate_supplier_product_authorizations(
             db,

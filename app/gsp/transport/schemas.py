@@ -36,6 +36,8 @@ class CarrierDocumentCreate(ChangeReason):
     document_no: str = Field(..., min_length=2, max_length=100)
     valid_to: date
     file_ref: str = Field(..., min_length=3, max_length=500)
+    file_sha256: str | None = Field(None, pattern="^[0-9a-f]{64}$")
+    file_size_bytes: int | None = Field(None, gt=0)
 
 
 class CarrierVehicleCreate(ChangeReason):
@@ -82,6 +84,8 @@ class CarrierDocumentResponse(OrmModel):
     document_no: str
     valid_to: date
     file_ref: str
+    file_sha256: str | None
+    file_size_bytes: int | None
     status: str
     created_by: int
     verified_by: int | None
