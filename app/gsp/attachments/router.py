@@ -33,10 +33,8 @@ from app.gsp.attachments.schemas import (
     UploadRequest,
 )
 from app.gsp.audit import write_audit_event
-from app.gsp.dependencies import (
-    require_any_gsp_role,
-    require_quality_manager_or_bootstrap,
-)
+from app.gsp.dependencies import require_any_gsp_role
+from app.gsp.models import GspRoleAssignment
 from app.legacy import User
 
 router = APIRouter(prefix="/gsp/files", tags=["GSP受控附件"])
@@ -219,15 +217,40 @@ def verify_file(
     )
 
 
+def _may_disable(db: Session, obj: GspControlledFile, user: User) -> bool:
+    """Quality managers may disable any file; the uploader may retire their own
+    (e.g. an unbound attachment abandoned by a cancelled form)."""
+    now = utc_now()
+    roles = {
+        row.role
+        for row in db.query(GspRoleAssignment).filter(
+            GspRoleAssignment.user_id == user.id,
+            GspRoleAssignment.is_active.is_(True),
+            GspRoleAssignment.review_due_at > now,
+            (
+                GspRoleAssignment.expires_at.is_(None)
+                | (GspRoleAssignment.expires_at > now)
+            ),
+        )
+    }
+    return "QUALITY_MANAGER" in roles or obj.uploaded_by == user.id
+
+
 @router.post("/{object_key}/disable", response_model=ControlledFileOut)
 def disable_file(
     object_key: str,
     payload: FileActionIn,
-    current_user: User = Depends(require_quality_manager_or_bootstrap),
+    current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
-    """质量经理停用附件（不删除字节与审计记录；停用后禁止新下载/新引用）。"""
+    """停用附件（不删除字节与审计记录；停用后禁止新下载/新引用）。
+
+    质量经理可停用任意文件；上传人本人可停用自己的文件（用于清理未绑定/
+    误传的受控对象）。
+    """
     obj = _get_or_404(db, object_key)
+    if not _may_disable(db, obj, current_user):
+        raise HTTPException(status_code=403, detail="仅质量经理或上传人本人可以停用该受控文件")
     if obj.status == STATUS_ACTIVE:
         obj.status = STATUS_DISABLED
     _commit_with_audit(
