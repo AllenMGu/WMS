@@ -1,6 +1,8 @@
-"""HTTP API for business reports and controlled printing (P1)."""
+"""HTTP API for business reports and controlled printing (P1, reviewed)."""
 
 from __future__ import annotations
+
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -21,6 +23,7 @@ from app.gsp.reports import (
     run_full_print_rows,
     run_report,
     verify_record_content,
+    visible_report_keys,
 )
 from app.legacy import User
 
@@ -62,10 +65,7 @@ def _user_roles(db: Session, user_id: int) -> set[str]:
             GspRoleAssignment.user_id == user_id,
             GspRoleAssignment.is_active.is_(True),
             GspRoleAssignment.review_due_at > now,
-            (
-                GspRoleAssignment.expires_at.is_(None)
-                | (GspRoleAssignment.expires_at > now)
-            ),
+            (GspRoleAssignment.expires_at.is_(None) | (GspRoleAssignment.expires_at > now)),
         )
         .all()
     )
@@ -80,15 +80,34 @@ def _ensure_report_access(db: Session, report_key: str, user: User) -> None:
     if not definition.allowed_for(roles):
         raise HTTPException(
             status_code=403,
-            detail="当前岗位无权访问该报表（需要：%s）" % (", ".join(definition.roles) if definition.roles else "任一GSP岗位"),
+            detail="当前岗位无权访问该报表（需要：%s）"
+            % (", ".join(definition.roles) if definition.roles else "任一GSP岗位"),
         )
+
+
+def _visible_keys(db: Session, user: User) -> set[str]:
+    return visible_report_keys(_user_roles(db, user.id))
+
+
+def _report_key_of(record: GspControlledPrintRecord) -> str | None:
+    prefix = "REPORT:"
+    dtype = record.document_type or ""
+    return dtype[len(prefix):] if dtype.startswith(prefix) else None
+
+
+def _get_report_record(db: Session, print_id: int) -> GspControlledPrintRecord:
+    record = db.get(GspControlledPrintRecord, print_id)
+    if record is None or not (record.document_type or "").startswith("REPORT:"):
+        raise HTTPException(status_code=404, detail="受控打印记录不存在")
+    return record
 
 
 @router.get("", response_model=list[dict])
 def list_reports(
     current_user: User = Depends(require_any_gsp_role),
+    db: Session = Depends(get_db),
 ):
-    return report_catalog()
+    return report_catalog(visible_keys=_visible_keys(db, current_user))
 
 
 @router.get("/{report_key}", response_model=dict)
@@ -119,24 +138,33 @@ def print_report(
     db: Session = Depends(get_db),
 ):
     _ensure_report_access(db, report_key, current_user)
+    definition = _REPORT_MAP[report_key]
     try:
         if payload.cover_all:
             result = run_full_print_rows(db, report_key, filters=payload.filters)
+            truncated = False  # full print either covers all or raised (MAX_ROWS)
         else:
             result = run_report(
                 db, report_key,
                 filters=payload.filters, limit=payload.limit, offset=payload.offset,
             )
+            truncated = result["has_more"]
     except ReportError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="报表不存在") from exc
-    truncated = result["has_more"] and not payload.cover_all
+
+    copy_no = f"RPT-{report_key[:8].upper()}-{uuid.uuid4().hex[:12].upper()}"
     html = render_printable_html(
         result,
-        generated_by=current_user.full_name or current_user.username,
-        reason=payload.reason,
-        truncated=truncated,
+        meta={
+            "copy_no": copy_no,
+            "template_version": definition.template_version,
+            "generated_by": current_user.full_name or current_user.username,
+            "reason": payload.reason,
+            "filters": result["filters"],
+            "truncated": truncated,
+        },
     )
     record = record_print(
         db,
@@ -146,6 +174,9 @@ def print_report(
         printed_by=current_user.id,
         purpose=payload.reason,
         cover_all=payload.cover_all,
+        copy_no=copy_no,
+        template_version=definition.template_version,
+        truncated=truncated,
     )
     write_audit_event(
         db,
@@ -157,6 +188,7 @@ def print_report(
         after_data={
             "report_key": report_key,
             "copy_no": record.copy_no,
+            "template_version": definition.template_version,
             "content_hash": record.content_hash,
             "count": result["count"],
             "total": result["total"],
@@ -166,12 +198,8 @@ def print_report(
     )
     db.commit()
     db.refresh(record)
-    return PrintOut(
-        print_id=record.id,
-        copy_no=record.copy_no,
-        content_hash=record.content_hash or "",
-        html=html,
-    )
+    return PrintOut(print_id=record.id, copy_no=record.copy_no,
+                    content_hash=record.content_hash or "", html=html)
 
 
 @router.get("/prints/list", response_model=list[dict])
@@ -181,6 +209,7 @@ def list_print_records(
     current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
+    visible = _visible_keys(db, current_user)
     records = (
         db.query(GspControlledPrintRecord)
         .filter(GspControlledPrintRecord.document_type.like("REPORT:%"))
@@ -189,25 +218,26 @@ def list_print_records(
         .limit(limit)
         .all()
     )
-    return [
-        {
-            "id": r.id,
-            "copy_no": r.copy_no,
-            "document_type": r.document_type,
-            "purpose": r.purpose,
-            "content_hash": r.content_hash,
-            "printed_by": r.printed_by,
-            "printed_at": r.printed_at,
+    out = []
+    for r in records:
+        key = _report_key_of(r)
+        if key is None or key not in visible:
+            continue
+        out.append({
+            "id": r.id, "copy_no": r.copy_no, "document_type": r.document_type,
+            "purpose": r.purpose, "content_hash": r.content_hash,
+            "printed_by": r.printed_by, "printed_at": r.printed_at,
             "snapshot": {
                 "title": (r.snapshot_data or {}).get("title"),
+                "template_version": (r.snapshot_data or {}).get("template_version"),
                 "count": (r.snapshot_data or {}).get("count"),
                 "total": (r.snapshot_data or {}).get("total"),
                 "truncated": (r.snapshot_data or {}).get("truncated"),
+                "cover_all": (r.snapshot_data or {}).get("cover_all"),
                 "filters": (r.snapshot_data or {}).get("filters"),
             },
-        }
-        for r in records
-    ]
+        })
+    return out
 
 
 @router.get("/prints/{print_id}", response_model=PrintOut)
@@ -216,16 +246,13 @@ def fetch_print(
     current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
-    record = db.get(GspControlledPrintRecord, print_id)
-    if record is None or not (record.document_type or "").startswith("REPORT:"):
-        raise HTTPException(status_code=404, detail="受控打印记录不存在")
+    record = _get_report_record(db, print_id)
+    key = _report_key_of(record)
+    if key:
+        _ensure_report_access(db, key, current_user)
     html = (record.snapshot_data or {}).get("html") or ""
-    return PrintOut(
-        print_id=record.id,
-        copy_no=record.copy_no,
-        content_hash=record.content_hash or "",
-        html=html,
-    )
+    return PrintOut(print_id=record.id, copy_no=record.copy_no,
+                    content_hash=record.content_hash or "", html=html)
 
 
 @router.post("/prints/{print_id}/verify", response_model=PrintVerifyOut)
@@ -234,7 +261,8 @@ def verify_print(
     current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
-    record = db.get(GspControlledPrintRecord, print_id)
-    if record is None or not (record.document_type or "").startswith("REPORT:"):
-        raise HTTPException(status_code=404, detail="受控打印记录不存在")
+    record = _get_report_record(db, print_id)
+    key = _report_key_of(record)
+    if key:
+        _ensure_report_access(db, key, current_user)
     return PrintVerifyOut(print_id=record.id, valid=verify_record_content(record))
