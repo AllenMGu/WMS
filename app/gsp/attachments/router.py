@@ -251,8 +251,11 @@ def disable_file(
     obj = _get_or_404(db, object_key)
     if not _may_disable(db, obj, current_user):
         raise HTTPException(status_code=403, detail="仅质量经理或上传人本人可以停用该受控文件")
-    if obj.status == STATUS_ACTIVE:
-        obj.status = STATUS_DISABLED
+    if obj.status == STATUS_DISABLED:
+        # Idempotent: already retired by an earlier attempt (e.g. double
+        # cancellation from the browser); do not emit a second audit row.
+        return ControlledFileOut.from_model(obj)
+    obj.status = STATUS_DISABLED
     _commit_with_audit(
         db, current_user, "FILE_DISABLED", str(obj.id), payload.reason
     )
