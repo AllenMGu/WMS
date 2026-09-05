@@ -9,10 +9,11 @@ hash is only used as a cross-check.  The same bytes uploaded twice map to the
 same path, so re-uploads are de-duplicated and existing objects can never be
 overwritten by different content.
 
-File type is decided **server-side from content signatures** (magic bytes),
-never from the client-declared multipart ``Content-Type``; a lying declaration
-is rejected.  ZIP-family files (docx/xlsx/plain zip) are told apart by their
-container entries where possible.
+File type is decided **server-side from content**: magic bytes for
+PDF/JPEG/PNG/WebP; OLE2 compound storage is told apart (.doc vs .xls) by its
+stream names; OOXML and plain ZIP are validated by reading the real container
+(entry list + ``[Content_Types].xml``) rather than scanning the head bytes.
+A lying client-declared ``Content-Type`` is rejected.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import zipfile
 from typing import BinaryIO
 
 from app.core.config import settings
@@ -31,6 +33,7 @@ CONTENT_TYPE_JPEG = "image/jpeg"
 CONTENT_TYPE_PNG = "image/png"
 CONTENT_TYPE_WEBP = "image/webp"
 CONTENT_TYPE_MSWORD_OLD = "application/msword"
+CONTENT_TYPE_XLS_OLD = "application/vnd.ms-excel"
 CONTENT_TYPE_DOCX = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
@@ -45,6 +48,7 @@ ALLOWED_CONTENT_TYPES = {
     CONTENT_TYPE_PNG,
     CONTENT_TYPE_WEBP,
     CONTENT_TYPE_MSWORD_OLD,
+    CONTENT_TYPE_XLS_OLD,
     CONTENT_TYPE_DOCX,
     CONTENT_TYPE_XLSX,
     CONTENT_TYPE_ZIP,
@@ -53,8 +57,16 @@ ALLOWED_CONTENT_TYPES = {
 }
 _TEXT_TYPES = {CONTENT_TYPE_CSV, CONTENT_TYPE_TXT}
 
+# Guards for OOXML/zip containers (we never extract payloads, but still bound
+# the container metadata we are willing to parse).
+_MAX_ZIP_ENTRIES = 4096
+_MAX_ZIP_CONTENT_TYPES_BYTES = 1024 * 1024
+
 STORAGE_ROOT_ENV = "ATTACHMENT_DIR"
 _SNIFF_LIMIT = 1024 * 1024  # bytes of the head used for type detection
+
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_ZIP_MAGIC = b"PK\x03\x04"
 
 
 class StoredFile:
@@ -83,8 +95,60 @@ def content_path(sha256: str) -> str:
     return os.path.join(root, sha256[:2], sha256)
 
 
+def _utf16_in(head: bytes, ascii_name: str) -> bool:
+    return ascii_name.encode("utf-16-le") in head
+
+
+def _classify_ole2(head: bytes, declared: str) -> str:
+    """Distinguish legacy .doc / .xls by OLE stream names (UTF-16LE entries)."""
+    if _utf16_in(head, "WordDocument"):
+        return CONTENT_TYPE_MSWORD_OLD
+    if _utf16_in(head, "Workbook") or _utf16_in(head, "Book"):
+        return CONTENT_TYPE_XLS_OLD
+    # Legacy Office container that we cannot tell apart reliably: keep the
+    # declared type only when it is one of the two legacy Office types.
+    if declared in (CONTENT_TYPE_MSWORD_OLD, CONTENT_TYPE_XLS_OLD):
+        return declared
+    raise ValueError("无法可靠识别该旧版 Office 容器类型（仅支持 .doc/.xls）")
+
+
+def _classify_ooxml_zip(path: str) -> str:
+    """Validate a real ZIP/OOXML container and return its canonical type.
+
+    Reads only the central directory entry list and ``[Content_Types].xml``;
+    payloads are never extracted, so expansion/ratio bombs are not a risk on
+    top of the container-entry bound applied here.
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+            if len(names) > _MAX_ZIP_ENTRIES:
+                raise ValueError(
+                    f"ZIP/OOXML 容器条目数超过限制（>{_MAX_ZIP_ENTRIES}），疑似异常容器"
+                )
+            if "[Content_Types].xml" not in names:
+                return CONTENT_TYPE_ZIP
+            with zf.open("[Content_Types].xml") as ct_stream:
+                content_types = ct_stream.read(_MAX_ZIP_CONTENT_TYPES_BYTES + 1)
+            if len(content_types) > _MAX_ZIP_CONTENT_TYPES_BYTES:
+                raise ValueError("OOXML [Content_Types].xml 异常过大")
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, NotImplementedError) as exc:
+        raise ValueError("损坏或不支持的 ZIP/OOXML 容器") from exc
+
+    if any(name.startswith("word/") for name in names) and (
+        b"wordprocessingml.document" in content_types
+    ):
+        return CONTENT_TYPE_DOCX
+    if any(name.startswith("xl/") for name in names) and (
+        b"spreadsheetml.sheet" in content_types
+    ):
+        return CONTENT_TYPE_XLSX
+    # Container declares content types but none is a known OOXML document.
+    return CONTENT_TYPE_ZIP
+
+
 def detect_mime(head: bytes) -> str | None:
-    """Server-side file-type detection from content signatures (magic bytes)."""
+    """Magic-byte detection for the non-container formats."""
     if head.startswith(b"%PDF-"):
         return CONTENT_TYPE_PDF
     if head.startswith(b"\xff\xd8\xff"):
@@ -93,18 +157,6 @@ def detect_mime(head: bytes) -> str | None:
         return CONTENT_TYPE_PNG
     if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return CONTENT_TYPE_WEBP
-    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
-        # OLE2 compound file: legacy .doc/.xls/.ppt cannot be told apart by magic.
-        return CONTENT_TYPE_MSWORD_OLD
-    if head.startswith(b"PK\x03\x04"):
-        # OOXML documents are ZIP containers; inspect early entries for the
-        # central document part so docx/xlsx are not mislabelled as plain zip.
-        if b"[Content_Types].xml" in head:
-            if b"word/document.xml" in head or b"word/" in head:
-                return CONTENT_TYPE_DOCX
-            if b"xl/workbook.xml" in head or b"xl/" in head:
-                return CONTENT_TYPE_XLSX
-        return CONTENT_TYPE_ZIP
     return None
 
 
@@ -112,27 +164,30 @@ def _normalize_declared(value: str | None) -> str:
     return (value or "").split(";")[0].strip().lower()
 
 
-def _decide_type(head: bytes, declared_raw: str | None) -> str:
+def _decide_type(head: bytes, tmp_path: str, declared_raw: str | None) -> str:
     """Return the canonical type to store, raising ValueError on mismatch."""
     declared = _normalize_declared(declared_raw)
-    detected = detect_mime(head)
-    if detected is not None:
-        if (
-            declared in ALLOWED_CONTENT_TYPES
-            and declared not in _TEXT_TYPES
-            and declared != detected
-        ):
+    if head.startswith(_OLE_MAGIC):
+        detected = _classify_ole2(head, declared)
+    elif head.startswith(_ZIP_MAGIC):
+        detected = _classify_ooxml_zip(tmp_path)
+    else:
+        detected = detect_mime(head)
+        if detected is None:
+            # No binary signature: accept plain text only when declared as such
+            # and no NUL byte appears in the head (weak binary-content guard).
+            if declared in _TEXT_TYPES and b"\x00" not in head[:2048]:
+                return declared
             raise ValueError(
-                f"文件内容与声明类型不符（声明 {declared}，实际 {detected}）"
+                "无法识别的文件内容：仅接受 PDF/JPEG/PNG/WebP/Word/Excel/ZIP/CSV/TXT 签名"
             )
-        return detected
-    # No binary signature: accept plain text only when declared as such and no
-    # NUL byte appears in the head (weak binary-content guard).
-    if declared in _TEXT_TYPES and b"\x00" not in head[:2048]:
-        return declared
-    raise ValueError(
-        "无法识别的文件内容：仅接受 PDF/JPEG/PNG/WebP/Word/Excel/ZIP/CSV/TXT 签名"
-    )
+    if (
+        declared in ALLOWED_CONTENT_TYPES
+        and declared not in _TEXT_TYPES
+        and declared != detected
+    ):
+        raise ValueError(f"文件内容与声明类型不符（声明 {declared}，实际 {detected}）")
+    return detected
 
 
 def store_stream(
@@ -177,7 +232,7 @@ def store_stream(
                 raise ValueError("客户端声明的 SHA-256 与服务端计算结果不一致，文件已被拒收")
         with open(tmp_path, "rb") as probe:
             head = probe.read(_SNIFF_LIMIT)
-        real_type = _decide_type(head, content_type)
+        real_type = _decide_type(head, tmp_path, content_type)
 
         subdir = os.path.join(root, sha256[:2])
         os.makedirs(subdir, exist_ok=True)
