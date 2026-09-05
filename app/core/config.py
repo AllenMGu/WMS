@@ -28,6 +28,12 @@ class Settings:
         "DATABASE_URL",
         "sqlite+pysqlite:///./wms-dev.db",
     )
+    attachment_dir: str = os.getenv("ATTACHMENT_DIR", "./attachment-store")
+    attachment_max_bytes: int = int(
+        os.getenv("ATTACHMENT_MAX_BYTES", str(50 * 1024 * 1024))
+    )
+    #: warn: 记录旧式（未验证）附件引用；enforce: 新业务记录必须引用受控文件。
+    attachment_policy: str = os.getenv("ATTACHMENT_POLICY", "warn").lower()
     secret_key: str = os.getenv("SECRET_KEY", "development-only-change-me")
     secrets_provider: str = os.getenv("SECRETS_PROVIDER", "development")
     secret_key_version_ref: str = os.getenv("SECRET_KEY_VERSION_REF", "")
