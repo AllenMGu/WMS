@@ -33,6 +33,7 @@ def test_cover_all_on_postgres_session_after_prior_queries():
         db.add(GspRoleAssignment(user_id=user.id, role="AUDITOR", granted_by=user.id,
                                  approval_ref="PG-RPT", review_due_at=utc_now() + timedelta(days=30),
                                  is_active=True))
+        db.flush()  # SessionLocal has autoflush=False; make the role visible
         # ACL-style query first -> autobegins the transaction
         from app.gsp.reports.router import _user_roles
 
