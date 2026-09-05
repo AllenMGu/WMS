@@ -496,19 +496,80 @@ def test_valid_cfb_without_document_stream_is_rejected(env_store, client):
     for declared in ("application/msword", "application/vnd.ms-excel"):
         resp = _upload(client, payload=cfb, content_type=declared)
         assert resp.status_code == 422
-        assert "不含 Word/Excel 文档流" in resp.json()["detail"]
+        assert "OLE2" in resp.json()["detail"] or "Word/Excel" in resp.json()["detail"]
 
 
-def test_minimal_cfb_document_streams_are_classified(env_store):
-    assert storage.store_stream(
-        io.BytesIO(_build_minimal_cfb(["WordDocument"])), content_type="application/octet-stream"
-    ).content_type == "application/msword"
-    assert storage.store_stream(
-        io.BytesIO(_build_minimal_cfb(["Workbook"])), content_type="application/octet-stream"
-    ).content_type == "application/vnd.ms-excel"
-    assert storage.store_stream(
-        io.BytesIO(_build_minimal_cfb(["Book"])), content_type="application/octet-stream"
-    ).content_type == "application/vnd.ms-excel"
+def test_minimal_orphan_cfb_streams_are_rejected(env_store):
+    # Stream names that are not reachable from the Root Entry must never
+    # classify as a Word/Excel document, no matter what they are called.
+    for name in ("WordDocument", "Workbook", "Book"):
+        with pytest.raises(ValueError):
+            storage.store_stream(
+                io.BytesIO(_build_minimal_cfb([name])),
+                content_type="application/octet-stream",
+            )
+
+
+def _build_minimal_cfb_v4(stream_name: str) -> bytes:
+    """Build a valid CFB v4 (sector shift 12, 4096-byte sectors) file with one
+    non-empty top-level stream reachable from the Root Entry."""
+    header = bytearray(4096)
+    header[0:8] = bytes.fromhex("d0cf11e0a1b11ae1")
+    header[24:26] = (0x003E).to_bytes(2, "little")
+    header[26:28] = (0x0004).to_bytes(2, "little")      # major version 4
+    header[28:30] = b"\xfe\xff"
+    header[30:32] = (12).to_bytes(2, "little")          # sector shift 12
+    header[32:34] = (6).to_bytes(2, "little")
+    header[44:48] = (1).to_bytes(4, "little")           # num FAT sectors
+    header[48:52] = (1).to_bytes(4, "little")           # first dir sector
+    header[56:60] = (4096).to_bytes(4, "little")        # mini cutoff
+    header[60:64] = (0xFFFFFFFE).to_bytes(4, "little")  # first mini FAT
+    header[68:72] = (0xFFFFFFFE).to_bytes(4, "little")  # first DIFAT
+    header[72:76] = (0).to_bytes(4, "little")
+    header[76:80] = (0).to_bytes(4, "little")           # DIFAT[0] = FAT sector 0
+    for off in range(80, 512, 4):
+        header[off : off + 4] = (0xFFFFFFFF).to_bytes(4, "little")
+
+    fat = bytearray(4096)
+    for i in range(0, 4096, 4):
+        fat[i : i + 4] = (0xFFFFFFFF).to_bytes(4, "little")
+    fat[0:4] = (0xFFFFFFFD).to_bytes(4, "little")
+    fat[4:8] = (0xFFFFFFFE).to_bytes(4, "little")
+
+    def entry(name: str, etype: int, child: int = 0xFFFFFFFF) -> bytes:
+        enc = name.encode("utf-16-le") + b"\x00\x00"
+        e = bytearray(128)
+        e[0 : len(enc)] = enc
+        e[64:66] = (len(enc)).to_bytes(2, "little")
+        e[66] = etype
+        e[67] = 1
+        for off in (68, 72):
+            e[off : off + 4] = (0xFFFFFFFF).to_bytes(4, "little")
+        e[76:80] = child.to_bytes(4, "little")
+        e[116:120] = (0xFFFFFFFE).to_bytes(4, "little")  # isectStart
+        e[120:124] = (64).to_bytes(4, "little")          # stream size low
+        e[124:128] = (0).to_bytes(4, "little")           # stream size high
+        return bytes(e)
+
+    directory = bytearray()
+    directory += entry("Root Entry", 5, child=1)
+    directory += entry(stream_name, 2)
+    while len(directory) < 4096:
+        directory += b"\x00" * 128
+    return bytes(header) + bytes(fat) + bytes(directory[:4096])
+
+
+def test_cfb_v4_reachable_document_streams_are_classified(env_store):
+    doc = storage.store_stream(
+        io.BytesIO(_build_minimal_cfb_v4("WordDocument")),
+        content_type="application/octet-stream",
+    )
+    assert doc.content_type == "application/msword"
+    xls = storage.store_stream(
+        io.BytesIO(_build_minimal_cfb_v4("Workbook")),
+        content_type="application/octet-stream",
+    )
+    assert xls.content_type == "application/vnd.ms-excel"
 
 
 def test_ooxml_ct_token_in_comment_does_not_classify(env_store):

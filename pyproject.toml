@@ -21,6 +21,7 @@ dependencies = [
   "ldap3>=2.9,<3",
   "pandas>=2.0,<3",
   "openpyxl>=3.1,<4",
+  "olefile>=0.47,<1",
 ]
 
 [project.optional-dependencies]
