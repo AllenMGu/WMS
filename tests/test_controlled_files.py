@@ -694,3 +694,51 @@ def test_ooxml_malformed_or_dtd_content_types_rejected(env_store):
     evil = _minimal_zip({"[Content_Types].xml": dtd, "word/document.xml": "x"})
     with pytest.raises(ValueError, match="DTD|实体"):
         storage.store_stream(io.BytesIO(evil), content_type="application/octet-stream")
+
+
+def test_uploader_cannot_disable_bound_evidence(client):
+    """Once a business record binds the token, the uploader loses self-abandon."""
+    db = client["db"]
+    uploader = _login_as(client, db, "养护员", "MAINTENANCE")
+    up = _upload(client).json()
+    token = up["ref"]
+    # bind it to a partner qualification document (direct ORM, mirrors binding)
+    from datetime import date
+
+    from app.gsp.models import GspBusinessPartner
+
+    partner = GspBusinessPartner(
+        code=f"B-{uuid4().hex[:6]}", name="绑定供应商", partner_type="SUPPLIER",
+        unified_social_credit_code=f"93{uuid4().hex[:16]}".upper(),
+        license_no="L", license_scope="批发",
+        license_valid_to=date.today() + timedelta(days=365),
+        status="PENDING", created_by=client["grantor"].id,
+    )
+    db.add(partner)
+    db.flush()
+    from app.gsp.models import GspPartnerDocument
+
+    db.add(GspPartnerDocument(
+        partner_id=partner.id, document_type="BUSINESS_LICENSE", document_no="D-1",
+        valid_to=date.today() + timedelta(days=365), file_ref=token,
+        file_sha256=up["sha256"], file_size_bytes=up["size_bytes"],
+        created_by=uploader.id, status="PENDING",
+    ))
+    db.commit()
+
+    # uploader is refused now that the file is bound evidence
+    resp = client["client"].post(
+        f"/api/gsp/files/{up['object_key']}/disable",
+        json={"reason": "试图停用已绑定证据"},
+    )
+    assert resp.status_code == 403
+    # quality manager may still retire it
+    quality = _user(db, "质量经理三号")
+    _role(db, quality, "QUALITY_MANAGER", client["grantor"])
+    db.commit()
+    client["current"]["user"] = quality
+    resp = client["client"].post(
+        f"/api/gsp/files/{up['object_key']}/disable",
+        json={"reason": "质量经理停用已绑定证据"},
+    )
+    assert resp.status_code == 200

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.time import utc_now
 from app.gsp.attachments import storage
+from app.gsp.attachments.bindings import referenced_by_business
 from app.gsp.attachments.models import (
     STATUS_ACTIVE,
     STATUS_DISABLED,
@@ -233,7 +234,12 @@ def _may_disable(db: Session, obj: GspControlledFile, user: User) -> bool:
             ),
         )
     }
-    return "QUALITY_MANAGER" in roles or obj.uploaded_by == user.id
+    if "QUALITY_MANAGER" in roles:
+        return True
+    if obj.uploaded_by == user.id:
+        # uploader may retire only an object no business record references yet
+        return not referenced_by_business(db, obj.object_key)
+    return False
 
 
 @router.post("/{object_key}/disable", response_model=ControlledFileOut)
@@ -248,9 +254,16 @@ def disable_file(
     质量经理可停用任意文件；上传人本人可停用自己的文件（用于清理未绑定/
     误传的受控对象）。
     """
-    obj = _get_or_404(db, object_key)
+    obj = (
+        db.query(GspControlledFile)
+        .filter(GspControlledFile.object_key == object_key)
+        .with_for_update()
+        .first()
+    )
+    if obj is None:
+        raise HTTPException(status_code=404, detail="受控文件不存在")
     if not _may_disable(db, obj, current_user):
-        raise HTTPException(status_code=403, detail="仅质量经理或上传人本人可以停用该受控文件")
+        raise HTTPException(status_code=403, detail="仅质量经理，或上传人本人且文件未被任何业务记录引用时可停用")
     if obj.status == STATUS_DISABLED:
         # Idempotent: already retired by an earlier attempt (e.g. double
         # cancellation from the browser); do not emit a second audit row.
