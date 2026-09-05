@@ -9,6 +9,7 @@ These tests prove the backend owns the hash, stores bytes immutably
 import hashlib
 import io
 import os
+import zipfile
 from datetime import timedelta
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from app.core.database import get_db
 from app.core.time import utc_now
+from app.gsp.attachments import router as attachments_router
 from app.gsp.attachments import storage
 from app.gsp.attachments.models import GspControlledFile
 from app.gsp.models import GspAuditEvent, GspRoleAssignment
@@ -243,6 +245,64 @@ def test_unknown_file_returns_404(client):
     assert client["client"].get("/api/gsp/files/not-a-key").status_code == 404
 
 
+def test_upload_rejects_fake_pdf_content(client):
+    _login_as(client, client["db"], "收货员", "RECEIVER")
+    resp = _upload(
+        client,
+        payload=b"definitely not a pdf - plain text",
+        content_type="application/pdf",
+    )
+    assert resp.status_code == 422
+    assert "无法识别" in resp.json()["detail"]
+
+
+def test_upload_rejects_zip_disguised_as_pdf(client):
+    _login_as(client, client["db"], "收货员", "RECEIVER")
+    resp = _upload(client, payload=_minimal_zip({"a.txt": "x"}), content_type="application/pdf")
+    assert resp.status_code == 422
+    assert "不符" in resp.json()["detail"]
+
+
+def test_download_refuses_tampered_stored_object(client):
+    db = client["db"]
+    _login_as(client, db, "审计员", "AUDITOR")
+    up = _upload(client).json()
+    stored_path = storage.content_path(up["sha256"])
+    with open(stored_path, "wb") as fh:
+        fh.write(b"tampered-bytes")
+    dl = client["client"].get(f"/api/gsp/files/{up['object_key']}/content")
+    assert dl.status_code == 410
+    assert PDF_BYTES not in dl.content  # stored bytes must never be returned
+    assert "FILE_INTEGRITY_LOST" in _audit_actions(db, str(up["id"]))
+    vr = client["client"].post(f"/api/gsp/files/{up['object_key']}/verify")
+    assert vr.json()["valid"] is False
+
+
+def test_audit_failure_rolls_back_upload(client, monkeypatch):
+    db = client["db"]
+    _login_as(client, db, "收货员", "RECEIVER")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("audit chain unavailable")
+
+    monkeypatch.setattr(attachments_router, "write_audit_event", boom)
+    with pytest.raises(RuntimeError):
+        _upload(client)
+    # business row must NOT survive without its FILE_UPLOADED audit event
+    assert db.query(GspControlledFile).count() == 0
+    assert (
+        db.query(GspAuditEvent)
+        .filter(GspAuditEvent.entity_type == "GspControlledFile")
+        .count()
+        == 0
+    )
+    # server remains usable after the failed attempt
+    monkeypatch.undo()
+    ok = _upload(client)
+    assert ok.status_code == 201
+    assert db.query(GspControlledFile).count() == 1
+
+
 def test_storage_rejects_empty_and_oversized_streams(env_store):
     with pytest.raises(ValueError, match="空文件"):
         storage.store_stream(io.BytesIO(b""), content_type="application/pdf")
@@ -253,5 +313,33 @@ def test_storage_rejects_empty_and_oversized_streams(env_store):
     second = storage.store_stream(io.BytesIO(PDF_BYTES), content_type="application/pdf")
     assert first.sha256 == second.sha256 == PDF_SHA
     assert first.path == second.path
-    row = GspControlledFile
-    assert row is not None
+    assert first.content_type == "application/pdf"
+    # declared content type is a hint only: content wins server-side
+    third = storage.store_stream(io.BytesIO(PDF_BYTES), content_type="application/octet-stream")
+    assert third.content_type == "application/pdf"
+
+
+def _minimal_zip(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, data in files.items():
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+def test_storage_detects_ooxml_vs_zip_by_container(env_store):
+    docx = _minimal_zip({"[Content_Types].xml": "<Types/>", "word/document.xml": "<w:doc/>"})
+    xlsx = _minimal_zip({"[Content_Types].xml": "<Types/>", "xl/workbook.xml": "<workbook/>"})
+    plain = _minimal_zip({"readme.txt": "hello"})
+    assert storage.store_stream(io.BytesIO(docx), content_type="application/octet-stream").content_type == (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert storage.store_stream(io.BytesIO(xlsx), content_type="application/octet-stream").content_type == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert storage.store_stream(io.BytesIO(plain), content_type="application/octet-stream").content_type == (
+        "application/zip"
+    )
+    # bytes really are a zip but the declaration says pdf: rejected as lying
+    with pytest.raises(ValueError, match="类型不符"):
+        storage.store_stream(io.BytesIO(plain), content_type="application/pdf")

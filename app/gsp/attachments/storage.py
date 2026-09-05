@@ -8,6 +8,11 @@ The server computes the SHA-256 while streaming; a client-supplied expected
 hash is only used as a cross-check.  The same bytes uploaded twice map to the
 same path, so re-uploads are de-duplicated and existing objects can never be
 overwritten by different content.
+
+File type is decided **server-side from content signatures** (magic bytes),
+never from the client-declared multipart ``Content-Type``; a lying declaration
+is rejected.  ZIP-family files (docx/xlsx/plain zip) are told apart by their
+container entries where possible.
 """
 
 from __future__ import annotations
@@ -19,29 +24,46 @@ from typing import BinaryIO
 
 from app.core.config import settings
 
+# Canonical server-side types.  Uploaded bytes must match one of the known
+# signatures below, or (for plain text) the declared text flavour.
+CONTENT_TYPE_PDF = "application/pdf"
+CONTENT_TYPE_JPEG = "image/jpeg"
+CONTENT_TYPE_PNG = "image/png"
+CONTENT_TYPE_WEBP = "image/webp"
+CONTENT_TYPE_MSWORD_OLD = "application/msword"
+CONTENT_TYPE_DOCX = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+CONTENT_TYPE_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+CONTENT_TYPE_ZIP = "application/zip"
+CONTENT_TYPE_CSV = "text/csv"
+CONTENT_TYPE_TXT = "text/plain"
+
 ALLOWED_CONTENT_TYPES = {
-    "application/pdf",
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/zip",
-    "text/csv",
-    "text/plain",
+    CONTENT_TYPE_PDF,
+    CONTENT_TYPE_JPEG,
+    CONTENT_TYPE_PNG,
+    CONTENT_TYPE_WEBP,
+    CONTENT_TYPE_MSWORD_OLD,
+    CONTENT_TYPE_DOCX,
+    CONTENT_TYPE_XLSX,
+    CONTENT_TYPE_ZIP,
+    CONTENT_TYPE_CSV,
+    CONTENT_TYPE_TXT,
 }
+_TEXT_TYPES = {CONTENT_TYPE_CSV, CONTENT_TYPE_TXT}
 
 STORAGE_ROOT_ENV = "ATTACHMENT_DIR"
+_SNIFF_LIMIT = 1024 * 1024  # bytes of the head used for type detection
 
 
 class StoredFile:
-    __slots__ = ("sha256", "size_bytes", "path")
+    __slots__ = ("sha256", "size_bytes", "content_type", "path")
 
-    def __init__(self, sha256: str, size_bytes: int, path: str) -> None:
+    def __init__(self, sha256: str, size_bytes: int, content_type: str, path: str) -> None:
         self.sha256 = sha256
         self.size_bytes = size_bytes
+        self.content_type = content_type
         self.path = path
 
 
@@ -61,28 +83,71 @@ def content_path(sha256: str) -> str:
     return os.path.join(root, sha256[:2], sha256)
 
 
-def _validate_content_type(content_type: str) -> str:
-    normalized = (content_type or "").split(";")[0].strip().lower()
-    if normalized not in ALLOWED_CONTENT_TYPES:
-        raise ValueError(
-            f"不支持的文件类型 {normalized or '(空)'}；允许：PDF/JPEG/PNG/WebP/Word/Excel/ZIP/CSV/TXT"
-        )
-    return normalized
+def detect_mime(head: bytes) -> str | None:
+    """Server-side file-type detection from content signatures (magic bytes)."""
+    if head.startswith(b"%PDF-"):
+        return CONTENT_TYPE_PDF
+    if head.startswith(b"\xff\xd8\xff"):
+        return CONTENT_TYPE_JPEG
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return CONTENT_TYPE_PNG
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return CONTENT_TYPE_WEBP
+    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        # OLE2 compound file: legacy .doc/.xls/.ppt cannot be told apart by magic.
+        return CONTENT_TYPE_MSWORD_OLD
+    if head.startswith(b"PK\x03\x04"):
+        # OOXML documents are ZIP containers; inspect early entries for the
+        # central document part so docx/xlsx are not mislabelled as plain zip.
+        if b"[Content_Types].xml" in head:
+            if b"word/document.xml" in head or b"word/" in head:
+                return CONTENT_TYPE_DOCX
+            if b"xl/workbook.xml" in head or b"xl/" in head:
+                return CONTENT_TYPE_XLSX
+        return CONTENT_TYPE_ZIP
+    return None
+
+
+def _normalize_declared(value: str | None) -> str:
+    return (value or "").split(";")[0].strip().lower()
+
+
+def _decide_type(head: bytes, declared_raw: str | None) -> str:
+    """Return the canonical type to store, raising ValueError on mismatch."""
+    declared = _normalize_declared(declared_raw)
+    detected = detect_mime(head)
+    if detected is not None:
+        if (
+            declared in ALLOWED_CONTENT_TYPES
+            and declared not in _TEXT_TYPES
+            and declared != detected
+        ):
+            raise ValueError(
+                f"文件内容与声明类型不符（声明 {declared}，实际 {detected}）"
+            )
+        return detected
+    # No binary signature: accept plain text only when declared as such and no
+    # NUL byte appears in the head (weak binary-content guard).
+    if declared in _TEXT_TYPES and b"\x00" not in head[:2048]:
+        return declared
+    raise ValueError(
+        "无法识别的文件内容：仅接受 PDF/JPEG/PNG/WebP/Word/Excel/ZIP/CSV/TXT 签名"
+    )
 
 
 def store_stream(
     stream: BinaryIO,
     *,
-    content_type: str,
+    content_type: str | None = None,
     expected_sha256: str | None = None,
     max_bytes: int | None = None,
 ) -> StoredFile:
     """Stream ``stream`` into the immutable store.
 
-    Raises ``ValueError`` for empty/oversized/unsupported payloads or a
-    client/server SHA-256 mismatch.  Returns content-address info.
+    Raises ``ValueError`` for empty/oversized payloads, unrecognised content or
+    a client/server SHA-256 mismatch.  Returns content-address info including
+    the server-detected content type.
     """
-    content_type = _validate_content_type(content_type)
     cap = max_bytes or settings.attachment_max_bytes
     root = storage_root()
 
@@ -110,6 +175,10 @@ def store_stream(
                 raise ValueError("expected_sha256 必须是 64 位十六进制字符串")
             if expected_sha256.lower() != sha256:
                 raise ValueError("客户端声明的 SHA-256 与服务端计算结果不一致，文件已被拒收")
+        with open(tmp_path, "rb") as probe:
+            head = probe.read(_SNIFF_LIMIT)
+        real_type = _decide_type(head, content_type)
+
         subdir = os.path.join(root, sha256[:2])
         os.makedirs(subdir, exist_ok=True)
         try:
@@ -123,7 +192,7 @@ def store_stream(
         else:
             os.replace(tmp_path, target)
             os.chmod(target, 0o640)
-        return StoredFile(sha256=sha256, size_bytes=size, path=target)
+        return StoredFile(sha256=sha256, size_bytes=size, content_type=real_type, path=target)
     finally:
         if os.path.exists(tmp_path):
             try:
