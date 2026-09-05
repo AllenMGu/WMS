@@ -20,6 +20,7 @@ import os
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -51,6 +52,28 @@ def validate_purpose(purpose: str | None) -> None:
             status_code=422,
             detail=f"purpose 必须为 {', '.join(ALLOWED_PURPOSES)} 之一",
         )
+
+
+#: Business tables/columns that may carry a bound ``gspf:`` reference.
+REFERENCE_COLUMNS = (
+    ("gsp_partner_documents", "file_ref"),
+    ("gsp_supplier_product_authorizations", "authorization_ref"),
+    ("gsp_drug_profiles", "registration_document_ref"),
+    ("gsp_carrier_documents", "file_ref"),
+)
+
+
+def referenced_by_business(db: Session, object_key: str) -> bool:
+    """True when any business record already binds this controlled object."""
+    token = build_ref(object_key)
+    for table, column in REFERENCE_COLUMNS:
+        row = db.execute(
+            text(f"SELECT 1 FROM {table} WHERE {column} = :v LIMIT 1"),
+            {"v": token},
+        ).first()
+        if row is not None:
+            return True
+    return False
 
 
 def resolve_attachment(
@@ -96,6 +119,7 @@ def resolve_attachment(
             GspControlledFile.object_key == object_key,
             GspControlledFile.status == STATUS_ACTIVE,
         )
+        .with_for_update()
         .first()
     )
     if obj is None:
