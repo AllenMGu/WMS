@@ -36,6 +36,7 @@ class PrintRequest(BaseModel):
     offset: int = Field(0, ge=0)
     filters: dict[str, str] = Field(default_factory=dict)
     cover_all: bool = False
+    preview: bool = False
 
 
 class PrintVerifyOut(BaseModel):
@@ -139,16 +140,20 @@ def print_report(
 ):
     _ensure_report_access(db, report_key, current_user)
     definition = _REPORT_MAP[report_key]
+    if not definition.production_ready and not payload.preview:
+        raise HTTPException(
+            status_code=409,
+            detail="该报表为开发预览（缺少业务可读字段），禁止生成正式受控打印件；如需验证请显式 preview=true",
+        )
     try:
         if payload.cover_all:
             result = run_full_print_rows(db, report_key, filters=payload.filters)
-            truncated = False  # full print either covers all or raised (MAX_ROWS)
         else:
             result = run_report(
                 db, report_key,
                 filters=payload.filters, limit=payload.limit, offset=payload.offset,
             )
-            truncated = result["has_more"]
+        truncated = bool(result.get("has_more"))
     except ReportError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except KeyError as exc:
@@ -177,6 +182,7 @@ def print_report(
         copy_no=copy_no,
         template_version=definition.template_version,
         truncated=truncated,
+        preview=not definition.production_ready,
     )
     write_audit_event(
         db,
@@ -202,28 +208,24 @@ def print_report(
                     content_hash=record.content_hash or "", html=html)
 
 
-@router.get("/prints/list", response_model=list[dict])
+@router.get("/prints/list")
 def list_print_records(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
+    """Pagination happens in SQL after the visibility filter, so earlier
+    invisible records can never push visible ones off the page."""
     visible = _visible_keys(db, current_user)
-    records = (
-        db.query(GspControlledPrintRecord)
-        .filter(GspControlledPrintRecord.document_type.like("REPORT:%"))
-        .order_by(GspControlledPrintRecord.id.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
+    types = [f"REPORT:{k}" for k in sorted(visible)] or ["REPORT:__NONE__"]
+    query = db.query(GspControlledPrintRecord).filter(
+        GspControlledPrintRecord.document_type.in_(types)
     )
-    out = []
-    for r in records:
-        key = _report_key_of(r)
-        if key is None or key not in visible:
-            continue
-        out.append({
+    total = query.count()
+    records = query.order_by(GspControlledPrintRecord.id.desc()).offset(offset).limit(limit).all()
+    items = [
+        {
             "id": r.id, "copy_no": r.copy_no, "document_type": r.document_type,
             "purpose": r.purpose, "content_hash": r.content_hash,
             "printed_by": r.printed_by, "printed_at": r.printed_at,
@@ -234,10 +236,16 @@ def list_print_records(
                 "total": (r.snapshot_data or {}).get("total"),
                 "truncated": (r.snapshot_data or {}).get("truncated"),
                 "cover_all": (r.snapshot_data or {}).get("cover_all"),
+                "preview": (r.snapshot_data or {}).get("preview"),
                 "filters": (r.snapshot_data or {}).get("filters"),
             },
-        })
-    return out
+        }
+        for r in records
+    ]
+    return {
+        "items": items, "total": total, "limit": limit,
+        "offset": offset, "has_more": offset + len(items) < total,
+    }
 
 
 @router.get("/prints/{print_id}", response_model=PrintOut)

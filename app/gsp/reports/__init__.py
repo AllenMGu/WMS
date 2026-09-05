@@ -161,11 +161,18 @@ def _build_result(report, rows, total, offset, limit, filters) -> dict:
 
 
 def run_full_print_rows(db: Session, key: str, filters=None) -> dict:
-    """Keyset scan over the as-of max id (consistent within this transaction)."""
+    """Keyset scan over the as-of max id inside a consistent snapshot.
+
+    PostgreSQL: the transaction is promoted to REPEATABLE READ so concurrent
+    commits cannot shift the read set; a final count == collected guard refuses
+    to issue an incomplete "full" print.  SQLite (tests) has no concurrency.
+    """
     report = _REPORT_MAP.get(key)
     if report is None:
         raise KeyError(key)
     filters = {str(k): str(v).strip() for k, v in (filters or {}).items() if v not in (None, "")}
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.connection().execution_options(isolation_level="REPEATABLE READ")
     base = _apply_filters(db.query(report.entity), report, filters)
     total = base.count()
     max_id = db.query(func.max(report.entity.id)).scalar() or 0
@@ -188,6 +195,9 @@ def run_full_print_rows(db: Session, key: str, filters=None) -> dict:
         if len(collected) >= total or cursor < 0:
             break
     collected = collected[:total]
+    if len(collected) != total:
+        # concurrent delete/update changed the set after the snapshot began
+        raise ReportError("全量打印期间检测到数据并发变化（读得 %d/%d 行），请重试" % (len(collected), total))
     result = _build_result(report, collected, total, 0, len(collected), filters)
     result["as_of_max_id"] = max_id
     return result
@@ -196,10 +206,13 @@ def run_full_print_rows(db: Session, key: str, filters=None) -> dict:
 def _snapshot_canonical(snapshot: dict) -> str:
     """Canonical JSON over every controlled field (excluding the hash itself)."""
     ordered = {
+        "document_type": snapshot.get("document_type"),
         "report_key": snapshot.get("report_key"),
         "title": snapshot.get("title"),
         "template_version": snapshot.get("template_version"),
         "copy_no": snapshot.get("copy_no"),
+        "purpose": snapshot.get("purpose"),
+        "printed_by": snapshot.get("printed_by"),
         "columns": snapshot.get("columns"),
         "filters": snapshot.get("filters"),
         "offset": snapshot.get("offset"),
@@ -208,7 +221,9 @@ def _snapshot_canonical(snapshot: dict) -> str:
         "total": snapshot.get("total"),
         "truncated": snapshot.get("truncated"),
         "cover_all": snapshot.get("cover_all"),
+        "preview": snapshot.get("preview"),
         "as_of_max_id": snapshot.get("as_of_max_id"),
+        "generated_at": snapshot.get("generated_at"),
         "rows": snapshot.get("rows"),
         "html": snapshot.get("html"),
     }
@@ -273,12 +288,16 @@ def record_print(
     template_version: str,
     truncated: bool,
     as_of_max_id: int | None = None,
+    preview: bool = False,
 ) -> GspControlledPrintRecord:
     snapshot = {
+        "document_type": f"REPORT:{key}",
         "report_key": key,
         "title": result["title"],
         "template_version": template_version,
         "copy_no": copy_no,
+        "purpose": purpose,
+        "printed_by": printed_by,
         "columns": result["columns"],
         "filters": result["filters"],
         "offset": result["offset"],
@@ -287,6 +306,7 @@ def record_print(
         "total": result["total"],
         "truncated": bool(truncated),
         "cover_all": bool(cover_all),
+        "preview": bool(preview),
         "as_of_max_id": as_of_max_id if as_of_max_id is not None else result.get("as_of_max_id"),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "rows": result["rows"],
@@ -313,4 +333,16 @@ def record_print(
 def verify_record_content(record: GspControlledPrintRecord) -> bool:
     if not record.snapshot_data:
         return False
-    return hashlib.sha256(_snapshot_canonical(record.snapshot_data).encode()).hexdigest() == (record.content_hash or "")
+    snap = record.snapshot_data
+    expected = f"REPORT:{snap.get('report_key')}"
+    if record.document_type != expected or snap.get("document_type") != expected:
+        return False
+    if snap.get("copy_no") != record.copy_no:
+        return False
+    if snap.get("template_version") != record.template_version:
+        return False
+    if snap.get("purpose") != record.purpose:
+        return False
+    if snap.get("printed_by") != record.printed_by:
+        return False
+    return hashlib.sha256(_snapshot_canonical(snap).encode()).hexdigest() == (record.content_hash or "")

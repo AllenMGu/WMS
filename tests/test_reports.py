@@ -97,7 +97,6 @@ def test_catalog_respects_visibility_and_print_acl(ctx):
                     json={"reason": "审计台账打印ACL测试", "limit": 10})
     assert r.status_code == 200
     pid = r.json()["print_id"]
-    copy_no = r.json()["copy_no"]
     # catalog must hide sensitive reports for RECEIVER
     _login(ctx, "收货", "RECEIVER")
     recv_keys = {x["key"] for x in client.get("/api/gsp/reports").json()}
@@ -107,20 +106,44 @@ def test_catalog_respects_visibility_and_print_acl(ctx):
     # direct fetch/verify must be refused
     assert client.get(f"/api/gsp/reports/prints/{pid}").status_code == 403
     assert client.post(f"/api/gsp/reports/prints/{pid}/verify").status_code == 403
-    # list must not expose the audit print record
+    # list must not expose the audit print record (DB-level visibility filter)
     listed = client.get("/api/gsp/reports/prints/list").json()
-    assert not any(p["copy_no"] == copy_no for p in listed)
+    assert listed["total"] == 0
+    # preview reports cannot print without an explicit flag
+    assert client.post("/api/gsp/reports/batch_stock_ledger/print",
+                       json={"reason": "无 preview 标记尝试打印"}).status_code == 409
+    rp = client.post("/api/gsp/reports/batch_stock_ledger/print",
+                     json={"reason": "preview 验证", "preview": True})
+    assert rp.status_code == 200
+    listed2 = client.get("/api/gsp/reports/prints/list").json()
+    assert listed2["total"] == 1 and listed2["items"][0]["copy_no"] == rp.json()["copy_no"]
+
+
+def test_list_pagination_filters_before_paging(ctx):
+    client = ctx["client"]
+    _login(ctx, "审计A", "AUDITOR")
+    for i in range(3):
+        r = client.post("/api/gsp/reports/audit_event_ledger/print",
+                        json={"reason": f"audit 打印 {i}", "limit": 5})
+        assert r.status_code == 200
+    r = client.post("/api/gsp/reports/batch_stock_ledger/print",
+                    json={"reason": "库存预览打印", "preview": True})
+    assert r.status_code == 200
+    _login(ctx, "收货B", "RECEIVER")
+    body = client.get("/api/gsp/reports/prints/list?limit=10&offset=0").json()
+    assert body["total"] == 1, "visibility must be applied before paging"
+    assert len(body["items"]) == 1 and body["items"][0]["copy_no"] == r.json()["copy_no"]
 
 
 def test_cover_all_cap_and_keyset(ctx, monkeypatch):
     _login(ctx, "审计", "AUDITOR")
     from app.gsp import reports as mod
+    from app.gsp.reports import ReportError
 
     monkeypatch.setattr(mod, "MAX_ROWS", 5)
-    monkeypatch.setattr(mod, "MAX_ROWS", 5)
     _events(ctx, "CAP_ACTION", 6)
-    # over cap -> error, not silent truncation
-    with pytest.raises(Exception):
+    # over cap -> specific error, not silent truncation
+    with pytest.raises(ReportError, match="上限"):
         mod.run_full_print_rows(ctx["db"], "audit_event_ledger", filters={"action": "CAP_ACTION"})
     # exactly at cap -> full keyset, no duplicates, has_more False
     monkeypatch.setattr(mod, "MAX_ROWS", 6)
@@ -158,6 +181,12 @@ def test_print_meta_and_truncation_and_full_hash_tamper(ctx):
     # tamper with controlled snapshot fields -> verify must fail
     assert client.post(f"/api/gsp/reports/prints/{r2.json()['print_id']}/verify").json()["valid"] is True
     rec2.snapshot_data = {**rec2.snapshot_data, "total": rec2.snapshot_data["total"] + 1}
+    ctx["db"].commit()
+    assert client.post(f"/api/gsp/reports/prints/{r2.json()['print_id']}/verify").json()["valid"] is False
+    rec2.snapshot_data = {**rec2.snapshot_data, "generated_at": "2099-01-01T00:00:00"}
+    ctx["db"].commit()
+    assert client.post(f"/api/gsp/reports/prints/{r2.json()['print_id']}/verify").json()["valid"] is False
+    rec2.copy_no = "RPT-TAMPERED"
     ctx["db"].commit()
     assert client.post(f"/api/gsp/reports/prints/{r2.json()['print_id']}/verify").json()["valid"] is False
 
