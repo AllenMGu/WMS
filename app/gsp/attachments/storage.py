@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 from typing import BinaryIO
 
@@ -68,6 +69,16 @@ _SNIFF_LIMIT = 1024 * 1024  # bytes of the head used for type detection
 _OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _ZIP_MAGIC = b"PK\x03\x04"
 
+_CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+_DOCX_MAIN_CT = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+)
+_XLSX_MAIN_CT = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
+)
+_END_OF_CHAIN = 0xFFFFFFFE
+_FREE_SECTOR = 0xFFFFFFFF
+
 
 class StoredFile:
     __slots__ = ("sha256", "size_bytes", "content_type", "path")
@@ -95,29 +106,147 @@ def content_path(sha256: str) -> str:
     return os.path.join(root, sha256[:2], sha256)
 
 
-def _utf16_in(head: bytes, ascii_name: str) -> bool:
-    return ascii_name.encode("utf-16-le") in head
+def _u32(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset : offset + 4], "little")
 
 
-def _classify_ole2(head: bytes, declared: str) -> str:
-    """Distinguish legacy .doc / .xls by OLE stream names (UTF-16LE entries)."""
-    if _utf16_in(head, "WordDocument"):
+def _parse_ole2_stream_names(path: str) -> list[str]:
+    """Parse an OLE2/CFB container and return its top-level stream names.
+
+    Validates header invariants, the DIFAT/FAT chain and the directory
+    sector chain before trusting any stream name, so arbitrary bytes that
+    merely start with the OLE magic cannot pass as a controlled Office file.
+    """
+    with open(path, "rb") as fh:
+        data = fh.read()
+    size = len(data)
+    if size < 512:
+        raise ValueError("不是有效的 OLE2/CFB 容器（文件过短）")
+    if not data.startswith(_OLE_MAGIC):
+        raise ValueError("不是有效的 OLE2/CFB 容器（缺少 OLE magic）")
+    if data[28:30] != b"\xfe\xff":
+        raise ValueError("不是有效的 OLE2/CFB 容器（字节序错误）")
+    sector_shift = int.from_bytes(data[30:32], "little")
+    if sector_shift not in (9, 12):
+        raise ValueError("不是有效的 OLE2/CFB 容器（扇区大小异常）")
+    sector_size = 1 << sector_shift
+    # MS-CFB header layout (4-byte little-endian fields): 40 num dir sectors,
+    # 44 num FAT | 48 first dir sector | 52 transaction | 56 mini cutoff |
+    # 60 first mini FAT | 64 num mini FAT | 68 first DIFAT | 72 num DIFAT |
+    # 76.. DIFAT array (109 entries).
+    _num_dir_sectors = _u32(data, 40)
+    num_fat = _u32(data, 44)
+    first_dir = _u32(data, 48)
+    _mini_cutoff = _u32(data, 56)
+    _first_minifat = _u32(data, 60)
+    _num_minifat = _u32(data, 64)
+    first_difat = _u32(data, 68)
+    num_difat = _u32(data, 72)
+    max_sectors = (size - 512) // sector_size
+
+    if num_difat > max_sectors:
+        raise ValueError("不是有效的 OLE2/CFB 容器（DIFAT 扇区数异常）")
+
+    if num_fat == 0 or num_fat > max_sectors:
+        raise ValueError("不是有效的 OLE2/CFB 容器（FAT 扇区数异常）")
+
+    def read_sector(index: int) -> bytes:
+        if index < 0 or index >= max_sectors:
+            raise ValueError("不是有效的 OLE2/CFB 容器（扇区索引越界）")
+        return data[512 + index * sector_size : 512 + (index + 1) * sector_size]
+
+    # FAT sector numbers: 109 in the header DIFAT, then DIFAT chain sectors.
+    difat_ids: list[int] = []
+    for slot in range(min(109, max_sectors)):
+        entry = _u32(data, 76 + 4 * slot)
+        if entry == _FREE_SECTOR:
+            break
+        difat_ids.append(entry)
+    seen_difat: set[int] = set()
+    sid = first_difat
+    while sid != _END_OF_CHAIN and sid != _FREE_SECTOR:
+        if sid >= max_sectors or sid in seen_difat:
+            raise ValueError("不是有效的 OLE2/CFB 容器（DIFAT 链异常）")
+        seen_difat.add(sid)
+        sector = read_sector(sid)
+        slots = sector_size // 4 - 1
+        for slot in range(slots):
+            entry = _u32(sector, 4 * slot)
+            if entry != _FREE_SECTOR:
+                difat_ids.append(entry)
+        sid = _u32(sector, sector_size - 4)
+    if len(difat_ids) < num_fat:
+        raise ValueError("不是有效的 OLE2/CFB 容器（FAT 扇区数不足）")
+
+    fat: list[int] = []
+    for fat_sector_id in difat_ids[:num_fat]:
+        if fat_sector_id >= max_sectors:
+            raise ValueError("不是有效的 OLE2/CFB 容器（FAT 扇区越界）")
+        sector = read_sector(fat_sector_id)
+        for slot in range(sector_size // 4):
+            fat.append(_u32(sector, 4 * slot))
+
+    if first_dir == _END_OF_CHAIN or first_dir == _FREE_SECTOR:
+        raise ValueError("不是有效的 OLE2/CFB 容器（缺少目录扇区）")
+
+    directory = b""
+    seen_dirs: set[int] = set()
+    sid = first_dir
+    while sid != _END_OF_CHAIN:
+        if sid >= max_sectors or sid in seen_dirs:
+            raise ValueError("不是有效的 OLE2/CFB 容器（目录链异常）")
+        seen_dirs.add(sid)
+        directory += read_sector(sid)
+        if sid >= len(fat):
+            raise ValueError("不是有效的 OLE2/CFB 容器（目录链断裂）")
+        sid = fat[sid]
+
+    names: list[str] = []
+    root_found = False
+    for offset in range(0, len(directory) - 127, 128):
+        entry = directory[offset : offset + 128]
+        entry_type = entry[66]
+        name_len = int.from_bytes(entry[64:66], "little")
+        if entry_type == 0 and name_len == 0:
+            continue
+        if entry_type == 5:
+            root_found = True
+            continue
+        if entry_type == 2:
+            if not (2 <= name_len <= 64 and name_len % 2 == 0):
+                raise ValueError("不是有效的 OLE2/CFB 容器（目录项名称长度异常）")
+            raw = entry[: name_len - 2]
+            try:
+                name = raw.decode("utf-16-le")
+            except UnicodeDecodeError:
+                name = ""
+            if name:
+                names.append(name)
+    if not root_found:
+        raise ValueError("不是有效的 OLE2/CFB 容器（缺少根目录项）")
+    return names
+
+
+def _classify_ole2(path: str) -> str:
+    """Distinguish legacy .doc / .xls from the parsed OLE2 directory."""
+    names = _parse_ole2_stream_names(path)
+    if "WordDocument" in names:
         return CONTENT_TYPE_MSWORD_OLD
-    if _utf16_in(head, "Workbook") or _utf16_in(head, "Book"):
+    if "Workbook" in names or "Book" in names:
         return CONTENT_TYPE_XLS_OLD
-    # Legacy Office container that we cannot tell apart reliably: keep the
-    # declared type only when it is one of the two legacy Office types.
-    if declared in (CONTENT_TYPE_MSWORD_OLD, CONTENT_TYPE_XLS_OLD):
-        return declared
-    raise ValueError("无法可靠识别该旧版 Office 容器类型（仅支持 .doc/.xls）")
+    # A structurally valid compound file without a Word/Excel document stream
+    # must not be accepted based on what the client claims it is.
+    raise ValueError("OLE2/CFB 容器有效但不含 Word/Excel 文档流，拒绝接收")
 
 
 def _classify_ooxml_zip(path: str) -> str:
-    """Validate a real ZIP/OOXML container and return its canonical type.
+    """Validate a real OOXML/ZIP container and return its canonical type.
 
-    Reads only the central directory entry list and ``[Content_Types].xml``;
-    payloads are never extracted, so expansion/ratio bombs are not a risk on
-    top of the container-entry bound applied here.
+    Reads only the central-directory entry list plus ``[Content_Types].xml``,
+    which is parsed (never byte-searched) to verify the OOXML namespace, the
+    exact ``Override`` ``PartName``/``ContentType`` and that the referenced
+    part really exists.  Payloads are never extracted and the entry list is
+    bounded, so container bombs are not expanded here.
     """
     try:
         with zipfile.ZipFile(path) as zf:
@@ -135,15 +264,34 @@ def _classify_ooxml_zip(path: str) -> str:
     except (zipfile.BadZipFile, zipfile.LargeZipFile, NotImplementedError) as exc:
         raise ValueError("损坏或不支持的 ZIP/OOXML 容器") from exc
 
-    if any(name.startswith("word/") for name in names) and (
-        b"wordprocessingml.document" in content_types
+    if b"<!DOCTYPE" in content_types or b"<!ENTITY" in content_types:
+        raise ValueError("OOXML [Content_Types].xml 含 DTD/实体声明，拒绝解析")
+    try:
+        root = ET.fromstring(content_types)
+    except ET.ParseError as exc:
+        raise ValueError("OOXML [Content_Types].xml 损坏，无法解析") from exc
+    if root.tag != f"{{{_CT_NS}}}Types":
+        # Well-formed XML but not an OPC content-types part: plain zip at best.
+        return CONTENT_TYPE_ZIP
+
+    overrides: dict[str, str] = {}
+    for child in root:
+        if child.tag == f"{{{_CT_NS}}}Override":
+            part_name = (child.get("PartName") or "").lstrip("/")
+            content_type = child.get("ContentType") or ""
+            if part_name:
+                overrides[part_name] = content_type
+    if (
+        "word/document.xml" in names
+        and overrides.get("word/document.xml") == _DOCX_MAIN_CT
     ):
         return CONTENT_TYPE_DOCX
-    if any(name.startswith("xl/") for name in names) and (
-        b"spreadsheetml.sheet" in content_types
+    if (
+        "xl/workbook.xml" in names
+        and overrides.get("xl/workbook.xml") == _XLSX_MAIN_CT
     ):
         return CONTENT_TYPE_XLSX
-    # Container declares content types but none is a known OOXML document.
+    # Valid container but no exact OOXML document override -> plain zip.
     return CONTENT_TYPE_ZIP
 
 
@@ -168,7 +316,7 @@ def _decide_type(head: bytes, tmp_path: str, declared_raw: str | None) -> str:
     """Return the canonical type to store, raising ValueError on mismatch."""
     declared = _normalize_declared(declared_raw)
     if head.startswith(_OLE_MAGIC):
-        detected = _classify_ole2(head, declared)
+        detected = _classify_ole2(tmp_path)
     elif head.startswith(_ZIP_MAGIC):
         detected = _classify_ooxml_zip(tmp_path)
     else:

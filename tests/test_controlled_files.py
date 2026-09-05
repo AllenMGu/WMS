@@ -336,8 +336,16 @@ def _minimal_zip(files: dict[str, bytes]) -> bytes:
 
 
 def test_storage_detects_ooxml_vs_zip_by_container(env_store):
-    docx_ct = '<Types><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'
-    xlsx_ct = '<Types><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>'
+    docx_ct = (
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Override PartName="/word/document.xml" ContentType="'
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'
+    )
+    xlsx_ct = (
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Override PartName="/xl/workbook.xml" ContentType="'
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>'
+    )
     docx = _minimal_zip({"[Content_Types].xml": docx_ct, "word/document.xml": "<w:doc/>"})
     xlsx = _minimal_zip({"[Content_Types].xml": xlsx_ct, "xl/workbook.xml": "<workbook/>"})
     plain = _minimal_zip({"readme.txt": "hello"})
@@ -393,7 +401,11 @@ def test_ooxml_requires_content_types_part_and_reads_late_entries(env_store):
     big = _minimal_zip(
         {
             "filler.bin": b"0" * (2 * 1024 * 1024),
-            "[Content_Types].xml": '<Types><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+            "[Content_Types].xml": (
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Override PartName="/word/document.xml" '
+                f'ContentType="{storage._DOCX_MAIN_CT}"/></Types>'
+            ),
             "word/document.xml": "<w:doc/>",
         }
     )
@@ -415,3 +427,125 @@ def test_zip_with_absurd_entry_count_rejected(env_store):
             zf.writestr(name, data)
     with pytest.raises(ValueError, match="条目数"):
         storage.store_stream(io.BytesIO(buf.getvalue()), content_type="application/zip")
+
+
+def _build_minimal_cfb(stream_names: list[str]) -> bytes:
+    """Build a structurally valid OLE2/CFB file (512-byte sectors).
+
+    Header follows the real MS-CFB 4-byte field layout used by olefile.
+    """
+    header = bytearray(512)
+    header[0:8] = bytes.fromhex("d0cf11e0a1b11ae1")
+    header[24:26] = (0x003E).to_bytes(2, "little")
+    header[26:28] = (0x0003).to_bytes(2, "little")
+    header[28:30] = b"\xfe\xff"
+    header[30:32] = (9).to_bytes(2, "little")            # sector shift
+    header[32:34] = (6).to_bytes(2, "little")            # mini sector shift
+    header[40:44] = (0).to_bytes(4, "little")            # num dir sectors
+    header[44:48] = (1).to_bytes(4, "little")            # num FAT sectors
+    header[48:52] = (1).to_bytes(4, "little")            # first dir sector
+    header[52:56] = (0).to_bytes(4, "little")            # transaction
+    header[56:60] = (4096).to_bytes(4, "little")         # mini cutoff
+    header[60:64] = (0xFFFFFFFE).to_bytes(4, "little")   # first mini FAT
+    header[64:68] = (0).to_bytes(4, "little")            # num mini FAT
+    header[68:72] = (0xFFFFFFFE).to_bytes(4, "little")   # first DIFAT
+    header[72:76] = (0).to_bytes(4, "little")            # num DIFAT
+    header[76:80] = (0).to_bytes(4, "little")            # DIFAT[0] = FAT sector 0
+    for off in range(80, 512, 4):                        # remaining DIFAT free
+        header[off : off + 4] = (0xFFFFFFFF).to_bytes(4, "little")
+
+    fat = bytearray(512)
+    for i in range(0, 512, 4):
+        fat[i : i + 4] = (0xFFFFFFFF).to_bytes(4, "little")
+    fat[0:4] = (0xFFFFFFFD).to_bytes(4, "little")        # sector 0 = FAT
+    fat[4:8] = (0xFFFFFFFE).to_bytes(4, "little")        # sector 1 = end of dir chain
+
+    def entry(name: str, etype: int) -> bytes:
+        enc = name.encode("utf-16-le") + b"\x00\x00"
+        e = bytearray(128)
+        e[0 : len(enc)] = enc
+        e[64:66] = (len(enc)).to_bytes(2, "little")
+        e[66] = etype
+        e[67] = 1
+        for off in (68, 72, 76):
+            e[off : off + 4] = (0xFFFFFFFF).to_bytes(4, "little")
+        e[108:112] = (0xFFFFFFFE).to_bytes(4, "little")
+        return bytes(e)
+
+    directory = bytearray()
+    directory += entry("Root Entry", 5)
+    for name in stream_names:
+        directory += entry(name, 2)
+    while len(directory) < 512:
+        directory += b"\x00" * min(128, 512 - len(directory))
+    return bytes(header) + bytes(fat) + bytes(directory[:512])
+
+
+def test_ole_magic_with_garbage_is_rejected(client):
+    _login_as(client, client["db"], "收货员", "RECEIVER")
+    garbage = bytes.fromhex("d0cf11e0a1b11ae1") + b"\x00" * 2048 + b"junk"
+    for declared in ("application/msword", "application/vnd.ms-excel"):
+        resp = _upload(client, payload=garbage, content_type=declared)
+        assert resp.status_code == 422, declared
+        assert "OLE2/CFB" in resp.json()["detail"]
+
+
+def test_valid_cfb_without_document_stream_is_rejected(env_store, client):
+    _login_as(client, client["db"], "收货员", "RECEIVER")
+    cfb = _build_minimal_cfb(["CompObj", "SummaryInformation"])
+    for declared in ("application/msword", "application/vnd.ms-excel"):
+        resp = _upload(client, payload=cfb, content_type=declared)
+        assert resp.status_code == 422
+        assert "不含 Word/Excel 文档流" in resp.json()["detail"]
+
+
+def test_minimal_cfb_document_streams_are_classified(env_store):
+    assert storage.store_stream(
+        io.BytesIO(_build_minimal_cfb(["WordDocument"])), content_type="application/octet-stream"
+    ).content_type == "application/msword"
+    assert storage.store_stream(
+        io.BytesIO(_build_minimal_cfb(["Workbook"])), content_type="application/octet-stream"
+    ).content_type == "application/vnd.ms-excel"
+    assert storage.store_stream(
+        io.BytesIO(_build_minimal_cfb(["Book"])), content_type="application/octet-stream"
+    ).content_type == "application/vnd.ms-excel"
+
+
+def test_ooxml_ct_token_in_comment_does_not_classify(env_store):
+    _ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    ct = (
+        f'<Types xmlns="{_ns}">'
+        "<!-- application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml -->"
+        '<Override PartName="/custom.xml" ContentType="application/octet-stream"/>'
+        "</Types>"
+    )
+    z = _minimal_zip({"[Content_Types].xml": ct, "word/document.xml": "<w:doc/>"})
+    assert storage.store_stream(io.BytesIO(z), content_type="application/octet-stream").content_type == (
+        "application/zip"
+    )
+
+
+def test_ooxml_override_for_missing_part_does_not_classify(env_store):
+    _ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    ct = (
+        f'<Types xmlns="{_ns}"><Override PartName="/word/document.xml" '
+        f'ContentType="{storage._DOCX_MAIN_CT}"/></Types>'
+    )
+    z = _minimal_zip({"[Content_Types].xml": ct, "word/missing.xml": "<w:doc/>"})
+    assert storage.store_stream(io.BytesIO(z), content_type="application/octet-stream").content_type == (
+        "application/zip"
+    )
+
+
+def test_ooxml_malformed_or_dtd_content_types_rejected(env_store):
+    _ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    malformed = _minimal_zip({"[Content_Types].xml": "<Types xmlns='{_ns}'><Override", "word/document.xml": "x"})
+    with pytest.raises(ValueError, match="损坏|无法解析"):
+        storage.store_stream(io.BytesIO(malformed), content_type="application/octet-stream")
+    dtd = (
+        '<!DOCTYPE Types [<!ENTITY x "boom">]>'
+        f'<Types xmlns="{_ns}">&x;</Types>'
+    )
+    evil = _minimal_zip({"[Content_Types].xml": dtd, "word/document.xml": "x"})
+    with pytest.raises(ValueError, match="DTD|实体"):
+        storage.store_stream(io.BytesIO(evil), content_type="application/octet-stream")
