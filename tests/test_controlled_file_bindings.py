@@ -136,3 +136,28 @@ def test_unknown_or_disabled_token_rejected(store, monkeypatch):
 def test_purpose_mapping_and_policy_default():
     assert bindings.purpose_for("carrier_document") == "CARRIER_DOCUMENT"
     assert bindings.effective_policy() in {"warn", "enforce"}
+
+
+def test_policy_value_is_stripped_and_validated(store, monkeypatch):
+    db, _, _ = store
+    monkeypatch.setenv(bindings.ATTACHMENT_POLICY_ENV, "ENFORCE ")  # whitespace/upper
+    assert bindings.effective_policy() == "enforce"
+    with pytest.raises(HTTPException) as exc:
+        bindings.resolve_attachment(db, value="\\server\legacy.pdf", expected_purpose="PARTNER_DOCUMENT")
+    assert exc.value.status_code == 422
+
+    monkeypatch.setenv(bindings.ATTACHMENT_POLICY_ENV, "banana")
+    with pytest.raises(RuntimeError, match="ATTACHMENT_POLICY"):
+        bindings.effective_policy()
+    with pytest.raises(RuntimeError, match="ATTACHMENT_POLICY"):
+        bindings.resolve_attachment(db, value="\\server\legacy.pdf", expected_purpose="PARTNER_DOCUMENT")
+
+
+def test_malformed_gspf_prefix_rejected_even_in_warn(store, monkeypatch):
+    db, _, _ = store
+    monkeypatch.setenv(bindings.ATTACHMENT_POLICY_ENV, "warn")
+    for bad in ("gspf:not-a-key", "gspf:" + "A" * 32, "gspf:" + "a" * 31, "gspf: " + "a" * 32):
+        with pytest.raises(HTTPException) as exc:
+            bindings.resolve_attachment(db, value=bad, expected_purpose="PARTNER_DOCUMENT")
+        assert exc.value.status_code == 422
+        assert "格式无效" in exc.value.detail

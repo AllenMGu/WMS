@@ -35,8 +35,14 @@ ATTACHMENT_POLICY_ENV = "ATTACHMENT_POLICY"
 
 
 def effective_policy() -> str:
-    """warn | enforce -- env override wins so tests can toggle it at runtime."""
-    return (os.getenv(ATTACHMENT_POLICY_ENV) or settings.attachment_policy or "warn").lower()
+    """warn | enforce -- validated strictly, fail closed on anything else."""
+    raw = os.getenv(ATTACHMENT_POLICY_ENV)
+    value = ((raw if raw is not None else settings.attachment_policy) or "warn").strip().lower()
+    if value not in {"warn", "enforce"}:
+        raise RuntimeError(
+            f"ATTACHMENT_POLICY 必须是 warn 或 enforce（当前值 {value!r}），禁止 fail-open 默认"
+        )
+    return value
 
 
 def validate_purpose(purpose: str | None) -> None:
@@ -65,7 +71,15 @@ def resolve_attachment(
     if not value:
         return None, None, None
     object_key = parse_ref(value)
+    stripped = value.strip()
     if object_key is None:
+        # A reference that *claims* to be controlled but cannot be parsed must
+        # never be persisted, regardless of the policy.
+        if stripped.startswith(REF_PREFIX):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{REF_PREFIX}<key> 引用格式无效（需 32 位小写十六进制 key），已拒绝",
+            )
         if effective_policy() == "enforce":
             raise HTTPException(
                 status_code=422,
