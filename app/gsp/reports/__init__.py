@@ -20,7 +20,6 @@ import json
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.gsp.electronic_signature.models import GspElectronicSignature
