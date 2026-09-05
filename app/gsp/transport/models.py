@@ -53,6 +53,8 @@ class GspCarrierDocument(Base):
     document_no = Column(String(100), nullable=False)
     valid_to = Column(Date, nullable=False, index=True)
     file_ref = Column(String(500), nullable=False)
+    file_sha256 = Column(String(64), nullable=True)
+    file_size_bytes = Column(Integer, nullable=True)
     status = Column(String(30), nullable=False, default="PENDING", index=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=utc_now)
