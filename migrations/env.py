@@ -7,6 +7,7 @@ from app import legacy as legacy_models  # noqa: F401
 from app.core.config import settings
 from app.core.database import Base
 from app.gsp import models as gsp_models  # noqa: F401
+from app.gsp.attachments import models as attachments_models  # noqa: F401
 from app.gsp.electronic_signature import models as electronic_signature_models  # noqa: F401
 from app.gsp.environment import models as environment_models  # noqa: F401
 from app.gsp.legacy_archive import models as legacy_archive_models  # noqa: F401
