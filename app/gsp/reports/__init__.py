@@ -226,13 +226,18 @@ def render_printable_html(result: dict, meta: dict) -> str:
         if truncated
         else ""
     )
-    preview_banner = (
-        "<div class='preview'>开发预览—非受控：禁止作为正式GSP记录归档/放行</div>"
-        if meta.get("is_preview")
-        else ""
-    )
+    preview_banner = ""
+    if meta.get("is_preview"):
+        preview_banner = (
+            "<div class='preview'>开发预览—非受控：禁止作为正式GSP记录归档/放行</div>"
+            "<div class='preview-mark'>开发预览 — 非受控</div>"
+        )
     filters_txt = json.dumps(meta.get("filters") or {}, ensure_ascii=False) or "无"
     now = datetime.now().isoformat(timespec="seconds")
+    if meta.get("is_preview"):
+        foot = f"非受控开发预览件（{esc(meta['copy_no'])}）— 禁止作为正式GSP记录归档/放行；报表 REPORT:{esc(result['key'])}"
+    else:
+        foot = f"本打印件为受控打印记录（REPORT:{esc(result['key'])}）；内容哈希见受控打印台账。"
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>{esc(result['title'])}</title>
 <style>
@@ -242,6 +247,8 @@ table{{border-collapse:collapse;width:100%;font-size:12px}}
 th,td{{border:1px solid #999;padding:4px 6px;text-align:left}}
 th{{background:#eef2f7}} .warn{{color:#b00}} .foot{{margin-top:12px;font-size:11px;color:#555}}
 .preview{{border:2px solid #b00;color:#b00;font-weight:bold;padding:6px;margin:8px 0;text-align:center}}
+.preview-mark{{position:fixed;top:30%;left:0;right:0;text-align:center;color:rgba(187,0,0,.30);font-size:48px;font-weight:bold;transform:rotate(-8deg);pointer-events:none;z-index:9}}
+@media print{{.preview-mark{{position:fixed;display:block}} .preview{{display:none}}}}
 .meta{{font-size:11px;color:#333;border:1px dashed #888;padding:6px;margin:8px 0}}
 </style></head><body>
 {preview_banner}
@@ -254,7 +261,7 @@ th{{background:#eef2f7}} .warn{{color:#b00}} .foot{{margin-top:12px;font-size:11
 </div>
 <table><thead><tr>{header}</tr></thead><tbody>{body}</tbody></table>
 {note}
-<div class="foot">本打印件为受控打印记录（REPORT:{esc(result['key'])}）；内容哈希见受控打印台账。</div>
+<div class="foot">{esc(foot)}</div>
 </body></html>"""
 
 
@@ -304,7 +311,7 @@ def record_print(
         template_version=template_version,
         copy_no=copy_no,
         purpose=purpose,
-        status="GENERATED",
+        status=status,
         snapshot_data=snapshot,
         content_hash=content_hash,
         printed_by=printed_by,
