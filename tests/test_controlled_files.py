@@ -559,14 +559,87 @@ def _build_minimal_cfb_v4(stream_name: str) -> bytes:
     return bytes(header) + bytes(fat) + bytes(directory[:4096])
 
 
-def test_cfb_v4_reachable_document_streams_are_classified(env_store):
+def test_cfb_v4_without_data_sectors_is_rejected(env_store):
+    # Reachable directory entry with a forged size but no FAT/MiniFAT-backed
+    # stream content must not classify as a Word/Excel document.
+    for name in ("WordDocument", "Workbook"):
+        with pytest.raises(ValueError):
+            storage.store_stream(
+                io.BytesIO(_build_minimal_cfb_v4(name)),
+                content_type="application/octet-stream",
+            )
+
+
+def _build_minimal_cfb_v4_with_data(stream_name: str) -> bytes:
+    """Valid CFB v4 whose document stream really has allocated data sectors.
+
+    Layout (4096-byte sectors, header sector 0 is the padded 512-byte header):
+    sector 0 = FAT, sector 1 = directory, sectors 2..3 = 5000-byte stream data
+    chained 2 -> 3 -> END.  The stream size (5000 > mini cutoff) forces the
+    regular FAT path, so olefile must follow real data sectors to read it.
+    """
+    data_size = 5000
+    num_data_sectors = (data_size + 4095) // 4096  # 2
+
+    header = bytearray(4096)
+    header[0:8] = bytes.fromhex("d0cf11e0a1b11ae1")
+    header[24:26] = (0x003E).to_bytes(2, "little")
+    header[26:28] = (0x0004).to_bytes(2, "little")      # major version 4
+    header[28:30] = b"\xfe\xff"
+    header[30:32] = (12).to_bytes(2, "little")          # sector shift 12
+    header[32:34] = (6).to_bytes(2, "little")
+    header[44:48] = (1).to_bytes(4, "little")           # num FAT sectors
+    header[48:52] = (1).to_bytes(4, "little")           # first dir sector
+    header[56:60] = (4096).to_bytes(4, "little")        # mini cutoff
+    header[60:64] = (0xFFFFFFFE).to_bytes(4, "little")  # first mini FAT
+    header[68:72] = (0xFFFFFFFE).to_bytes(4, "little")  # first DIFAT
+    header[72:76] = (0).to_bytes(4, "little")
+    header[76:80] = (0).to_bytes(4, "little")           # DIFAT[0] = FAT sector 0
+    for off in range(80, 512, 4):
+        header[off : off + 4] = (0xFFFFFFFF).to_bytes(4, "little")
+
+    def entry(name: str, etype: int, child: int = 0xFFFFFFFF, isect_start: int = 0xFFFFFFFE, size: int = 0) -> bytes:
+        enc = name.encode("utf-16-le") + b"\x00\x00"
+        e = bytearray(128)
+        e[0 : len(enc)] = enc
+        e[64:66] = (len(enc)).to_bytes(2, "little")
+        e[66] = etype
+        e[67] = 1
+        for off in (68, 72):
+            e[off : off + 4] = (0xFFFFFFFF).to_bytes(4, "little")
+        e[76:80] = child.to_bytes(4, "little")
+        e[116:120] = isect_start.to_bytes(4, "little")
+        e[120:124] = (size & 0xFFFFFFFF).to_bytes(4, "little")
+        e[124:128] = (size >> 32).to_bytes(4, "little")
+        return bytes(e)
+
+    directory = bytearray()
+    directory += entry("Root Entry", 5, child=1)
+    directory += entry(stream_name, 2, isect_start=2, size=data_size)
+    while len(directory) < 4096:
+        directory += b"\x00" * 128
+
+    fat = bytearray(4096)
+    for i in range(0, 4096, 4):
+        fat[i : i + 4] = (0xFFFFFFFF).to_bytes(4, "little")
+    fat[0:4] = (0xFFFFFFFD).to_bytes(4, "little")       # sector 0 = FAT
+    fat[4:8] = (0xFFFFFFFE).to_bytes(4, "little")       # sector 1 = dir end
+    fat[8:12] = (3).to_bytes(4, "little")               # sector 2 -> 3
+    fat[12:16] = (0xFFFFFFFE).to_bytes(4, "little")     # sector 3 -> END
+
+    data = b"x" * data_size
+    data_sectors = data + b"\x00" * (num_data_sectors * 4096 - len(data))
+    return bytes(header) + bytes(fat) + bytes(directory[:4096]) + data_sectors
+
+
+def test_cfb_v4_with_real_data_sectors_is_classified(env_store):
     doc = storage.store_stream(
-        io.BytesIO(_build_minimal_cfb_v4("WordDocument")),
+        io.BytesIO(_build_minimal_cfb_v4_with_data("WordDocument")),
         content_type="application/octet-stream",
     )
     assert doc.content_type == "application/msword"
     xls = storage.store_stream(
-        io.BytesIO(_build_minimal_cfb_v4("Workbook")),
+        io.BytesIO(_build_minimal_cfb_v4_with_data("Workbook")),
         content_type="application/octet-stream",
     )
     assert xls.content_type == "application/vnd.ms-excel"

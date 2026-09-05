@@ -112,41 +112,51 @@ def content_path(sha256: str) -> str:
 
 
 def _classify_ole2(path: str) -> str:
-    """Classify legacy .doc/.xls using the mature ``olefile`` CFB parser.
+    """Classify legacy .doc/.xls by actually reading the document stream.
 
-    olefile validates the MS-CFB header (v3 and v4 sector layouts incl. the
-    4096-byte header sector), the FAT/DIFAT and mini-FAT chains, and walks the
-    directory tree that is actually reachable from the Root Entry, so orphaned
-    stream names cannot be mistaken for a real Word/Excel document.  Only a
-    non-empty top-level ``WordDocument`` or ``Workbook``/``Book`` stream
-    classifies as a controlled legacy Office document; anything else --
-    garbage behind the magic, structurally broken containers, or valid
-    containers without a document stream -- is rejected.
+    ``olefile`` (with parsing defects raised) validates the CFB structure,
+    header sector layout (v3/v4) and the directory tree reachable from the
+    Root Entry.  Classification additionally **opens the target stream and
+    reads it**, requiring the number of readable bytes to equal the
+    directory-declared size (and to be non-empty).  A reachable directory
+    entry with a forged size but no real FAT/MiniFAT-backed content therefore
+    cannot pass; garbage or broken containers are rejected outright.
     """
     if _olefile is None:
         raise ValueError("受控文件服务缺少 OLE2 解析依赖（olefile）")
     try:
-        ole = _olefile.OleFileIO(path)
+        ole = _olefile.OleFileIO(path, raise_defects=_olefile.DEFECT_INCORRECT)
     except Exception as exc:
         raise ValueError("不是有效的 OLE2/CFB 容器（无法解析）") from exc
     try:
-        streams: set[str] = set()
+        reachable: set[str] = set()
         for parts in ole.listdir(streams=True, storages=False):
-            if parts:
-                streams.add(parts[0] if len(parts) == 1 else "/".join(parts))
-        sizes: dict[str, int] = {}
+            if parts and len(parts) == 1:
+                reachable.add(parts[0])
+        declared_sizes: dict[str, int] = {}
         for entry in ole.direntries or []:
-            if entry is not None and entry.name and entry.name != "Root Entry":
-                sizes[entry.name] = getattr(entry, "size", 0) or 0
+            if entry is not None and entry.name and entry.name in reachable:
+                declared_sizes[entry.name] = getattr(entry, "size", 0) or 0
+
+        def readable_fully(name: str) -> bool:
+            declared = declared_sizes.get(name, 0)
+            if declared <= 0:
+                return False
+            try:
+                with ole.openstream(name) as stream:
+                    data = stream.read()
+            except Exception:
+                return False
+            return len(data) == declared
+
+        if "WordDocument" in reachable and readable_fully("WordDocument"):
+            return CONTENT_TYPE_MSWORD_OLD
+        for name in ("Workbook", "Book"):
+            if name in reachable and readable_fully(name):
+                return CONTENT_TYPE_XLS_OLD
     finally:
         ole.close()
-
-    if "WordDocument" in streams and sizes.get("WordDocument", 0) > 0:
-        return CONTENT_TYPE_MSWORD_OLD
-    for name in ("Workbook", "Book"):
-        if name in streams and sizes.get(name, 0) > 0:
-            return CONTENT_TYPE_XLS_OLD
-    raise ValueError("OLE2/CFB 容器有效但不含非空的 Word/Excel 文档流，拒绝接收")
+    raise ValueError("OLE2/CFB 容器不含可完整读取的非空 Word/Excel 文档流，拒绝接收")
 
 
 def _classify_ooxml_zip(path: str) -> str:
