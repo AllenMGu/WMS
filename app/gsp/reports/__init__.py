@@ -161,49 +161,22 @@ def _build_result(report, rows, total, offset, limit, filters) -> dict:
 
 
 def run_full_print_rows(db: Session, key: str, filters=None) -> dict:
-    """Keyset scan over the as-of max id inside a consistent snapshot.
+    """All matching rows in one SELECT capped at MAX_ROWS + 1.
 
-    PostgreSQL: the transaction is promoted to REPEATABLE READ so concurrent
-    commits cannot shift the read set; a final count == collected guard refuses
-    to issue an incomplete "full" print.  SQLite (tests) has no concurrency.
+    A single statement sees one consistent snapshot (PostgreSQL statement
+    snapshot; SQLite serialised), so no isolation-level switching on an already
+    autobegun transaction is needed.  Fetching MAX_ROWS+1 rows lets us detect
+    "more than the cap" without a separate (racy) count.
     """
     report = _REPORT_MAP.get(key)
     if report is None:
         raise KeyError(key)
     filters = {str(k): str(v).strip() for k, v in (filters or {}).items() if v not in (None, "")}
-    if db.bind is not None and db.bind.dialect.name == "postgresql":
-        # Earlier ACL queries autobegan a transaction on this session; the
-        # isolation level can only be changed on a fresh transaction.
-        if db.in_transaction():
-            db.rollback()
-        db.connection().execution_options(isolation_level="REPEATABLE READ")
     base = _apply_filters(db.query(report.entity), report, filters)
-    total = base.count()
-    max_id = db.query(func.max(report.entity.id)).scalar() or 0
-    if total > MAX_ROWS:
-        raise ReportError(f"匹配记录 {total} 行超过全量打印上限 {MAX_ROWS}，请使用分页或收紧筛选条件")
-    page_size = 500
-    cursor = max_id
-    collected: list = []
-    while True:
-        rows = (
-            base.filter(report.entity.id <= cursor)
-            .order_by(report.entity.id.desc())
-            .limit(page_size)
-            .all()
-        )
-        if not rows:
-            break
-        collected.extend(rows)
-        cursor = min(row.id for row in rows) - 1
-        if len(collected) >= total or cursor < 0:
-            break
-    collected = collected[:total]
-    if len(collected) != total:
-        # concurrent delete/update changed the set after the snapshot began
-        raise ReportError("全量打印期间检测到数据并发变化（读得 %d/%d 行），请重试" % (len(collected), total))
-    result = _build_result(report, collected, total, 0, len(collected), filters)
-    result["as_of_max_id"] = max_id
+    rows = base.order_by(report.entity.id.desc()).limit(MAX_ROWS + 1).all()
+    if len(rows) > MAX_ROWS:
+        raise ReportError(f"匹配记录超过全量打印上限 {MAX_ROWS}，请使用分页或收紧筛选条件")
+    result = _build_result(report, rows, len(rows), 0, len(rows), filters)
     return result
 
 
