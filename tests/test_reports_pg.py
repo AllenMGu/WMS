@@ -1,8 +1,8 @@
-"""Integration test for cover_all consistency on the real PostgreSQL session.
+"""Integration test for cover_all on the real PostgreSQL session.
 
 Runs only when the test DATABASE_URL points at PostgreSQL (CI PostgreSQL job).
-Verifies the REPEATABLE READ isolation switch works after earlier ACL queries
-have autobegun a transaction on the same Session.
+Verifies the single-SELECT (MAX_ROWS+1) full print works on a Session that has
+already autobegun a transaction through earlier ACL queries.
 """
 
 import os

@@ -115,8 +115,16 @@ def test_catalog_respects_visibility_and_print_acl(ctx):
     rp = client.post("/api/gsp/reports/batch_stock_ledger/print",
                      json={"reason": "preview 验证", "preview": True})
     assert rp.status_code == 200
+    assert rp.json()["copy_no"].startswith("PREVIEW-")
+    assert "开发预览—非受控" in rp.json()["html"]
+    assert "preview-mark" in rp.json()["html"]           # per-page watermark
+    assert "非受控开发预览件" in rp.json()["html"]        # non-controlled footer
+    recp = ctx["db"].get(GspControlledPrintRecord, rp.json()["print_id"])
+    assert recp is not None and recp.status == "PREVIEW"  # status persisted
     listed2 = client.get("/api/gsp/reports/prints/list").json()
-    assert listed2["total"] == 1 and listed2["items"][0]["copy_no"] == rp.json()["copy_no"]
+    assert listed2["total"] == 1
+    assert listed2["items"][0]["copy_no"].startswith("PREVIEW-")
+    assert listed2["items"][0]["status"] == "PREVIEW"
 
 
 def test_list_pagination_filters_before_paging(ctx):
@@ -219,3 +227,50 @@ def test_unknown_filter_and_pagination(ctx):
     assert body["count"] == 2 and body["total"] == 3 and body["has_more"] is True
     page2 = client.get("/api/gsp/reports/audit_event_ledger?action=PAGE_EVT&limit=2&offset=2").json()
     assert page2["count"] >= 1
+
+
+def test_preview_vs_formal_controlled_print_distinction(ctx):
+    """Full regression evidence: preview prints must never look controlled."""
+    client = ctx["client"]
+    from app.gsp.models import GspAuditEvent
+
+    def audit_action(print_id):
+        row = (
+            ctx["db"].query(GspAuditEvent)
+            .filter(GspAuditEvent.entity_type == "GspControlledPrintRecord",
+                    GspAuditEvent.entity_id == str(print_id))
+            .order_by(GspAuditEvent.id.desc())
+            .first()
+        )
+        return row.action if row else None
+
+    # formal (audit ledger is production-ready and restricted to quality roles)
+    _login(ctx, "审计C", "AUDITOR")
+    _events(ctx, "FORMAL_ACT", 1)
+    formal = client.post("/api/gsp/reports/audit_event_ledger/print",
+                         json={"reason": "正式受控打印", "limit": 5}).json()
+    rec_f = ctx["db"].get(GspControlledPrintRecord, formal["print_id"])
+    assert formal["copy_no"].startswith("RPT-")
+    assert rec_f is not None and rec_f.status == "GENERATED"
+    assert rec_f.snapshot_data["preview"] is False
+    assert "class='preview-mark'" not in formal["html"]      # watermark element absent
+    assert "开发预览—非受控" not in formal["html"]              # banner absent
+    assert "非受控开发预览件" not in formal["html"]            # footer stays controlled
+    assert audit_action(formal["print_id"]) == "REPORT_PRINTED"
+    list_f = client.get("/api/gsp/reports/prints/list").json()
+    item_f = next(i for i in list_f["items"] if i["id"] == formal["print_id"])
+    assert item_f["status"] == "GENERATED" and item_f["copy_no"].startswith("RPT-")
+
+    # preview (batch stock ledger is production_ready=false)
+    pv = client.post("/api/gsp/reports/batch_stock_ledger/print",
+                     json={"reason": "预览验证", "preview": True}).json()
+    rec_p = ctx["db"].get(GspControlledPrintRecord, pv["print_id"])
+    assert pv["copy_no"].startswith("PREVIEW-")
+    assert rec_p is not None and rec_p.status == "PREVIEW"
+    assert rec_p.snapshot_data["preview"] is True
+    for marker in ("class='preview-mark'", "@media print", "开发预览—非受控", "禁止作为正式GSP记录归档/放行", "非受控开发预览件"):
+        assert marker in pv["html"], f"preview html missing {marker}"
+    assert audit_action(pv["print_id"]) == "REPORT_PREVIEW_PRINTED"
+    listed = client.get("/api/gsp/reports/prints/list").json()
+    item_p = next(i for i in listed["items"] if i["id"] == pv["print_id"])
+    assert item_p["status"] == "PREVIEW" and item_p["copy_no"].startswith("PREVIEW-")
