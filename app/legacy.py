@@ -2,7 +2,8 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Enum, UniqueConstraint, text
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Enum, UniqueConstraint, text, CheckConstraint
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, relationship
 from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime, timedelta
@@ -156,6 +157,7 @@ class Stock(Base):
     # 复合唯一索引，防止相同仓库、货物、库位的重复记录
     __table_args__ = (
         UniqueConstraint('warehouse_id', 'goods_id', 'location_id', name='_warehouse_goods_location_uc'),
+        CheckConstraint("quantity >= 0", name="ck_stock_quantity_non_negative"),
     )
 
     # 关联关系
@@ -312,7 +314,15 @@ class OutboundOrderItem(Base):
     location = relationship("Location")
 
 # ------------------- FastAPI应用初始化 -------------------
-app = FastAPI(title="多仓库管理系统API")
+# 非 development 环境（staging/production/...）默认关闭交互式文档与 OpenAPI
+# schema 暴露，避免泄露全部接口结构；开发环境保留便于调试。
+_public_docs = settings.environment == "development"
+app = FastAPI(
+    title="多仓库管理系统API",
+    docs_url="/docs" if _public_docs else None,
+    redoc_url="/redoc" if _public_docs else None,
+    openapi_url="/openapi.json" if _public_docs else None,
+)
 
 # 跨域配置
 app.add_middleware(
@@ -406,7 +416,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 # 获取当前用户
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="无法验证凭据",
@@ -424,6 +434,32 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     if user is None or not user.is_active:
         raise credentials_exception
     return user
+
+
+def ensure_admin(current_user: User, detail: str = "无权限操作") -> User:
+    """命令式管理员闸门：非 ADMIN 角色直接抛出 403。
+
+    供绕过 FastAPI 依赖注入的直接调用（运维脚本、单元测试）复用同一判定，
+    保证 HTTP 入口与非 HTTP 入口的权限语义完全一致。
+    """
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail=detail)
+    return current_user
+
+
+def require_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    """管理员依赖：非 ADMIN 角色一律 403（默认提示文案）。"""
+    return ensure_admin(current_user)
+
+
+def require_admin(detail: str = "无权限操作"):
+    """管理员依赖工厂：保留端点原有的 403 提示文案。"""
+
+    def dependency(current_user: User = Depends(get_current_user)) -> User:
+        return ensure_admin(current_user, detail)
+
+    return dependency
+
 
 def format_outbound_order_response(order):
     return {
@@ -769,7 +805,7 @@ def _authentication_failed(db: Session, username: str, source_ip: str) -> None:
 
 
 @router.post("/token", summary="用户登录获取Token")
-async def login_for_access_token(
+def login_for_access_token(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
@@ -858,7 +894,7 @@ async def login_for_access_token(
 
 # 新增用户（仅管理员可操作）
 @router.post("/users/", response_model=UserResponse, summary="新增用户")
-async def create_user(
+def create_user(
     user: UserCreate,
     request: Request,
     reason: str = Query(..., min_length=3, max_length=500),
@@ -970,7 +1006,7 @@ async def create_user(
 
 # 用户切换仓库接口
 @router.post("/users/{user_id}/switch-warehouse", summary="切换当前仓库")
-async def switch_user_warehouse(
+def switch_user_warehouse(
     user_id: int,
     warehouse_id: Optional[int] = Query(None),
     request: Optional[dict] = None,
@@ -1015,7 +1051,7 @@ async def switch_user_warehouse(
 
 # 获取用户可管理的仓库列表
 @router.get("/users/{user_id}/warehouses", summary="获取用户可管理的仓库")
-async def get_user_warehouses(
+def get_user_warehouses(
     user_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1059,7 +1095,7 @@ async def get_user_warehouses(
 
 # 获取LDAP配置
 @router.get("/ldap/config", summary="获取当前LDAP配置")
-async def get_ldap_config(
+def get_ldap_config(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1081,7 +1117,7 @@ async def get_ldap_config(
 
 # 更新LDAP配置
 @router.put("/ldap/config", summary="更新LDAP配置")
-async def update_ldap_config(
+def update_ldap_config(
     config_data: dict,
     request: Request,
     current_user: User = Depends(get_current_user),
@@ -1096,7 +1132,7 @@ async def update_ldap_config(
 
 # LDAP用户导入
 @router.post("/ldap/import-users", summary="导入LDAP用户")
-async def import_ldap_users(
+def import_ldap_users(
     ldap_config: dict = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1185,7 +1221,7 @@ async def import_ldap_users(
 
 # 获取所有用户
 @router.get("/users/", summary="获取所有用户")
-async def get_all_users(
+def get_all_users(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1210,7 +1246,7 @@ async def get_all_users(
 
 # 修改用户（仅管理员可操作）
 @router.put("/users/{user_id}", summary="修改用户信息")
-async def update_user(
+def update_user(
     user_id: int,
     user_update: UserUpdate,
     request: Request,
@@ -1250,7 +1286,7 @@ async def update_user(
 
 # 为用户分配/取消分配仓库
 @router.post("/users/{user_id}/assign-warehouse", summary="为用户分配仓库")
-async def assign_warehouse_to_user(
+def assign_warehouse_to_user(
     user_id: int,
     warehouse_id: int,
     request: Request,
@@ -1326,7 +1362,7 @@ async def assign_warehouse_to_user(
     return {"message": "仓库分配成功"}
 
 @router.delete("/users/{user_id}", summary="删除用户")
-async def delete_user(
+def delete_user(
     user_id: int,
     request: Request,
     reason: str = Query(..., min_length=3, max_length=500),
@@ -1356,7 +1392,7 @@ async def delete_user(
     return {"message": "用户已停用，历史记录已保留"}
 
 @router.delete("/users/{user_id}/unassign-warehouse", summary="取消用户仓库分配")
-async def unassign_warehouse_from_user(
+def unassign_warehouse_from_user(
     user_id: int,
     warehouse_id: int,
     request: Request,
@@ -1431,7 +1467,7 @@ async def unassign_warehouse_from_user(
 
 # ------------------- 仓库管理接口 -------------------
 @router.post("/warehouses/", response_model=WarehouseResponse, summary="新增仓库")
-async def create_warehouse(
+def create_warehouse(
     warehouse: WarehouseCreate,
     request: Request,
     reason: str = Query(..., min_length=3, max_length=500),
@@ -1505,7 +1541,7 @@ async def create_warehouse(
     return new_warehouse
 
 @router.get("/warehouses/", response_model=List[WarehouseResponse], summary="获取所有仓库")
-async def get_warehouses(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_warehouses(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         if current_user.role == UserRole.ADMIN:
             # 管理员可以看到所有仓库，包括禁用的
@@ -1535,7 +1571,7 @@ async def get_warehouses(current_user: User = Depends(get_current_user), db: Ses
         raise HTTPException(status_code=500, detail=f"获取仓库列表失败: {str(e)}")
 
 @router.get("/warehouses/{id}", response_model=WarehouseResponse, summary="获取仓库详情")
-async def get_warehouse(id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_warehouse(id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # 获取仓库信息
     db_warehouse = db.query(Warehouse).filter(Warehouse.id == id).first()
 
@@ -1555,7 +1591,7 @@ async def get_warehouse(id: int, current_user: User = Depends(get_current_user),
     return db_warehouse
 
 @router.put("/warehouses/{id}", response_model=WarehouseResponse, summary="修改仓库信息")
-async def update_warehouse(
+def update_warehouse(
     id: int,
     warehouse: WarehouseUpdate,
     request: Request,
@@ -1596,7 +1632,7 @@ async def update_warehouse(
 
 # ------------------- 库位管理接口 -------------------
 @router.post("/locations/", response_model=LocationResponse, summary="新增库位")
-async def create_location(
+def create_location(
     location: LocationCreate,
     request: Request,
     reason: str = Query(..., min_length=3, max_length=500),
@@ -1636,7 +1672,7 @@ async def create_location(
     return new_location
 
 @router.get("/locations/", response_model=List[LocationResponse], summary="获取库位列表")
-async def get_locations(
+def get_locations(
     warehouse_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1687,7 +1723,7 @@ async def get_locations(
         )
 
 @router.put("/locations/{id}", response_model=LocationResponse, summary="修改库位信息")
-async def update_location(
+def update_location(
     id: int,
     location: LocationUpdate,
     request: Request,
@@ -1736,7 +1772,7 @@ async def update_location(
     return db_location
 
 @router.delete("/locations/{id}", summary="删除库位")
-async def delete_location(
+def delete_location(
     id: int,
     request: Request,
     reason: str = Query(..., min_length=3, max_length=500),
@@ -1769,9 +1805,9 @@ async def delete_location(
 
 # ------------------- 货物管理接口 -------------------
 @router.post("/goods/", response_model=GoodsResponse, summary="新增货物")
-async def create_goods(
+def create_goods(
     goods: GoodsCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin_user),
     db: Session = Depends(get_db)
 ):
     db_goods = db.query(Goods).filter(Goods.barcode == goods.barcode).first()
@@ -1785,7 +1821,7 @@ async def create_goods(
     return new_goods
 
 @router.get("/goods/", response_model=List[GoodsResponse], summary="获取所有货物（支持搜索）")
-async def get_goods(
+def get_goods(
     keyword: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1803,7 +1839,7 @@ async def get_goods(
     return query.all()
 
 @router.get("/goods/export", summary="导出货物数据")
-async def export_goods(
+def export_goods(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1843,7 +1879,7 @@ async def export_goods(
         raise HTTPException(status_code=500, detail=f"导出失败：{str(e)}")
 
 @router.get("/goods/{id}", response_model=GoodsResponse, summary="获取单个货物详情")
-async def get_goods_detail(
+def get_goods_detail(
     id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1854,10 +1890,10 @@ async def get_goods_detail(
     return db_goods
 
 @router.put("/goods/{id}", response_model=GoodsResponse, summary="修改货物信息")
-async def update_goods(
+def update_goods(
     id: int,
     goods: GoodsUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin_user),
     db: Session = Depends(get_db)
 ):
     db_goods = db.query(Goods).filter(Goods.id == id).first()
@@ -1872,7 +1908,7 @@ async def update_goods(
     return db_goods
 
 @router.delete("/goods/{id}", summary="删除货物")
-async def delete_goods(
+def delete_goods(
     id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -2020,7 +2056,7 @@ def normalize_legacy_audit_reason(reason: str) -> str:
 
 
 @router.post("/inventory/scan", summary="扫码出入库")
-async def scan_inventory(
+def scan_inventory(
     inventory: InventoryCreate,
     request: Request,
     current_user: User = Depends(get_current_user),
@@ -2051,12 +2087,15 @@ async def scan_inventory(
         Stock.warehouse_id == warehouse_id,
         Stock.goods_id == goods.id,
         Stock.location_id == location.id
-    ).first()
+    ).with_for_update().first()
     quantity_before = stock.quantity if stock else 0
 
     if inventory.type == InventoryType.IN:
         # 入库
         if not stock:
+            # 并发首笔入库可能同时创建同一 (warehouse, goods, location) 行，
+            # 依靠唯一约束 _warehouse_goods_location_uc 兜底：冲突则回滚后
+            # 重新以行锁读取既有行再累加，避免并发丢单与 IntegrityError 泄漏。
             stock = Stock(
                 warehouse_id=warehouse_id,
                 goods_id=goods.id,
@@ -2064,6 +2103,21 @@ async def scan_inventory(
                 quantity=inventory.quantity
             )
             db.add(stock)
+            try:
+                db.flush()
+            except IntegrityError:
+                db.rollback()
+                stock = db.query(Stock).filter(
+                    Stock.warehouse_id == warehouse_id,
+                    Stock.goods_id == goods.id,
+                    Stock.location_id == location.id
+                ).with_for_update().first()
+                if stock is None:
+                    raise
+                # 冲突重取后，真实 before 是并发事务已提交的库存量，而非首次查询的 0，
+                # 否则 GxP 审计会记录错误的 before_data（如 0 -> 8 而非 5 -> 8）。
+                quantity_before = stock.quantity
+                stock.quantity += inventory.quantity
         else:
             stock.quantity += inventory.quantity
 
@@ -2168,7 +2222,7 @@ async def scan_inventory(
 
 # ------------------- 库存查询接口（带仓库+库位） -------------------
 @router.get("/stock/", response_model=List[StockResponse], summary="库存查询（带仓库库位）")
-async def get_stock(
+def get_stock(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -2217,7 +2271,7 @@ async def get_stock(
 
 # ------------------- 扫码盘点接口 -------------------
 @router.post("/check/scan", summary="扫码盘点")
-async def scan_check(
+def scan_check(
     check: CheckCreate,
     request: Request,
     current_user: User = Depends(get_current_user),
@@ -2284,7 +2338,7 @@ async def scan_check(
 
 # 获取出入库记录
 @router.get("/inventory/logs", summary="获取出入库记录")
-async def get_inventory_logs(
+def get_inventory_logs(
     warehouse_id: Optional[int] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -2353,7 +2407,7 @@ async def get_inventory_logs(
 
 # 获取盘点记录
 @router.get("/check/records", summary="获取盘点记录")
-async def get_check_records(
+def get_check_records(
     warehouse_id: Optional[int] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -2416,7 +2470,7 @@ async def get_check_records(
 
 # 获取盘点统计
 @router.get("/check/stats", summary="获取盘点统计")
-async def get_check_stats(
+def get_check_stats(
     warehouse_id: Optional[int] = None,
     date: Optional[str] = None,
     current_user: User = Depends(get_current_user),
@@ -2462,7 +2516,7 @@ async def get_check_stats(
 
 # 获取盘点差异报表
 @router.get("/check/diffs", summary="获取盘点差异报表")
-async def get_check_diffs(
+def get_check_diffs(
     warehouse_id: Optional[int] = None,
     date: Optional[str] = None,
     current_user: User = Depends(get_current_user),
@@ -2573,7 +2627,7 @@ class CheckOrderFullResponse(BaseModel):
 
 # 创建盘点单
 @router.post("/check-orders/", response_model=CheckOrderHeaderResponse, summary="创建盘点单")
-async def create_check_order(
+def create_check_order(
     order: CheckOrderCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -2640,7 +2694,7 @@ async def create_check_order(
 
 # 获取盘点单列表
 @router.get("/check-orders/", summary="获取盘点单列表")
-async def get_check_orders(
+def get_check_orders(
     warehouse_id: Optional[int] = None,
     status: Optional[str] = None,
     start_date: Optional[str] = None,
@@ -2715,7 +2769,7 @@ async def get_check_orders(
 
 # 获取盘点单详情（包含明细）
 @router.get("/check-orders/{order_id}", response_model=CheckOrderFullResponse, summary="获取盘点单详情")
-async def get_check_order_detail(
+def get_check_order_detail(
     order_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -2780,7 +2834,7 @@ class CheckOrderItemCreate(BaseModel):
     check_quantity: float
 
 @router.post("/check-orders/items/", summary="添加盘点明细（扫码盘点）")
-async def add_check_order_item(
+def add_check_order_item(
     item: CheckOrderItemCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -2886,7 +2940,7 @@ async def add_check_order_item(
 
 # 完成盘点
 @router.post("/check-orders/{order_id}/complete", summary="完成盘点")
-async def complete_check_order(
+def complete_check_order(
     order_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -2937,7 +2991,7 @@ async def complete_check_order(
 
 # 导出盘点报告
 @router.get("/check-orders/{order_id}/export", summary="导出盘点报告")
-async def export_check_order(
+def export_check_order(
     order_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -3014,7 +3068,7 @@ async def export_check_order(
 
 # ------------------- 入库单管理接口 -------------------
 @router.post("/inbound-orders/", response_model=InboundOrderHeaderResponse, summary="创建入库单")
-async def create_inbound_order(
+def create_inbound_order(
     order: InboundOrderHeaderCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -3073,7 +3127,7 @@ async def create_inbound_order(
         raise HTTPException(status_code=500, detail=f"创建入库单失败：{str(e)}")
 
 @router.post("/inbound-orders/{order_id}/items", response_model=InboundOrderItemResponse, summary="添加入库单明细")
-async def add_inbound_order_item(
+def add_inbound_order_item(
     order_id: int,
     item: InboundOrderItemCreate,
     current_user: User = Depends(get_current_user),
@@ -3154,7 +3208,7 @@ async def add_inbound_order_item(
         raise HTTPException(status_code=500, detail=f"添加明细失败：{str(e)}")
 
 @router.post("/inbound-orders/{order_id}/submit", summary="提交入库单")
-async def submit_inbound_order(
+def submit_inbound_order(
     order_id: int,
     request: Request,
     current_user: User = Depends(get_current_user),
@@ -3248,7 +3302,7 @@ async def submit_inbound_order(
         raise HTTPException(status_code=500, detail=f"提交入库单失败：{str(e)}")
 
 @router.get("/inbound-orders/", response_model=List[InboundOrderHeaderResponse], summary="获取入库单列表")
-async def get_inbound_orders(
+def get_inbound_orders(
     status: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -3319,7 +3373,7 @@ async def get_inbound_orders(
         raise HTTPException(status_code=500, detail=f"获取入库单列表失败：{str(e)}")
 
 @router.get("/inbound-orders/{order_id}", response_model=InboundOrderDetailResponse, summary="获取入库单详情")
-async def get_inbound_order_detail(
+def get_inbound_order_detail(
     order_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -3387,7 +3441,7 @@ async def get_inbound_order_detail(
 
 
 @router.put("/inbound-orders/{order_id}", response_model=InboundOrderHeaderResponse, summary="更新入库单")
-async def update_inbound_order(
+def update_inbound_order(
     order_id: int,
     order: InboundOrderHeaderCreate,
     current_user: User = Depends(get_current_user),
@@ -3430,7 +3484,7 @@ async def update_inbound_order(
         raise HTTPException(status_code=500, detail=f"更新入库单失败：{str(e)}")
 
 @router.put("/inbound-orders/{order_id}/items/{item_id}", response_model=InboundOrderItemResponse, summary="更新入库单明细")
-async def update_inbound_order_item(
+def update_inbound_order_item(
     order_id: int,
     item_id: int,
     item: InboundOrderItemCreate,
@@ -3502,7 +3556,7 @@ async def update_inbound_order_item(
         raise HTTPException(status_code=500, detail=f"更新入库单明细失败：{str(e)}")
 
 @router.delete("/inbound-orders/{order_id}/items/{item_id}", summary="删除入库单明细")
-async def delete_inbound_order_item(
+def delete_inbound_order_item(
     order_id: int,
     item_id: int,
     current_user: User = Depends(get_current_user),
@@ -3553,7 +3607,7 @@ async def delete_inbound_order_item(
         raise HTTPException(status_code=500, detail=f"删除入库单明细失败：{str(e)}")
 
 @router.post("/inbound-orders/{order_id}/return", summary="退库")
-async def return_inbound_order(
+def return_inbound_order(
     order_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -3629,7 +3683,7 @@ async def return_inbound_order(
         raise HTTPException(status_code=500, detail=f"创建退库单失败：{str(e)}")
 
 @router.delete("/inbound-orders/{order_id}", summary="删除入库单")
-async def delete_inbound_order(
+def delete_inbound_order(
     order_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -3666,7 +3720,7 @@ async def delete_inbound_order(
 
 # ------------------- 出库单管理接口 -------------------
 @router.post("/outbound-orders/", response_model=OutboundOrderHeaderResponse, summary="创建出库单")
-async def create_outbound_order(
+def create_outbound_order(
     order: OutboundOrderHeaderCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -3725,7 +3779,7 @@ async def create_outbound_order(
         raise HTTPException(status_code=500, detail=f"创建出库单失败：{str(e)}")
 
 @router.post("/outbound-orders/{order_id}/items", response_model=OutboundOrderItemResponse, summary="添加出库单明细")
-async def add_outbound_order_item(
+def add_outbound_order_item(
     order_id: int,
     item: OutboundOrderItemCreate,
     current_user: User = Depends(get_current_user),
@@ -3815,7 +3869,7 @@ async def add_outbound_order_item(
         raise HTTPException(status_code=500, detail=f"添加明细失败：{str(e)}")
 
 @router.post("/outbound-orders/{order_id}/submit", summary="提交出库单")
-async def submit_outbound_order(
+def submit_outbound_order(
     order_id: int,
     request: Request,
     current_user: User = Depends(get_current_user),
@@ -3908,7 +3962,7 @@ async def submit_outbound_order(
         raise HTTPException(status_code=500, detail=f"提交出库单失败：{str(e)}")
 
 @router.get("/outbound-orders/", response_model=List[OutboundOrderHeaderResponse], summary="获取出库单列表")
-async def get_outbound_orders(
+def get_outbound_orders(
     status: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -3976,7 +4030,7 @@ async def get_outbound_orders(
         raise HTTPException(status_code=500, detail=f"获取出库单列表失败：{str(e)}")
 
 @router.get("/outbound-orders/{order_id}", response_model=OutboundOrderDetailResponse, summary="获取出库单详情")
-async def get_outbound_order_detail(
+def get_outbound_order_detail(
     order_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -4043,7 +4097,7 @@ async def get_outbound_order_detail(
 
 
 @router.put("/outbound-orders/{order_id}", response_model=OutboundOrderHeaderResponse, summary="更新出库单")
-async def update_outbound_order(
+def update_outbound_order(
     order_id: int,
     order: OutboundOrderHeaderCreate,
     current_user: User = Depends(get_current_user),
@@ -4086,7 +4140,7 @@ async def update_outbound_order(
         raise HTTPException(status_code=500, detail=f"更新出库单失败：{str(e)}")
 
 @router.put("/outbound-orders/{order_id}/items/{item_id}", response_model=OutboundOrderItemResponse, summary="更新出库单明细")
-async def update_outbound_order_item(
+def update_outbound_order_item(
     order_id: int,
     item_id: int,
     item: OutboundOrderItemCreate,
@@ -4158,7 +4212,7 @@ async def update_outbound_order_item(
         raise HTTPException(status_code=500, detail=f"更新出库单明细失败：{str(e)}")
 
 @router.delete("/outbound-orders/{order_id}/items/{item_id}", summary="删除出库单明细")
-async def delete_outbound_order_item(
+def delete_outbound_order_item(
     order_id: int,
     item_id: int,
     current_user: User = Depends(get_current_user),
@@ -4209,7 +4263,7 @@ async def delete_outbound_order_item(
         raise HTTPException(status_code=500, detail=f"删除出库单明细失败：{str(e)}")
 
 @router.delete("/outbound-orders/{order_id}", summary="删除出库单")
-async def delete_outbound_order(
+def delete_outbound_order(
     order_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
