@@ -1,4 +1,3 @@
-import asyncio
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -135,8 +134,7 @@ def test_direct_stock_receipt_route_is_disabled_even_for_frozen_stock():
         _approved_plan(db, context)
         request = Request({"type": "http", "client": ("127.0.0.1", 12345)})
         with pytest.raises(HTTPException, match="直接增加批号库存入口已停用") as error:
-            asyncio.run(
-                receive_batch_stock(
+            receive_batch_stock(
                     payload=BatchStockReceipt(
                         batch_id=context["stock"].batch_id,
                         warehouse_id=context["warehouse"].id,
@@ -148,7 +146,6 @@ def test_direct_stock_receipt_route_is_disabled_even_for_frozen_stock():
                     current_user=context["planner"],
                     db=db,
                 )
-            )
         assert error.value.status_code == 409
     finally:
         db.rollback()
