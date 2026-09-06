@@ -115,7 +115,7 @@ def _execute(db: Session, operation: Callable[[], T]) -> T:
 
 
 @router.get("/partner-reviews", response_model=list[PartnerReviewResponse])
-async def list_partner_reviews(
+def list_partner_reviews(
     status: str | None = None,
     partner_id: int | None = None,
     current_user: User = Depends(require_quality_system_read),
@@ -130,7 +130,7 @@ async def list_partner_reviews(
 
 
 @router.post("/partner-reviews", response_model=PartnerReviewResponse, status_code=201)
-async def new_partner_review(
+def new_partner_review(
     payload: PartnerReviewCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
@@ -145,7 +145,7 @@ async def new_partner_review(
 
 
 @router.post("/partner-reviews/{review_id}/submit", response_model=PartnerReviewResponse)
-async def submit_periodic_partner_review(
+def submit_periodic_partner_review(
     review_id: int,
     payload: ChangeReason,
     request: Request,
@@ -178,7 +178,7 @@ async def submit_periodic_partner_review(
         )
     ],
 )
-async def decide_periodic_partner_review(
+def decide_periodic_partner_review(
     review_id: int,
     payload: PartnerReviewDecision,
     request: Request,
@@ -207,7 +207,7 @@ async def decide_periodic_partner_review(
         )
     ],
 )
-async def close_periodic_partner_review_actions(
+def close_periodic_partner_review_actions(
     review_id: int,
     payload: PartnerReviewClosure,
     request: Request,
@@ -223,7 +223,7 @@ async def close_periodic_partner_review_actions(
 
 
 @router.get("/risks", response_model=list[QualityRiskResponse])
-async def list_quality_risks(
+def list_quality_risks(
     status: str | None = None,
     current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
@@ -235,7 +235,7 @@ async def list_quality_risks(
 
 
 @router.post("/risks", response_model=QualityRiskResponse, status_code=201)
-async def new_quality_risk(
+def new_quality_risk(
     payload: QualityRiskCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES, "AUDITOR")),
@@ -250,7 +250,7 @@ async def new_quality_risk(
 
 
 @router.post("/risks/{risk_id}/submit", response_model=QualityRiskResponse)
-async def submit_risk(
+def submit_risk(
     risk_id: int,
     payload: ChangeReason,
     request: Request,
@@ -283,7 +283,7 @@ async def submit_risk(
         )
     ],
 )
-async def review_risk(
+def review_risk(
     risk_id: int,
     payload: QualityRiskDecision,
     request: Request,
@@ -299,7 +299,7 @@ async def review_risk(
 
 
 @router.get("/events", response_model=list[QualityEventResponse])
-async def list_quality_events(
+def list_quality_events(
     status: str | None = None,
     event_type: str | None = None,
     current_user: User = Depends(require_quality_system_read),
@@ -314,7 +314,7 @@ async def list_quality_events(
 
 
 @router.post("/events", response_model=QualityEventResponse, status_code=201)
-async def new_quality_event(
+def new_quality_event(
     payload: QualityEventCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES, "AUDITOR")),
@@ -329,7 +329,7 @@ async def new_quality_event(
 
 
 @router.post("/events/{event_id}/investigate", response_model=QualityEventResponse)
-async def investigate_event(
+def investigate_event(
     event_id: int,
     payload: QualityEventInvestigation,
     request: Request,
@@ -358,7 +358,7 @@ async def investigate_event(
         )
     ],
 )
-async def close_event(
+def close_event(
     event_id: int,
     payload: ChangeReason,
     request: Request,
@@ -378,7 +378,7 @@ async def close_event(
 
 
 @router.get("/capas", response_model=list[CapaResponse])
-async def list_capas(
+def list_capas(
     status: str | None = None,
     current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
@@ -390,7 +390,7 @@ async def list_capas(
 
 
 @router.get("/capas/me", response_model=list[CapaResponse])
-async def list_my_capas(
+def list_my_capas(
     status: str | None = None,
     current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
@@ -403,7 +403,7 @@ async def list_my_capas(
 
 
 @router.post("/capas", response_model=CapaResponse, status_code=201)
-async def new_capa(
+def new_capa(
     payload: CapaCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES, "AUDITOR")),
@@ -415,7 +415,7 @@ async def new_capa(
 
 
 @router.post("/capas/{capa_id}/implement", response_model=CapaResponse)
-async def implement_capa_action(
+def implement_capa_action(
     capa_id: int,
     payload: CapaImplementation,
     request: Request,
@@ -444,7 +444,7 @@ async def implement_capa_action(
         )
     ],
 )
-async def verify_capa_action(
+def verify_capa_action(
     capa_id: int,
     payload: CapaVerification,
     request: Request,
@@ -460,7 +460,7 @@ async def verify_capa_action(
 
 
 @router.get("/training", response_model=list[TrainingResponse])
-async def list_training(
+def list_training(
     status: str | None = None,
     user_id: int | None = None,
     current_user: User = Depends(require_quality_system_read),
@@ -475,7 +475,7 @@ async def list_training(
 
 
 @router.get("/training/me", response_model=list[TrainingResponse])
-async def list_my_training(
+def list_my_training(
     status: str | None = None,
     current_user: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
@@ -487,7 +487,7 @@ async def list_my_training(
 
 
 @router.post("/training", response_model=TrainingResponse, status_code=201)
-async def new_training(
+def new_training(
     payload: TrainingCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
@@ -500,7 +500,7 @@ async def new_training(
 
 
 @router.post("/training/{training_id}/complete", response_model=TrainingResponse)
-async def complete_training_record(
+def complete_training_record(
     training_id: int,
     payload: TrainingCompletion,
     request: Request,
@@ -520,7 +520,7 @@ async def complete_training_record(
 
 
 @router.post("/training/{training_id}/verify", response_model=TrainingResponse)
-async def verify_training_record(
+def verify_training_record(
     training_id: int,
     payload: ChangeReason,
     request: Request,
@@ -540,7 +540,7 @@ async def verify_training_record(
 
 
 @router.get("/documents", response_model=list[ControlledDocumentResponse])
-async def list_documents(
+def list_documents(
     status: str | None = None,
     current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
@@ -552,7 +552,7 @@ async def list_documents(
 
 
 @router.post("/documents", response_model=ControlledDocumentResponse, status_code=201)
-async def new_document(
+def new_document(
     payload: ControlledDocumentCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
@@ -567,7 +567,7 @@ async def new_document(
 
 
 @router.get("/documents/revisions", response_model=list[DocumentRevisionResponse])
-async def list_document_revisions(
+def list_document_revisions(
     document_id: int | None = None,
     current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
@@ -583,7 +583,7 @@ async def list_document_revisions(
     response_model=DocumentRevisionResponse,
     status_code=201,
 )
-async def new_document_revision(
+def new_document_revision(
     document_id: int,
     payload: DocumentRevisionCreate,
     request: Request,
@@ -603,7 +603,7 @@ async def new_document_revision(
 
 
 @router.post("/documents/revisions/{revision_id}/submit", response_model=DocumentRevisionResponse)
-async def submit_revision(
+def submit_revision(
     revision_id: int,
     payload: ChangeReason,
     request: Request,
@@ -636,7 +636,7 @@ async def submit_revision(
         )
     ],
 )
-async def approve_revision(
+def approve_revision(
     revision_id: int,
     payload: ChangeReason,
     request: Request,
@@ -656,7 +656,7 @@ async def approve_revision(
 
 
 @router.get("/documents/copies", response_model=list[DocumentCopyResponse])
-async def list_document_copies(
+def list_document_copies(
     status: str | None = None,
     current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
@@ -672,7 +672,7 @@ async def list_document_copies(
     response_model=DocumentCopyResponse,
     status_code=201,
 )
-async def new_document_copy(
+def new_document_copy(
     revision_id: int,
     payload: DocumentCopyCreate,
     request: Request,
@@ -692,7 +692,7 @@ async def new_document_copy(
 
 
 @router.post("/documents/copies/{copy_id}/dispose", response_model=DocumentCopyResponse)
-async def dispose_copy(
+def dispose_copy(
     copy_id: int,
     payload: DocumentCopyDisposition,
     request: Request,
@@ -708,7 +708,7 @@ async def dispose_copy(
 
 
 @router.get("/equipment", response_model=list[EquipmentResponse])
-async def list_equipment(
+def list_equipment(
     status: str | None = None,
     current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
@@ -720,7 +720,7 @@ async def list_equipment(
 
 
 @router.post("/equipment", response_model=EquipmentResponse, status_code=201)
-async def new_equipment(
+def new_equipment(
     payload: EquipmentCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
@@ -748,7 +748,7 @@ async def new_equipment(
         )
     ],
 )
-async def approve_quality_equipment(
+def approve_quality_equipment(
     equipment_id: int,
     payload: ChangeReason,
     request: Request,
@@ -768,7 +768,7 @@ async def approve_quality_equipment(
 
 
 @router.get("/equipment/activities", response_model=list[EquipmentActivityResponse])
-async def list_equipment_activities(
+def list_equipment_activities(
     equipment_id: int | None = None,
     current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
@@ -784,7 +784,7 @@ async def list_equipment_activities(
     response_model=EquipmentActivityResponse,
     status_code=201,
 )
-async def new_equipment_activity(
+def new_equipment_activity(
     equipment_id: int,
     payload: EquipmentActivityCreate,
     request: Request,
@@ -817,7 +817,7 @@ async def new_equipment_activity(
         )
     ],
 )
-async def review_activity(
+def review_activity(
     activity_id: int,
     payload: ChangeReason,
     request: Request,
@@ -837,7 +837,7 @@ async def review_activity(
 
 
 @router.get("/regulated-scopes", response_model=list[ScopeAuthorizationResponse])
-async def list_regulated_scopes(
+def list_regulated_scopes(
     current_user: User = Depends(require_quality_system_read),
     db: Session = Depends(get_db),
 ):
@@ -845,7 +845,7 @@ async def list_regulated_scopes(
 
 
 @router.post("/regulated-scopes", response_model=ScopeAuthorizationResponse, status_code=201)
-async def new_regulated_scope(
+def new_regulated_scope(
     payload: ScopeAuthorizationCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
@@ -873,7 +873,7 @@ async def new_regulated_scope(
         )
     ],
 )
-async def approve_regulated_scope(
+def approve_regulated_scope(
     scope_id: int,
     payload: ChangeReason,
     request: Request,
