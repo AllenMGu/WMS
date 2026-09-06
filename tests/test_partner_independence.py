@@ -1,4 +1,3 @@
-import asyncio
 from datetime import date, timedelta
 from uuid import uuid4
 
@@ -72,20 +71,17 @@ def test_partner_and_document_reviews_require_independent_users():
         db.flush()
 
         with pytest.raises(HTTPException, match="建档人与质量审批人必须分离") as error:
-            asyncio.run(
-                approve_partner(
+            approve_partner(
                     partner.id,
                     ChangeReason(reason="同一用户不得审批"),
                     _request(),
                     current_user=creator,
                     db=db,
                 )
-            )
         assert error.value.status_code == 409
 
         with pytest.raises(HTTPException, match="上传人与核验人必须分离") as error:
-            asyncio.run(
-                verify_partner_document(
+            verify_partner_document(
                     partner.id,
                     document.id,
                     ChangeReason(reason="同一用户不得核验"),
@@ -93,11 +89,9 @@ def test_partner_and_document_reviews_require_independent_users():
                     current_user=creator,
                     db=db,
                 )
-            )
         assert error.value.status_code == 409
 
-        verified = asyncio.run(
-            verify_partner_document(
+        verified = verify_partner_document(
                 partner.id,
                 document.id,
                 ChangeReason(reason="质量人员独立核验"),
@@ -105,7 +99,6 @@ def test_partner_and_document_reviews_require_independent_users():
                 current_user=reviewer,
                 db=db,
             )
-        )
         assert verified.status == "VERIFIED"
         assert verified.verified_by == reviewer.id
     finally:
