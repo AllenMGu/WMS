@@ -9,7 +9,7 @@ from app.gsp.models import GspRoleAssignment
 from app.legacy import User, get_current_user
 
 
-async def require_any_gsp_role(
+def require_any_gsp_role(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
@@ -34,7 +34,7 @@ async def require_any_gsp_role(
 
 
 def require_gsp_roles(*allowed_roles: str):
-    async def dependency(
+    def dependency(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
     ) -> User:
@@ -60,7 +60,7 @@ def require_gsp_roles(*allowed_roles: str):
     return dependency
 
 
-async def require_quality_manager_or_bootstrap(
+def require_quality_manager_or_bootstrap(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> User:
