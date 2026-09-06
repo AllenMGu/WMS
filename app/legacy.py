@@ -1,24 +1,37 @@
-﻿from fastapi import FastAPI, HTTPException, Depends, status, Form, APIRouter, Depends, File, UploadFile, Query, Request
+﻿import enum
+import io
+import logging
+import secrets
+import ssl
+from datetime import datetime, timedelta
+from typing import List, Optional
+from urllib.parse import urlparse
+
+import ldap3
+import pandas as pd
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Enum, UniqueConstraint, text, CheckConstraint
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from ldap3.utils.conv import escape_filter_chars
+from passlib.context import CryptContext
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, relationship
-from pydantic import BaseModel, ConfigDict, Field
-from datetime import datetime, timedelta
-from urllib.parse import urlparse
-from typing import List, Optional, Dict, Any
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-import enum
-import logging
-import ssl
-import pandas as pd
-import io
-import ldap3
-import secrets
-from ldap3.utils.conv import escape_filter_chars
 
 from app.core.config import settings
 from app.core.database import Base, get_db
@@ -503,6 +516,43 @@ def recalculate_outbound_order_total(order_id, db):
         order.total_amount = total_amount
         db.commit()
         db.refresh(order)
+
+
+def format_inbound_order_response(order):
+    """入库单表头序列化：goods/warehouse 等字段经关联读取（模型无冗余列）。"""
+    return {
+        "id": order.id,
+        "order_no": order.order_no,
+        "warehouse_id": order.warehouse_id,
+        "warehouse_name": order.warehouse.name,
+        "supplier": order.supplier,
+        "operator_id": order.operator_id,
+        "operator_name": order.operator.full_name,
+        "total_amount": order.total_amount,
+        "remark": order.remark,
+        "status": order.status,
+        "create_time": order.create_time,
+        "submit_time": order.submit_time,
+        "complete_time": order.complete_time,
+        "item_count": len(order.items)
+    }
+
+
+def format_inbound_order_item_response(item):
+    """入库单明细序列化：goods_barcode/name、location_code 经关联读取。"""
+    return {
+        "id": item.id,
+        "header_id": item.header_id,
+        "goods_id": item.goods_id,
+        "goods_barcode": item.goods.barcode,
+        "goods_name": item.goods.name,
+        "location_id": item.location_id,
+        "location_code": item.location.location_code,
+        "quantity": item.quantity,
+        "unit_price": item.unit_price,
+        "total_price": item.total_price,
+        "remark": item.remark
+    }
 
 def recalculate_inbound_order_total(order_id, db):
     """重新计算入库单总金额"""
@@ -1063,7 +1113,7 @@ def get_user_warehouses(
 
     # 如果是管理员，返回所有仓库
     if user.role == UserRole.ADMIN:
-        all_warehouses = db.query(Warehouse).filter(Warehouse.is_active == True).all()
+        all_warehouses = db.query(Warehouse).filter(Warehouse.is_active is True).all()
         warehouses = []
         for warehouse in all_warehouses:
             user_warehouse = db.query(UserWarehouse).filter(
@@ -1559,7 +1609,7 @@ def get_warehouses(current_user: User = Depends(get_current_user), db: Session =
             if user_warehouse_ids:
                 warehouses = db.query(Warehouse).filter(
                     Warehouse.id.in_(user_warehouse_ids),
-                    Warehouse.is_active == True
+                    Warehouse.is_active is True
                 ).all()
                 print(f"用户 {current_user.username} 查询到 {len(warehouses)} 个启用的仓库")
                 return warehouses
@@ -1692,7 +1742,7 @@ def get_locations(
             ]
             if user_warehouse_ids:
                 query = db.query(Location).filter(
-                    Location.is_active == True,
+                    Location.is_active is True,
                     Location.warehouse_id.in_(user_warehouse_ids)
                 )
                 if warehouse_id and warehouse_id in user_warehouse_ids:
@@ -2121,7 +2171,8 @@ def scan_inventory(
         else:
             stock.quantity += inventory.quantity
 
-        # 创建入库单
+        # 创建入库单与明细：与库存变更、日志、审计同属一个事务，
+        # 任一写入失败则整体回滚（GxP：不允许"库存已变但审计缺失"）。
         order_no = generate_order_no("IN", db)
         new_order = InboundOrderHeader(
             order_no=order_no,
@@ -2132,8 +2183,7 @@ def scan_inventory(
             status="COMPLETED"  # 直接设置为已完成
         )
         db.add(new_order)
-        db.commit()
-        db.refresh(new_order)
+        db.flush()  # 先取 order.id 供明细外键使用（不提交事务）
 
         # 添加明细项
         unit_price = goods.price
@@ -2149,15 +2199,13 @@ def scan_inventory(
         )
         new_order.total_amount = total_price
         db.add(new_item)
-        db.commit()
-        db.refresh(new_item)
     else:
-        # 出库
+        # 出库（余额校验与扣减在行锁内，同一事务，见上方 with_for_update）
         if not stock or stock.quantity < inventory.quantity:
             raise HTTPException(status_code=400, detail="库存不足")
         stock.quantity -= inventory.quantity
 
-        # 创建出库单
+        # 创建出库单与明细：与库存变更、日志、审计同属一个事务
         order_no = generate_order_no("OUT", db)
         new_order = OutboundOrderHeader(
             order_no=order_no,
@@ -2168,8 +2216,7 @@ def scan_inventory(
             status="COMPLETED"  # 直接设置为已完成
         )
         db.add(new_order)
-        db.commit()
-        db.refresh(new_order)
+        db.flush()  # 先取 order.id 供明细外键使用（不提交事务）
 
         # 添加明细项
         unit_price = goods.price
@@ -2185,10 +2232,8 @@ def scan_inventory(
         )
         new_order.total_amount = total_price
         db.add(new_item)
-        db.commit()
-        db.refresh(new_item)
 
-    # 4. 记录出入库日志
+    # 4. 记录出入库日志（同事务）
     record = InventoryRecord(
         warehouse_id=warehouse_id,
         goods_id=goods.id,
@@ -2199,7 +2244,7 @@ def scan_inventory(
         remark=inventory.remark
     )
     db.add(record)
-    db.flush()
+    db.flush()  # 获取 record.id 供审计引用（不提交事务）
     write_legacy_audit(
         db,
         actor_id=current_user.id,
@@ -2211,7 +2256,10 @@ def scan_inventory(
         after_data={"quantity": stock.quantity, "type": inventory.type.value},
         request=request,
     )
+    # 5. 单次提交：库存 + 单据头 + 明细 + 日志 + 审计 原子生效
     db.commit()
+    db.refresh(new_order)
+    db.refresh(new_item)
 
     return {
         "message": f"{inventory.type}成功",
@@ -3531,13 +3579,9 @@ def update_inbound_order_item(
         if not location:
             raise HTTPException(status_code=404, detail="库位不存在")
 
-        # 更新明细信息
+        # 更新明细信息（goods/location 详情由响应端经关联读取，模型无冗余列）
         db_item.goods_id = goods.id
-        db_item.goods_name = goods.name
-        db_item.goods_barcode = goods.barcode
-        db_item.goods_spec = goods.spec
         db_item.location_id = location.id
-        db_item.location_code = location.location_code
         db_item.quantity = item.quantity
         db_item.unit_price = item.unit_price
         db_item.total_price = item.quantity * item.unit_price
@@ -3665,7 +3709,7 @@ def return_inbound_order(
                 quantity=inbound_item.quantity,
                 unit_price=inbound_item.unit_price,
                 total_price=inbound_item.total_price,
-                remark=f"退库：原入库单明细"
+                remark="退库：原入库单明细"
             )
             db.add(outbound_item)
 
@@ -4187,13 +4231,9 @@ def update_outbound_order_item(
         if not location:
             raise HTTPException(status_code=404, detail="库位不存在")
 
-        # 更新明细信息
+        # 更新明细信息（goods/location 详情由响应端经关联读取，模型无冗余列）
         db_item.goods_id = goods.id
-        db_item.goods_name = goods.name
-        db_item.goods_barcode = goods.barcode
-        db_item.goods_spec = goods.spec
         db_item.location_id = location.id
-        db_item.location_code = location.location_code
         db_item.quantity = item.quantity
         db_item.unit_price = item.unit_price
         db_item.total_price = item.quantity * item.unit_price
