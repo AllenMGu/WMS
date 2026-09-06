@@ -1,4 +1,3 @@
-import asyncio
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -414,31 +413,26 @@ def test_manual_batch_and_stock_mutation_routes_are_disabled():
             reason="尝试绕过受控采购收货流程",
         )
         with pytest.raises(HTTPException, match="手工批次建档入口已停用") as create_error:
-            asyncio.run(
-                create_batch(
+            create_batch(
                     payload=manual_batch,
                     request=request,
                     current_user=users[2],
                     db=db,
                 )
-            )
         assert create_error.value.status_code == 409
 
         with pytest.raises(HTTPException, match="手工批次放行入口已停用") as accept_error:
-            asyncio.run(
-                accept_batch(
+            accept_batch(
                     batch_id=999999,
                     payload=BatchAcceptance(conclusion="验收合格", reason="尝试手工放行批次"),
                     request=request,
                     current_user=users[3],
                     db=db,
                 )
-            )
         assert accept_error.value.status_code == 409
 
         with pytest.raises(HTTPException, match="直接增加批号库存入口已停用") as stock_error:
-            asyncio.run(
-                receive_batch_stock(
+            receive_batch_stock(
                     payload=BatchStockReceipt(
                         batch_id=999999,
                         warehouse_id=warehouse.id,
@@ -450,7 +444,6 @@ def test_manual_batch_and_stock_mutation_routes_are_disabled():
                     current_user=users[2],
                     db=db,
                 )
-            )
         assert stock_error.value.status_code == 409
         assert db.query(GspDrugBatch).filter(GspDrugBatch.batch_no == manual_batch.batch_no).count() == 0
     finally:
@@ -502,15 +495,13 @@ def test_last_quality_hold_release_revalidates_qualification_and_shelf_life():
         payload = QualityHoldRelease(reason="质量复核后申请解除锁定")
 
         with pytest.raises(HTTPException, match="批次重新放行条件不满足") as shelf_error:
-            asyncio.run(
-                release_quality_hold(
+            release_quality_hold(
                     hold_id=hold.id,
                     payload=payload,
                     request=request,
                     current_user=inspector,
                     db=db,
                 )
-            )
         assert shelf_error.value.status_code == 409
         assert hold.status == "ACTIVE"
         assert stock.stock_status == "HOLD"
@@ -518,43 +509,37 @@ def test_last_quality_hold_release_revalidates_qualification_and_shelf_life():
         batch.expiry_date = date.today() + timedelta(days=365)
         supplier.status = "SUSPENDED"
         with pytest.raises(HTTPException, match="批次重新放行条件不满足"):
-            asyncio.run(
-                release_quality_hold(
+            release_quality_hold(
                     hold_id=hold.id,
                     payload=payload,
                     request=request,
                     current_user=inspector,
                     db=db,
                 )
-            )
         assert hold.status == "ACTIVE"
         assert stock.stock_status == "HOLD"
 
         supplier.status = "APPROVED"
         supplier.partner_type = "CUSTOMER"
         with pytest.raises(HTTPException, match="不是有效供货方"):
-            asyncio.run(
-                release_quality_hold(
+            release_quality_hold(
                     hold_id=hold.id,
                     payload=payload,
                     request=request,
                     current_user=inspector,
                     db=db,
                 )
-            )
         assert hold.status == "ACTIVE"
         assert stock.stock_status == "HOLD"
 
         supplier.partner_type = "SUPPLIER"
-        released = asyncio.run(
-            release_quality_hold(
+        released = release_quality_hold(
                 hold_id=hold.id,
                 payload=payload,
                 request=request,
                 current_user=inspector,
                 db=db,
             )
-        )
         assert released.status == "RELEASED"
         assert stock.stock_status == "AVAILABLE"
     finally:
