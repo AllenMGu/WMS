@@ -50,7 +50,7 @@ def _rollback_and_raise(db: Session, error: Exception):
     response_model=ControlledPrintResponse,
     status_code=201,
 )
-async def record_controlled_print(
+def record_controlled_print(
     plan_id: int,
     payload: ControlledPrintCreate,
     request: Request,
@@ -72,7 +72,7 @@ async def record_controlled_print(
 
 
 @router.post("/plans", response_model=StocktakePlanResponse, status_code=201)
-async def create_plan(
+def create_plan(
     payload: StocktakePlanCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*STOCKTAKE_ROLES, *QUALITY_ROLES)),
@@ -92,7 +92,7 @@ async def create_plan(
 
 
 @router.get("/plans", response_model=list[StocktakePlanResponse])
-async def list_plans(
+def list_plans(
     status: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -104,7 +104,7 @@ async def list_plans(
 
 
 @router.get("/plans/{plan_id}", response_model=StocktakePlanResponse)
-async def get_plan(
+def get_plan(
     plan_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -116,7 +116,7 @@ async def get_plan(
 
 
 @router.post("/plans/{plan_id}/submit", response_model=StocktakePlanResponse)
-async def submit_plan(
+def submit_plan(
     plan_id: int,
     payload: ChangeReason,
     request: Request,
@@ -145,7 +145,7 @@ async def submit_plan(
         entity_id_param="plan_id", meaning="APPROVAL",
     ))],
 )
-async def approve_plan(
+def approve_plan(
     plan_id: int,
     payload: ChangeReason,
     request: Request,
@@ -167,7 +167,7 @@ async def approve_plan(
 
 
 @router.post("/plans/{plan_id}/items/{item_id}/count", response_model=StocktakePlanResponse)
-async def count_item(
+def count_item(
     plan_id: int,
     item_id: int,
     payload: StocktakeCount,
@@ -198,7 +198,7 @@ async def count_item(
         entity_id_param="plan_id", meaning="REVIEW",
     ))],
 )
-async def review_plan(
+def review_plan(
     plan_id: int,
     payload: StocktakeReview,
     request: Request,
@@ -227,7 +227,7 @@ async def review_plan(
         entity_id_param="plan_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def apply_adjustments(
+def apply_adjustments(
     plan_id: int,
     payload: ChangeReason,
     request: Request,
