@@ -49,7 +49,7 @@ def _get(db: Session, model, entity_id: int, detail: str):
 
 
 @router.post("/secret-rotations", response_model=SecretRotationResponse, status_code=201)
-async def create_secret_rotation(
+def create_secret_rotation(
     payload: SecretRotationCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("SYSTEM_ADMIN")),
@@ -71,7 +71,7 @@ async def create_secret_rotation(
         entity_id_param="rotation_id", meaning="APPROVAL",
     ))],
 )
-async def approve_secret_rotation(
+def approve_secret_rotation(
     rotation_id: int,
     payload: Decision,
     request: Request,
@@ -98,7 +98,7 @@ async def approve_secret_rotation(
         entity_id_param="rotation_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def activate_secret_rotation(
+def activate_secret_rotation(
     rotation_id: int,
     payload: SecretRotationImplement,
     request: Request,
@@ -125,7 +125,7 @@ async def activate_secret_rotation(
         entity_id_param="rotation_id", meaning="REVIEW",
     ))],
 )
-async def confirm_secret_rotation(
+def confirm_secret_rotation(
     rotation_id: int,
     payload: Verification,
     request: Request,
@@ -145,7 +145,7 @@ async def confirm_secret_rotation(
 
 
 @router.get("/secret-rotations", response_model=list[SecretRotationResponse])
-async def list_secret_rotations(
+def list_secret_rotations(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(
@@ -163,7 +163,7 @@ async def list_secret_rotations(
 
 
 @router.post("/backups", response_model=BackupEvidenceResponse, status_code=201)
-async def create_backup_evidence(
+def create_backup_evidence(
     payload: BackupEvidenceCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("SYSTEM_ADMIN")),
@@ -185,7 +185,7 @@ async def create_backup_evidence(
         entity_id_param="evidence_id", meaning="REVIEW",
     ))],
 )
-async def review_backup(
+def review_backup(
     evidence_id: int,
     payload: BackupReview,
     request: Request,
@@ -205,7 +205,7 @@ async def review_backup(
 
 
 @router.get("/backups", response_model=list[BackupEvidenceResponse])
-async def list_backups(
+def list_backups(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(
@@ -223,7 +223,7 @@ async def list_backups(
 
 
 @router.post("/recovery-drills", response_model=RecoveryDrillResponse, status_code=201)
-async def create_recovery_drill(
+def create_recovery_drill(
     payload: RecoveryDrillCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("SYSTEM_ADMIN")),
@@ -245,7 +245,7 @@ async def create_recovery_drill(
         entity_id_param="drill_id", meaning="APPROVAL",
     ))],
 )
-async def approve_recovery_drill(
+def approve_recovery_drill(
     drill_id: int,
     payload: Decision,
     request: Request,
@@ -272,7 +272,7 @@ async def approve_recovery_drill(
         entity_id_param="drill_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def run_recovery_drill(
+def run_recovery_drill(
     drill_id: int,
     payload: RecoveryDrillExecute,
     request: Request,
@@ -299,7 +299,7 @@ async def run_recovery_drill(
         entity_id_param="drill_id", meaning="REVIEW",
     ))],
 )
-async def confirm_recovery_drill(
+def confirm_recovery_drill(
     drill_id: int,
     payload: Verification,
     request: Request,
@@ -319,7 +319,7 @@ async def confirm_recovery_drill(
 
 
 @router.get("/recovery-drills", response_model=list[RecoveryDrillResponse])
-async def list_recovery_drills(
+def list_recovery_drills(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(
