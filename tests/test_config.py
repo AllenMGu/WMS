@@ -102,3 +102,35 @@ def test_production_requires_attachment_policy_enforce():
     with pytest.raises(RuntimeError, match="enforce"):
         settings("WARN ").validate()
     settings("enforce").validate()  # must not raise
+
+
+def test_staging_is_not_exempt_from_hardening():
+    """staging 不得享受 development 的弱默认值豁免（评审问题2）。"""
+    config = Settings(
+        environment="staging",
+        attachment_policy="warn",  # 弱值
+        database_url="postgresql://user:password@db/wms",
+        secret_key="development-only-change-me",
+        secrets_provider="development",
+        secret_key_version_ref="",
+        database_credential_version_ref="",
+        auto_create_schema=True,
+    )
+    # 未强化的 staging 应在 SECRET_KEY / AUTO_CREATE_SCHEMA / ATTACHMENT_POLICY
+    # 等任一处被拒绝，而非静默通过。
+    with pytest.raises(RuntimeError):
+        config.validate()
+
+
+def test_development_allows_weak_defaults():
+    """显式 development/test 允许弱默认值（不误伤本地开发）。"""
+    config = Settings(
+        environment="development",
+        attachment_policy="warn",
+        database_url="sqlite+pysqlite:///./dev.db",
+        secret_key="development-only-change-me",
+        secrets_provider="development",
+        auto_create_schema=True,
+    )
+    config.validate()  # must not raise
+
