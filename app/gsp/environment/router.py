@@ -73,7 +73,7 @@ def _rollback_and_raise(db: Session, error: Exception):
 
 
 @router.post("/devices", response_model=EnvironmentDeviceResponse, status_code=201)
-async def add_device(
+def add_device(
     payload: EnvironmentDeviceCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("ENVIRONMENT_MONITOR")),
@@ -94,7 +94,7 @@ async def add_device(
 
 
 @router.get("/devices", response_model=list[EnvironmentDeviceResponse])
-async def list_devices(
+def list_devices(
     status: str | None = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -115,7 +115,7 @@ async def list_devices(
         entity_id_param="device_id", meaning="APPROVAL",
     ))],
 )
-async def approve_device(
+def approve_device(
     device_id: int,
     payload: EnvironmentDecision,
     request: Request,
@@ -138,7 +138,7 @@ async def approve_device(
 
 
 @router.post("/devices/{device_id}/recalibrate", response_model=EnvironmentDeviceResponse)
-async def recalibrate(
+def recalibrate(
     device_id: int,
     payload: DeviceRecalibration,
     request: Request,
@@ -168,7 +168,7 @@ async def recalibrate(
         entity_id_param="device_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def suspend(
+def suspend(
     device_id: int,
     payload: AssignmentClose,
     request: Request,
@@ -191,7 +191,7 @@ async def suspend(
 
 
 @router.post("/assignments", response_model=EnvironmentAssignmentResponse, status_code=201)
-async def add_assignment(
+def add_assignment(
     payload: EnvironmentAssignmentCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("ENVIRONMENT_MONITOR")),
@@ -212,7 +212,7 @@ async def add_assignment(
 
 
 @router.get("/assignments", response_model=list[EnvironmentAssignmentResponse])
-async def list_assignments(
+def list_assignments(
     status: str | None = None,
     context_type: str | None = None,
     transport_task_id: int | None = Query(None, gt=0),
@@ -239,7 +239,7 @@ async def list_assignments(
         entity_id_param="assignment_id", meaning="APPROVAL",
     ))],
 )
-async def approve_assignment(
+def approve_assignment(
     assignment_id: int,
     payload: EnvironmentDecision,
     request: Request,
@@ -272,7 +272,7 @@ async def approve_assignment(
     response_model=EnvironmentReadingResponse,
     status_code=201,
 )
-async def add_reading(
+def add_reading(
     assignment_id: int,
     payload: EnvironmentReadingCreate,
     request: Request,
@@ -309,7 +309,7 @@ async def add_reading(
         entity_id_param="assignment_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def close_monitoring_assignment(
+def close_monitoring_assignment(
     assignment_id: int,
     payload: AssignmentClose,
     request: Request,
@@ -341,7 +341,7 @@ async def close_monitoring_assignment(
     "/assignments/{assignment_id}/readings",
     response_model=list[EnvironmentReadingResponse],
 )
-async def list_readings(
+def list_readings(
     assignment_id: int,
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
@@ -360,7 +360,7 @@ async def list_readings(
 
 
 @router.get("/assignments/{assignment_id}/verify-chain")
-async def verify_chain(
+def verify_chain(
     assignment_id: int,
     current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
@@ -371,7 +371,7 @@ async def verify_chain(
 
 
 @router.get("/alarms", response_model=list[EnvironmentAlarmResponse])
-async def list_alarms(
+def list_alarms(
     status: str | None = None,
     severity: str | None = None,
     assignment_id: int | None = Query(None, gt=0),
@@ -391,7 +391,7 @@ async def list_alarms(
 
 
 @router.post("/alarms/{alarm_id}/acknowledge", response_model=EnvironmentAlarmResponse)
-async def acknowledge(
+def acknowledge(
     alarm_id: int,
     payload: AlarmAcknowledge,
     request: Request,
@@ -421,7 +421,7 @@ async def acknowledge(
         entity_id_param="alarm_id", meaning="APPROVAL",
     ))],
 )
-async def quality_decision(
+def quality_decision(
     alarm_id: int,
     payload: AlarmDecision,
     request: Request,
@@ -444,7 +444,7 @@ async def quality_decision(
 
 
 @router.post("/alarms/scan-offline", response_model=list[EnvironmentAlarmResponse])
-async def scan_offline(
+def scan_offline(
     request: Request,
     current_user: User = Depends(require_gsp_roles("ENVIRONMENT_MONITOR")),
     db: Session = Depends(get_db),
