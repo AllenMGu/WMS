@@ -31,7 +31,7 @@ def _source_ip(request: Request) -> str | None:
 
 
 @router.get("/policies")
-async def list_signature_policies(
+def list_signature_policies(
     current_user: User = Depends(get_current_user),
 ):
     return [
@@ -41,7 +41,7 @@ async def list_signature_policies(
 
 
 @router.post("/challenges", response_model=SignatureChallengeResponse, status_code=201)
-async def create_challenge(
+def create_challenge(
     payload: SignatureChallengeCreate,
     request: Request,
     current_user: User = Depends(get_current_user),
@@ -75,7 +75,7 @@ async def create_challenge(
 
 
 @router.get("", response_model=list[ElectronicSignatureResponse])
-async def list_signatures(
+def list_signatures(
     signer_user_id: int | None = Query(None, gt=0),
     entity_type: str | None = None,
     entity_id: str | None = None,
@@ -95,7 +95,7 @@ async def list_signatures(
 
 
 @router.get("/{signature_ref}/verify", response_model=SignatureVerificationResponse)
-async def verify_one_signature(
+def verify_one_signature(
     signature_ref: str,
     current_user: User = Depends(require_gsp_roles("AUDITOR", "QUALITY_MANAGER", "QUALITY_REVIEWER")),
     db: Session = Depends(get_db),
@@ -112,7 +112,7 @@ async def verify_one_signature(
 
 
 @router.get("/verify-chain/all", response_model=SignatureChainVerificationResponse)
-async def verify_all_signatures(
+def verify_all_signatures(
     current_user: User = Depends(require_gsp_roles("AUDITOR", "QUALITY_MANAGER")),
     db: Session = Depends(get_db),
 ):
