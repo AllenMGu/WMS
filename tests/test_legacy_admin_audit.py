@@ -66,7 +66,11 @@ def _warehouse(db, label: str) -> Warehouse:
 
 
 def _run(coro):
-    return asyncio.run(coro)
+    # legacy 端点已从 async def 转为普通 def（同步 SQLAlchemy 走线程池），
+    # 直接调用即可；保留对仍为协程的调用方的兼容。
+    if asyncio.iscoroutine(coro):
+        return asyncio.run(coro)
+    return coro
 
 
 def _event(db, action: str, entity_id: str) -> GspAuditEvent:
