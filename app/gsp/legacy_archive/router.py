@@ -54,7 +54,7 @@ def _execute(db: Session, operation: Callable[[], T]) -> T:
 
 
 @router.get("/batches", response_model=list[LegacyBatchResponse])
-async def list_batches(
+def list_batches(
     status: str | None = None,
     current_user: User = Depends(require_gsp_roles(*ARCHIVE_READ_ROLES)),
     db: Session = Depends(get_db),
@@ -66,7 +66,7 @@ async def list_batches(
 
 
 @router.post("/batches", response_model=LegacyBatchResponse, status_code=201)
-async def new_batch(
+def new_batch(
     payload: LegacyBatchCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("SYSTEM_ADMIN", "QUALITY_MANAGER")),
@@ -81,7 +81,7 @@ async def new_batch(
 
 
 @router.post("/batches/{batch_id}/validate", response_model=LegacyBatchResponse)
-async def validate_import_batch(
+def validate_import_batch(
     batch_id: int,
     payload: ChangeReason,
     request: Request,
@@ -103,7 +103,7 @@ async def validate_import_batch(
 
 
 @router.post("/batches/{batch_id}/records", response_model=LegacyImportResult)
-async def upload_records(
+def upload_records(
     batch_id: int,
     payload: LegacyRecordImport,
     request: Request,
@@ -125,7 +125,7 @@ async def upload_records(
 
 
 @router.post("/batches/{batch_id}/reconcile", response_model=LegacyBatchResponse)
-async def reconcile_import_batch(
+def reconcile_import_batch(
     batch_id: int,
     payload: LegacyReconcile,
     request: Request,
@@ -147,7 +147,7 @@ async def reconcile_import_batch(
 
 
 @router.get("/records", response_model=list[LegacyRecordResponse])
-async def list_records(
+def list_records(
     batch_id: int | None = None,
     source_entity: str | None = None,
     query_text: str | None = Query(None, alias="q", max_length=200),
@@ -181,7 +181,7 @@ async def list_records(
     "/batches/{batch_id}/reconciliation",
     response_model=list[LegacyReconciliationItemResponse],
 )
-async def list_reconciliation(
+def list_reconciliation(
     batch_id: int,
     current_user: User = Depends(require_gsp_roles(*ARCHIVE_READ_ROLES)),
     db: Session = Depends(get_db),
@@ -195,7 +195,7 @@ async def list_reconciliation(
 
 
 @router.get("/batches/{batch_id}/export")
-async def export_batch(
+def export_batch(
     batch_id: int,
     current_user: User = Depends(require_gsp_roles(*ARCHIVE_READ_ROLES)),
     db: Session = Depends(get_db),
