@@ -6,6 +6,7 @@ from app.core.config import Settings
 def test_production_rejects_sqlite():
     config = Settings(
         environment="production",
+        attachment_policy="enforce",
         database_url="sqlite+pysqlite:///./unsafe.db",
         secret_key="x" * 32,
         secrets_provider="azure-key-vault",
@@ -20,6 +21,7 @@ def test_production_rejects_sqlite():
 def test_production_rejects_weak_secret():
     config = Settings(
         environment="production",
+        attachment_policy="enforce",
         database_url="postgresql://user:password@db/wms",
         secret_key="weak",
         secrets_provider="azure-key-vault",
@@ -34,6 +36,7 @@ def test_production_rejects_weak_secret():
 def test_production_requires_secret_store_metadata():
     config = Settings(
         environment="production",
+        attachment_policy="enforce",
         database_url="postgresql://user:password@db/wms",
         secret_key="x" * 32,
         secrets_provider="development",
@@ -48,6 +51,7 @@ def test_production_requires_secret_store_metadata():
 def test_production_requires_ldap_credential_version_when_bind_is_configured():
     config = Settings(
         environment="production",
+        attachment_policy="enforce",
         database_url="postgresql://user:password@db/wms",
         secret_key="x" * 32,
         secrets_provider="azure-key-vault",
@@ -65,6 +69,7 @@ def test_production_requires_ldap_credential_version_when_bind_is_configured():
 def test_production_rejects_automatic_schema_creation():
     config = Settings(
         environment="production",
+        attachment_policy="enforce",
         database_url="postgresql://user:password@db/wms",
         secret_key="x" * 32,
         secrets_provider="azure-key-vault",
@@ -74,3 +79,26 @@ def test_production_rejects_automatic_schema_creation():
     )
     with pytest.raises(RuntimeError, match="AUTO_CREATE_SCHEMA=false"):
         config.validate()
+
+
+def test_production_requires_attachment_policy_enforce():
+    from app.core.config import Settings
+
+    def settings(policy):
+        return Settings(
+            environment="production",
+            attachment_policy=policy,
+            secret_key="s" * 40,
+            database_url="postgresql://x",
+            auto_create_schema=False,
+            secrets_provider="vault",
+            secret_key_version_ref="v1",
+            database_credential_version_ref="d1",
+            ldap_credential_version_ref="l1",
+        )
+
+    with pytest.raises(RuntimeError, match="enforce"):
+        settings("warn").validate()
+    with pytest.raises(RuntimeError, match="enforce"):
+        settings("WARN ").validate()
+    settings("enforce").validate()  # must not raise

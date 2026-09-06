@@ -6,7 +6,8 @@
 ## 1. 受控附件（GSP 受控文件）
 
 历史问题：资质/授权/注册/承运文件只保存客户端填写的 `file_ref` + SHA-256 + 大小，后端无真实文件，
-引用与哈希可任意伪造（2026-09-05 代码审核 P0）。
+引用与哈希可任意伪造（2026-09-05 代码审核 P0）。本文描述的“已完成”指软件能力；强制闭环由生产
+`ATTACHMENT_POLICY=enforce` 配置保证（生产启动即校验，不可降级为 warn）。
 
 ### 能力
 
@@ -16,8 +17,9 @@
   OOXML(docx/xlsx 由 zipfile+Content_Types XML 真读)/ZIP/CSV/TXT；声明与内容不符即 422；
 - **引用令牌**：`gspf:<32hex>`；业务记录绑定前必须解析到 ACTIVE 对象且 purpose 匹配（或 OTHER），
   服务端 sha/大小覆盖客户端值；
-- **策略 `ATTACHMENT_POLICY`**：`warn`（默认，兼容旧引用）| `enforce`（非令牌引用 422）；
-  每次读取校验，值非法即拒绝/阻止启动（fail closed）；
+- **策略 `ATTACHMENT_POLICY`**：`enforce` 为生产必需——`Settings.validate()` 在
+  `APP_ENV=production` 且非 `enforce` 时**拒绝启动**；`warn` 仅供历史数据迁移/过渡
+  （非令牌引用放行但服务端不背书）。每次读取校验，非法值即拒绝/阻止启动（fail closed）；
 - **下载前完整性校验**：返回字节前重算 size+SHA，篡改→410；
 - **停用（唯一生命周期）**：质量经理可停任意；上传人仅可停**未被任何业务记录引用**的自身文件
   （引用检查与停用同一事务并加行锁 `FOR UPDATE`）；停用幂等，不删除字节；
@@ -45,7 +47,7 @@
 ```dotenv
 ATTACHMENT_DIR=./attachment-store        # 生产建议显式绝对路径并纳入备份
 ATTACHMENT_MAX_BYTES=52428800
-ATTACHMENT_POLICY=warn                    # 生产闭环后建议 enforce
+ATTACHMENT_POLICY=enforce                  # 生产必须；warn 仅用于历史数据迁移/过渡
 ```
 
 ## 2. 业务报表与受控打印

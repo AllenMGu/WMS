@@ -112,9 +112,10 @@ compensating controls. The three switches are mutually exclusive.
 ### Controlled evidence attachments (P0)
 Server-side upload/hash (SHA-256), immutable content-addressed storage
 (`ATTACHMENT_DIR`), server-side type detection, `gspf:<key>` binding tokens and
-`ATTACHMENT_POLICY=warn|enforce`; integrity is checked before download and an
-uploader may retire a file only while it is not referenced by any business
-record (row-lock serialised). Bound records: partner documents,
+`ATTACHMENT_POLICY`: production startup refuses any value other than `enforce`
+(`Settings.validate()`), `warn` is allowed only for legacy-data migration;
+integrity is checked before download and an uploader may retire a file only
+while it is not referenced by any business record (row-lock serialised). Bound records: partner documents,
 supplier-product authorisations, drug registration documents and carrier
 documents.
 
@@ -183,7 +184,7 @@ records, deviations, signatures, or quality release.
 - [CSV validation plan](docs/VALIDATION_PLAN.en.md)
 - [JZT integration boundary](docs/JZT_INTEGRATION.en.md)
 - [Repository split guide](docs/REPOSITORY_SPLIT.en.md)
-- [Controlled evidence & reports](docs/CONTROLLED_EVIDENCE_AND_REPORTS.md)
+- [Controlled evidence & reports (EN)](docs/CONTROLLED_EVIDENCE_AND_REPORTS.en.md) · [中文](docs/CONTROLLED_EVIDENCE_AND_REPORTS.md)
 - [Database migration guide](migrations/README.en.md)
 
 ## Production Release Statement

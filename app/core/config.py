@@ -71,6 +71,11 @@ class Settings:
             raise RuntimeError(
                 f"ATTACHMENT_POLICY 必须是 warn 或 enforce（当前值 {self.attachment_policy!r}）"
             )
+        if self.environment == "production" and self.attachment_policy.strip().lower() != "enforce":
+            raise RuntimeError(
+                "生产环境必须设置 ATTACHMENT_POLICY=enforce：warn 仅允许历史数据迁移/过渡，"
+                "新业务记录的受控附件强制闭环不能被配置绕过"
+            )
         if self.environment == "production" and self.auto_create_schema:
             raise RuntimeError(
                 "生产环境必须设置 AUTO_CREATE_SCHEMA=false，并通过经过评审的 Alembic 迁移管理结构"
