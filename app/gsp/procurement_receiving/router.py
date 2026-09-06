@@ -33,7 +33,7 @@ from app.gsp.procurement_receiving.service import (
     submit_purchase_order,
 )
 from app.gsp.schemas import ChangeReason
-from app.legacy import User, get_current_user
+from app.legacy import User
 
 router = APIRouter(prefix="/gsp", tags=["GSP采购收货"])
 QUALITY_ROLES = ("QUALITY_MANAGER", "QUALITY_REVIEWER")
@@ -57,7 +57,7 @@ def _rollback_and_raise(db: Session, error: Exception):
     response_model=PurchaseOrderResponse,
     status_code=201,
 )
-async def create_order(
+def create_order(
     payload: PurchaseOrderCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("PROCUREMENT")),
@@ -77,9 +77,9 @@ async def create_order(
 
 
 @router.get("/procurement/orders", response_model=list[PurchaseOrderResponse])
-async def list_orders(
+def list_orders(
     status: str | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_gsp_roles("PROCUREMENT", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspPurchaseOrder)
@@ -92,7 +92,7 @@ async def list_orders(
     "/procurement/orders/{order_id}/submit",
     response_model=PurchaseOrderResponse,
 )
-async def submit_order(
+def submit_order(
     order_id: int,
     payload: ChangeReason,
     request: Request,
@@ -121,7 +121,7 @@ async def submit_order(
         entity_id_param="order_id", meaning="APPROVAL",
     ))],
 )
-async def approve_order(
+def approve_order(
     order_id: int,
     payload: ChangeReason,
     request: Request,
@@ -146,7 +146,7 @@ async def approve_order(
     "/procurement/orders/{order_id}/cancel",
     response_model=PurchaseOrderResponse,
 )
-async def cancel_order(
+def cancel_order(
     order_id: int,
     payload: ChangeReason,
     request: Request,
@@ -175,7 +175,7 @@ async def cancel_order(
         entity_id_param="order_id", meaning="REJECTION",
     ))],
 )
-async def reject_order(
+def reject_order(
     order_id: int,
     payload: ChangeReason,
     request: Request,
@@ -197,7 +197,7 @@ async def reject_order(
 
 
 @router.post("/receiving/receipts", response_model=ReceiptResponse, status_code=201)
-async def receive_order(
+def receive_order(
     payload: ReceiptCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("RECEIVER")),
@@ -217,9 +217,9 @@ async def receive_order(
 
 
 @router.get("/receiving/receipts", response_model=list[ReceiptResponse])
-async def list_receipts(
+def list_receipts(
     status: str | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_gsp_roles("RECEIVER", "INSPECTOR", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspReceipt)
@@ -236,7 +236,7 @@ async def list_receipts(
         entity_id_param="item_id", meaning="CONFIRMATION",
     ))],
 )
-async def inspect_item(
+def inspect_item(
     receipt_id: int,
     item_id: int,
     payload: ReceiptInspection,
@@ -263,7 +263,7 @@ async def inspect_item(
     "/receiving/receipts/{receipt_id}/items/{item_id}/sample",
     response_model=ReceiptResponse,
 )
-async def sample_item(
+def sample_item(
     receipt_id: int,
     item_id: int,
     payload: ReceiptSampling,
@@ -291,7 +291,7 @@ async def sample_item(
     response_model=ControlledPrintResponse,
     status_code=201,
 )
-async def record_controlled_print(
+def record_controlled_print(
     receipt_id: int,
     payload: ControlledPrintCreate,
     request: Request,
