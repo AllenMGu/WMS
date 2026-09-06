@@ -39,6 +39,7 @@ def test_login_failure_throttle_is_durable_and_clears_after_success():
 def test_production_ldap_requires_encrypted_verified_transport():
     unsafe = Settings(
         environment="production",
+        attachment_policy="enforce",
         database_url="postgresql://db/wms",
         secret_key="x" * 32,
         secrets_provider="vault",
@@ -58,6 +59,7 @@ def test_production_ldap_requires_encrypted_verified_transport():
 def test_production_plaintext_ldap_requires_explicit_risk_switch():
     allowed = Settings(
         environment="production",
+        attachment_policy="enforce",
         database_url="postgresql://db/wms",
         secret_key="x" * 32,
         secrets_provider="vault",
