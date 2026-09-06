@@ -37,8 +37,8 @@ def ctx(tmp_path):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    import main  # noqa: F401
     import app.application as application
+    import main  # noqa: F401
     from app.core.database import Base, get_db
     from app.legacy import get_password_hash
 
