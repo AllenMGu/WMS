@@ -247,3 +247,12 @@ stateDiagram-v2
     SUBMITTED --> APPROVED: 独立质量批准
     APPROVED --> DISPATCHED: 仓库发运并扣减库存
 ```
+
+## 受控附件与业务报表模块（P0/P1）
+
+- `app/gsp/attachments/`：受控文件对象。上传→服务端 SHA-256→内容寻址不可变存储；magic/OLE/OOXML
+  容器级类型识别；`gspf:` 令牌绑定由 `bindings.resolve_attachment` 统一执行（服务端真值、purpose 校验、
+  warn/enforce 策略）；停用端点对质量经理全开、对上传人仅“未被引用”开放（同事务行锁）。
+- `app/gsp/reports/`：报表注册表（显式列 + 岗位 ACL + template_version + production_ready）与
+  受控打印。查询分页（offset/total/has_more），打印先出编号再渲染并把 HTML/行/元数据持久化到
+  `gsp_controlled_print_records`，哈希覆盖完整受控快照；预览件（PREVIEW-）全程“非受控”隔离。

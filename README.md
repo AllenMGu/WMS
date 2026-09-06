@@ -45,6 +45,8 @@
 | 第十六阶段 | CAPA 责任人个人任务闭环；老 GSP 历史数据受控迁移、摘要校验、独立核对、只读检索与导出 | 已完成（软件控制） |
 | 第十七阶段 | 供应商首营与获准供货品种目录关联、独立批准、有效期控制及采购/收货/验收实时阻断 | 已完成（软件控制） |
 | 第十八阶段 | 供应商品种目录原子批量导入、批准文号双重核对及待审/临期/过期预警 | 已完成（软件控制） |
+| 第十九阶段 | 真实受控附件存储：服务端上传与哈希、不可变内容寻址存储、gspf 令牌、ATTACHMENT_POLICY、四域业务记录绑定（首营/授权/注册/承运）与上传人停用保护 | 已完成（软件控制） |
+| 第二十阶段 | 业务报表与受控打印：电子签名/审计正式台账 + 3 张开发预览，受控打印快照哈希校验与预览件隔离 | 已完成（软件控制） |
 | 暂缓项 | 药品追溯平台采集、核销、上传与失败补偿 | 暂不实施 |
 | 暂缓项 | 实际温湿度网关及外部告警渠道 | 暂不实施 |
 | 暂缓项 | 九州通正式适配器与联合联调 | 暂不实施 |
@@ -198,6 +200,18 @@ flowchart TD
 - `scripts/restore-drill-postgres.sh` 仅允许恢复到显式确认的空白非生产数据库，并执行关键表数量与审计链只读检查。
 - systemd 参考调度和生产配置清单见 [运维控制手册](docs/OPERATIONS_RUNBOOK.md)。
 
+## 受控附件与业务报表（P0/P1）
+
+- **真实受控附件**：`POST /api/gsp/files` 服务端计算 SHA-256、不可变内容寻址存储
+  （`ATTACHMENT_DIR`）、magic/容器级类型识别；业务记录绑定使用 `gspf:<key>` 令牌，
+  服务端 sha/大小为准；`ATTACHMENT_POLICY=warn|enforce`；下载前完整性校验、篡改 410；
+  上传人仅可停用未被引用的自身文件（行锁串行化，绑定后 403）。
+- **业务报表与受控打印**：声明式报表框架（显式列 + 岗位 ACL），电子签名/审计正式台账 +
+  3 张开发预览；打印先出受控编号再渲染，快照含完整 HTML/行/元数据并按全量受控字段哈希；
+  `verify` 可复现校验；预览件以 `PREVIEW-` 编号、独立审计动作与每页“非受控”水印隔离。
+
+详细说明、端点与配置见 [受控附件与业务报表](docs/CONTROLLED_EVIDENCE_AND_REPORTS.md)。
+
 ## 系统结构
 
 ```text
@@ -208,6 +222,8 @@ WMS/
 │   ├── core/                        # 配置、数据库和共享基础设施
 │   └── gsp/
 │       ├── models.py                # 质量主数据、批次、库存、审计、出站箱
+│       ├── attachments/             # 受控附件：服务端上传/哈希/不可变存储/gspf 令牌/绑定
+│       ├── reports/                 # 业务报表与受控打印（显式列/岗位 ACL/快照哈希）
 │       ├── environment/             # 校准设备、监测分配、不可变读数与告警偏差
 │       ├── procurement_receiving/   # 采购、收货、验收闭环
 │       ├── quality_disposition/      # 不合格品处置、监督销毁与购进退出
@@ -313,6 +329,9 @@ alembic check
 | 召回演练 | `/api/gsp/recall-drills` | 真实发运链路追溯演练、偏差与 CAPA 记录 |
 | 药品养护 | `/api/gsp/maintenance/plans` | 养护计划、独立审批、库存检查、异常锁定和完成复核 |
 | 批号库存盘点 | `/api/gsp/stocktaking/plans` | 盲盘、复盘、差异质量批准和独立库存调整 |
+| 受控附件 | `/api/gsp/files` | 上传（服务端哈希/类型识别）、元数据、下载（先校验）、完整性校验、停用（质量经理/上传人-未绑定） |
+| 业务报表 | `/api/gsp/reports`、`/{key}`、`/{key}/print` | 目录（按岗位可见）、分页查询（过滤白名单/offset/total）、受控打印或开发预览（preview=true） |
+| 打印台账 | `/api/gsp/reports/prints/list`、`/prints/{id}`、`/prints/{id}/verify` | SQL 层可见性过滤后分页；取回原打印件与全量快照哈希校验 |
 | 追溯审计 | `/api/gsp/trace/batches/{batch_no}`、`/api/gsp/audit-events` | 批号追溯和审计链查询 |
 | 秘密轮换 | `/api/gsp/operations/secret-rotations` | 版本引用、独立审批、实施与验证，不接收秘密正文 |
 | 备份证据 | `/api/gsp/operations/backups` | 备份结果、异地/离线副本、告警与独立复核 |
@@ -341,6 +360,7 @@ GitHub Actions 会在面向 `main` 的 Pull Request 上执行：
 ## 设计与实施资料
 
 - [目标架构](docs/ARCHITECTURE.md)
+- [受控附件与业务报表（P0/P1）](docs/CONTROLLED_EVIDENCE_AND_REPORTS.md)
 - [仓库拆分说明](docs/REPOSITORY_SPLIT.md)
 - [GSP 差距矩阵](docs/GSP_GAP_ANALYSIS.md)
 - [CSV / 验证计划](docs/VALIDATION_PLAN.md)
