@@ -7,3 +7,9 @@ __pycache__/
 .env
 backups/
 *.log
+
+# local dev artifacts
+wms-dev.db
+*.db
+attachment-store/
+_verify.db
