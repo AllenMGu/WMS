@@ -8,9 +8,10 @@ version = "0.15.0"
 description = "面向药品经营质量管理的模块化 WMS/GSP 后端"
 requires-python = ">=3.12"
 dependencies = [
-  # 上限固定 <0.141：fastapi 0.141.x 依赖 starlette 1.x，其 include_router
-  # 会静默丢失路由（293 条仅 7 条生效且无报错）。锁定在已验证的 0.115.x 系。
-  "fastapi>=0.110,<0.141",
+  # 锁定已验证的 0.115.x 单版本线：fastapi 0.116+ / starlette 1.x 的
+  # include_router 曾静默丢失路由（293 条仅 7 条生效且无报错）。pip 解析
+  # fastapi 0.115.12 会自动约束 starlette>=0.40,<0.47（0.46.x）。
+  "fastapi>=0.115.6,<0.116",
   "uvicorn[standard]>=0.29,<1",
   "sqlalchemy>=1.4,<3",
   "alembic>=1.13,<2",
