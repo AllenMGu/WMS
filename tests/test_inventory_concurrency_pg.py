@@ -91,7 +91,7 @@ def ctx():
         c.query(User).filter_by(id=ids["user"]).delete(synchronize_session=False)
         c.commit()
 
-    yield {"db": db, "Session": Session, "u": u, "g": g, "loc": loc}
+    yield {"db": db, "Session": Session, "u": u, "w": w, "g": g, "loc": loc}
     try:
         _cleanup()
     except Exception:  # noqa: BLE001
@@ -147,7 +147,9 @@ def test_concurrent_outbound_never_oversells(ctx):
     from app.legacy import InventoryCreate, InventoryType, Stock
 
     db = ctx["db"]
-    db.add(Stock(goods_id=ctx["g"].id, location_id=ctx["loc"].id, quantity=10.0))
+    # 预置库存必须与 scan_inventory 的查询键一致：warehouse_id + goods_id + location_id
+    db.add(Stock(warehouse_id=ctx["w"].id, goods_id=ctx["g"].id,
+                 location_id=ctx["loc"].id, quantity=10.0))
     db.commit()
 
     inv = InventoryCreate(goods_barcode=ctx["g"].barcode,
