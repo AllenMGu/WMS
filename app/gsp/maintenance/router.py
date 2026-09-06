@@ -45,7 +45,7 @@ def _rollback_and_raise(db: Session, error: Exception):
 
 
 @router.get("/expiry-alerts", response_model=list[ExpiryAlertResponse])
-async def list_expiry_alerts(
+def list_expiry_alerts(
     status: str | None = None,
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -64,7 +64,7 @@ async def list_expiry_alerts(
         entity_id_param="alert_id", meaning="REVIEW",
     ))],
 )
-async def close_expiry_alert(
+def close_expiry_alert(
     alert_id: int,
     payload: ExpiryAlertDecision,
     request: Request,
@@ -89,7 +89,7 @@ async def close_expiry_alert(
 
 
 @router.post("/plans", response_model=MaintenancePlanResponse, status_code=201)
-async def create_plan(
+def create_plan(
     payload: MaintenancePlanCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("MAINTENANCE", *QUALITY_ROLES)),
@@ -109,7 +109,7 @@ async def create_plan(
 
 
 @router.get("/plans", response_model=list[MaintenancePlanResponse])
-async def list_plans(
+def list_plans(
     status: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -124,7 +124,7 @@ async def list_plans(
 
 
 @router.post("/plans/{plan_id}/submit", response_model=MaintenancePlanResponse)
-async def submit_plan(
+def submit_plan(
     plan_id: int,
     payload: ChangeReason,
     request: Request,
@@ -153,7 +153,7 @@ async def submit_plan(
         entity_id_param="plan_id", meaning="APPROVAL",
     ))],
 )
-async def approve_plan(
+def approve_plan(
     plan_id: int,
     payload: ChangeReason,
     request: Request,
@@ -178,7 +178,7 @@ async def approve_plan(
     "/plans/{plan_id}/items/{item_id}/inspect",
     response_model=MaintenancePlanResponse,
 )
-async def inspect_item(
+def inspect_item(
     plan_id: int,
     item_id: int,
     payload: MaintenanceInspection,
@@ -209,7 +209,7 @@ async def inspect_item(
         entity_id_param="plan_id", meaning="REVIEW",
     ))],
 )
-async def complete_plan(
+def complete_plan(
     plan_id: int,
     payload: MaintenanceCompletion,
     request: Request,
