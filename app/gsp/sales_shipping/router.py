@@ -33,7 +33,7 @@ from app.gsp.sales_shipping.service import (
     submit_sales_order,
 )
 from app.gsp.schemas import ChangeReason
-from app.legacy import User, get_current_user
+from app.legacy import User
 
 router = APIRouter(prefix="/gsp", tags=["GSP销售出库"])
 QUALITY_ROLES = ("QUALITY_MANAGER", "QUALITY_REVIEWER")
@@ -53,7 +53,7 @@ def _rollback_and_raise(db: Session, error: Exception):
 
 
 @router.post("/sales/orders", response_model=SalesOrderResponse, status_code=201)
-async def create_order(
+def create_order(
     payload: SalesOrderCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("SALES")),
@@ -73,9 +73,9 @@ async def create_order(
 
 
 @router.get("/sales/orders", response_model=list[SalesOrderResponse])
-async def list_orders(
+def list_orders(
     status: str | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_gsp_roles("SALES", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspSalesOrder)
@@ -88,7 +88,7 @@ async def list_orders(
 
 
 @router.post("/sales/orders/{order_id}/submit", response_model=SalesOrderResponse)
-async def submit_order(
+def submit_order(
     order_id: int,
     payload: ChangeReason,
     request: Request,
@@ -117,7 +117,7 @@ async def submit_order(
         entity_id_param="order_id", meaning="APPROVAL",
     ))],
 )
-async def approve_order(
+def approve_order(
     order_id: int,
     payload: ChangeReason,
     request: Request,
@@ -139,7 +139,7 @@ async def approve_order(
 
 
 @router.post("/sales/orders/{order_id}/allocate", response_model=SalesOrderResponse)
-async def allocate_order(
+def allocate_order(
     order_id: int,
     payload: ChangeReason,
     request: Request,
@@ -161,7 +161,7 @@ async def allocate_order(
 
 
 @router.post("/sales/orders/{order_id}/pick", response_model=SalesOrderResponse)
-async def pick_order(
+def pick_order(
     order_id: int,
     payload: ChangeReason,
     request: Request,
@@ -183,7 +183,7 @@ async def pick_order(
 
 
 @router.post("/sales/orders/{order_id}/cancel", response_model=SalesOrderResponse)
-async def cancel_order(
+def cancel_order(
     order_id: int,
     payload: ChangeReason,
     request: Request,
@@ -209,7 +209,7 @@ async def cancel_order(
     response_model=ShipmentResponse,
     status_code=201,
 )
-async def prepare_order_shipment(
+def prepare_order_shipment(
     order_id: int,
     payload: ShipmentPrepare,
     request: Request,
@@ -233,9 +233,9 @@ async def prepare_order_shipment(
 
 
 @router.get("/shipping/shipments", response_model=list[ShipmentResponse])
-async def list_shipments(
+def list_shipments(
     status: str | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_gsp_roles("DISPATCHER", "WAREHOUSE_CUSTODIAN", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
     query = db.query(GspShipment)
@@ -249,7 +249,7 @@ async def list_shipments(
     response_model=ShipmentPackageResponse,
     status_code=201,
 )
-async def create_shipment_package(
+def create_shipment_package(
     shipment_id: int,
     payload: ShipmentPackageCreate,
     request: Request,
@@ -274,7 +274,7 @@ async def create_shipment_package(
     "/shipping/shipments/{shipment_id}/packages",
     response_model=list[ShipmentPackageResponse],
 )
-async def list_shipment_packages(
+def list_shipment_packages(
     shipment_id: int,
     _: User = Depends(require_gsp_roles("WAREHOUSE_CUSTODIAN", "OUTBOUND_REVIEWER", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
@@ -295,7 +295,7 @@ async def list_shipment_packages(
         entity_id_param="shipment_id", meaning="REVIEW",
     ))],
 )
-async def review_order_shipment(
+def review_order_shipment(
     shipment_id: int,
     payload: ChangeReason,
     request: Request,
@@ -324,7 +324,7 @@ async def review_order_shipment(
         entity_id_param="shipment_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def dispatch_order_shipment(
+def dispatch_order_shipment(
     shipment_id: int,
     payload: ChangeReason,
     request: Request,
