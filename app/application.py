@@ -75,7 +75,7 @@ async def liveness():
 
 
 @app.get("/health/ready", tags=["系统"])
-async def readiness():
+def readiness():
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1"))
