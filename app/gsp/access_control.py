@@ -255,6 +255,7 @@ def deactivate_user_access(
             assignment.revocation_reason = reason
     for mapping in warehouses:
         db.delete(mapping)
+    _deactivate_uploaded_controlled_files(db, user_id=user.id, actor_id=actor_id, reason=reason, source_ip=source_ip)
     write_audit_event(
         db,
         actor_user_id=actor_id,
@@ -264,5 +265,73 @@ def deactivate_user_access(
         reason=reason,
         before_data=before,
         after_data={"user": {"id": user.id, "is_active": False, "current_warehouse_id": None}, "active_roles": [], "warehouse_ids": []},
+        source_ip=source_ip,
+    )
+
+
+def _deactivate_uploaded_controlled_files(
+    db: Session,
+    *,
+    user_id: int,
+    actor_id: int,
+    reason: str,
+    source_ip: str | None = None,
+) -> None:
+    """Uploader-offboarding protection for controlled evidence (GSP P1-2).
+
+    On account deactivation, files uploaded by that user are no longer allowed to
+    stay silently ACTIVE.  Files not yet bound to any business record are disabled
+    right away (DISABLED blocks new download / new reference while keeping bytes +
+    audit).  Files already bound to an approved business record stay readable so the
+    evidence chain is not broken, but every one of the user's ACTIVE files is
+    enumerated in an audit record for the quality team to review.
+
+    Mirrors the documented "uploader deactivation protection" claim in README:
+    https://github.com/AllenMGu/WMS (access_control.deactivate_user_access).
+    """
+    from app.gsp.attachments.bindings import referenced_by_business
+    from app.gsp.attachments.models import (
+        STATUS_ACTIVE,
+        GspControlledFile,
+    )
+
+    uploaded = (
+        db.query(GspControlledFile)
+        .filter(
+            GspControlledFile.uploaded_by == user_id,
+            GspControlledFile.status == STATUS_ACTIVE,
+        )
+        .order_by(GspControlledFile.id)
+        .all()
+    )
+    if not uploaded:
+        return
+    disabled_keys: list[str] = []
+    bound_keys: list[str] = []
+    now = utc_now()
+    for obj in uploaded:
+        if referenced_by_business(db, obj.object_key):
+            bound_keys.append(obj.object_key)
+            continue
+        obj.status = "DISABLED"
+        note = (obj.note or "").rstrip()
+        marker = f"[uploader offboarded {now.isoformat(timespec='seconds')}: {reason}]"
+        obj.note = f"{note} {marker}".strip() if note else marker
+        disabled_keys.append(obj.object_key)
+    write_audit_event(
+        db,
+        actor_user_id=actor_id,
+        action="CONTROLLED_FILES_UPLOADER_REVOKED",
+        entity_type="User",
+        entity_id=str(user_id),
+        reason=reason,
+        before_data={
+            "active_uploaded_files": [o.object_key for o in uploaded],
+        },
+        after_data={
+            "disabled_unbound_files": disabled_keys,
+            "kept_bound_evidence_files": bound_keys,
+            "note": "上传人已停用：未绑定业务记录的受控文件已级联停用；已被业务记录绑定的证据文件保留以便证据链核验，请质量复核决定是否停用",
+        },
         source_ip=source_ip,
     )
