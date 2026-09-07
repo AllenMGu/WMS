@@ -1975,7 +1975,7 @@ def delete_goods(
     return {"message": "删除成功"}
 
 @router.post("/goods/import", summary="导入货物数据")
-async def import_goods(
+def import_goods(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1985,8 +1985,9 @@ async def import_goods(
         raise HTTPException(status_code=403, detail="无权限操作")
 
     try:
-        # 读取Excel文件
-        contents = await file.read()
+        # 读取Excel文件（同步 def：FastAPI 在线程池执行整个处理流程，
+        # pandas 解析与逐行 DB 查询/提交不会阻塞事件循环）
+        contents = file.file.read()
         df = pd.read_excel(io.BytesIO(contents))
 
         # 检查必要的列

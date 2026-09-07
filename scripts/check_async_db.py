@@ -9,12 +9,15 @@ the whole process (including the ``/health/ready`` probe).  Handlers with no
 
 This script fails the build if a new ``async def`` containing synchronous DB
 calls is introduced, or if an ``@router`` endpoint is declared ``async def``
-while its body never awaits anything (it should be plain ``def``).
+while its body never awaits anything (it should be plain ``def``).  Warnings
+(async/sync mixing, never-awaiting async endpoints) are treated as failures
+too: once code has been migrated to plain ``def`` / threadpool helpers, any
+regression must turn CI red instead of degrading to an advisory note.
 
 Usage:
     python scripts/check_async_db.py                 # scan app/gsp
     python scripts/check_async_db.py app/legacy.py   # scan extra file(s)
-Exit code 0 = clean; 1 = violations found.
+Exit code 0 = clean; 1 = violations found (failures or warnings).
 """
 
 from __future__ import annotations
@@ -111,7 +114,9 @@ def main() -> int:
     for line in failures:
         print(line)
     print(f"\ncheck_async_db: {len(failures)} failure(s), {len(warnings)} warning(s).")
-    return 1 if failures else 0
+    # Fail-closed: warnings are regressions of the same class (sync DB work or
+    # blocking bodies on the event loop) and must also turn CI red.
+    return 1 if (failures or warnings) else 0
 
 
 if __name__ == "__main__":
