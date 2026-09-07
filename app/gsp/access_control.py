@@ -302,6 +302,10 @@ def _deactivate_uploaded_controlled_files(
             GspControlledFile.status == STATUS_ACTIVE,
         )
         .order_by(GspControlledFile.id)
+        # 行锁：与业务绑定路径 resolve_attachment(attachments/bindings.py) 的
+        # with_for_update() 互斥。必须先锁定候选文件行、再检查业务引用，否则并发
+        # 绑定事务(尚未提交)的业务引用不可见，会把刚被绑定的证据文件误置 DISABLED。
+        .with_for_update()
         .all()
     )
     if not uploaded:

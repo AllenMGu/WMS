@@ -9,8 +9,10 @@ instead of waiting for a manual ``verify`` endpoint call.
 
 Activation is conservative and off by default: the loop only runs when the
 environment variable ``AUDIT_AUTO_VERIFY_INTERVAL`` (seconds) is > 0.  Each
-iteration opens its own DB session so it never shares a request-scoped
-transaction with the web handlers.
+iteration runs the (CPU/DB heavy) synchronous verification in a worker thread
+(via :func:`asyncio.to_thread`) and opens its own DB session inside that thread,
+so the event loop (and therefore the API / health check) is never blocked and
+the verification never shares a request-scoped transaction with web handlers.
 """
 
 from __future__ import annotations
@@ -73,6 +75,9 @@ async def run_auto_verify_loop() -> None:
     while True:
         await asyncio.sleep(interval)
         try:
-            verify_all_chains_once()
+            # 全量链校验是同步的 DB 查询 + 哈希计算，审计数据越多耗时越长。
+            # 通过 asyncio.to_thread 放到默认线程池执行，绝不阻塞事件循环/健康检查。
+            # verify_all_chains_once 内部自行创建并关闭独立 DB 会话，不共享请求事务。
+            await asyncio.to_thread(verify_all_chains_once)
         except Exception:  # noqa: BLE001
             logger.exception("审计链自动校验后台任务异常（将在下个周期重试）")
