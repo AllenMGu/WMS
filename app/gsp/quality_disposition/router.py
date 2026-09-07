@@ -56,7 +56,7 @@ def _rollback_and_raise(db: Session, error: Exception):
     response_model=NonconformingResponse,
     status_code=201,
 )
-async def create_nonconforming_record(
+def create_nonconforming_record(
     payload: NonconformingStockCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES, "MAINTENANCE")),
@@ -77,7 +77,7 @@ async def create_nonconforming_record(
 
 
 @router.get("/quality/nonconforming", response_model=list[NonconformingResponse])
-async def list_nonconforming_records(
+def list_nonconforming_records(
     status: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -96,7 +96,7 @@ async def list_nonconforming_records(
         entity_id_param="record_id", meaning="APPROVAL",
     ))],
 )
-async def approve_nonconforming_disposition(
+def approve_nonconforming_disposition(
     record_id: int,
     payload: DispositionApproval,
     request: Request,
@@ -126,7 +126,7 @@ async def approve_nonconforming_disposition(
         entity_id_param="record_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def destroy_nonconforming_product(
+def destroy_nonconforming_product(
     record_id: int,
     payload: DestructionExecution,
     request: Request,
@@ -153,7 +153,7 @@ async def destroy_nonconforming_product(
     response_model=PurchaseReturnResponse,
     status_code=201,
 )
-async def create_supplier_return(
+def create_supplier_return(
     payload: PurchaseReturnCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("PROCUREMENT")),
@@ -173,7 +173,7 @@ async def create_supplier_return(
 
 
 @router.get("/procurement/returns", response_model=list[PurchaseReturnResponse])
-async def list_supplier_returns(
+def list_supplier_returns(
     status: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -191,7 +191,7 @@ async def list_supplier_returns(
     "/procurement/returns/{return_id}/submit",
     response_model=PurchaseReturnResponse,
 )
-async def submit_supplier_return(
+def submit_supplier_return(
     return_id: int,
     payload: ChangeReason,
     request: Request,
@@ -220,7 +220,7 @@ async def submit_supplier_return(
         entity_id_param="return_id", meaning="APPROVAL",
     ))],
 )
-async def approve_supplier_return(
+def approve_supplier_return(
     return_id: int,
     payload: ChangeReason,
     request: Request,
@@ -249,7 +249,7 @@ async def approve_supplier_return(
         entity_id_param="record_id", meaning="REJECTION",
     ))],
 )
-async def reject_nonconforming(
+def reject_nonconforming(
     record_id: int,
     payload: ChangeReason,
     request: Request,
@@ -275,7 +275,7 @@ async def reject_nonconforming(
     "/procurement/returns/{return_id}/cancel",
     response_model=PurchaseReturnResponse,
 )
-async def cancel_supplier_return(
+def cancel_supplier_return(
     return_id: int,
     payload: ChangeReason,
     request: Request,
@@ -304,7 +304,7 @@ async def cancel_supplier_return(
         entity_id_param="return_id", meaning="REJECTION",
     ))],
 )
-async def reject_supplier_return(
+def reject_supplier_return(
     return_id: int,
     payload: ChangeReason,
     request: Request,
@@ -333,7 +333,7 @@ async def reject_supplier_return(
         entity_id_param="return_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def dispatch_supplier_return(
+def dispatch_supplier_return(
     return_id: int,
     payload: PurchaseReturnDispatch,
     request: Request,

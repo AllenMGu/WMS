@@ -1,4 +1,3 @@
-import asyncio
 from datetime import date, timedelta
 from uuid import uuid4
 
@@ -96,8 +95,7 @@ def test_supplier_product_scope_requires_independent_approval_and_can_be_suspend
             verifier_id=approver.id,
             valid_to=date.today() + timedelta(days=365),
         )
-        authorization = asyncio.run(
-            upsert_supplier_product(
+        authorization = upsert_supplier_product(
                 partner_id=supplier.id,
                 payload=SupplierProductAuthorizationCreate(
                     goods_id=goods.id,
@@ -113,11 +111,9 @@ def test_supplier_product_scope_requires_independent_approval_and_can_be_suspend
                 current_user=maintainer,
                 db=db,
             )
-        )
         assert authorization.status == "PENDING"
         with pytest.raises(HTTPException, match="维护人与批准人必须分离"):
-            asyncio.run(
-                approve_supplier_product(
+            approve_supplier_product(
                     partner_id=supplier.id,
                     authorization_id=authorization.id,
                     payload=ChangeReason(reason="错误同人批准"),
@@ -125,9 +121,7 @@ def test_supplier_product_scope_requires_independent_approval_and_can_be_suspend
                     current_user=maintainer,
                     db=db,
                 )
-            )
-        authorization = asyncio.run(
-            approve_supplier_product(
+        authorization = approve_supplier_product(
                 partner_id=supplier.id,
                 authorization_id=authorization.id,
                 payload=ChangeReason(reason="质量复核供货范围及证据"),
@@ -135,22 +129,18 @@ def test_supplier_product_scope_requires_independent_approval_and_can_be_suspend
                 current_user=approver,
                 db=db,
             )
-        )
         assert authorization.status == "APPROVED"
         assert evaluate_supplier_product_authorization(
             db, supplier_id=supplier.id, goods_id=goods.id
         ).qualified
-        effective = asyncio.run(
-            list_supplier_products(
+        effective = list_supplier_products(
                 partner_id=supplier.id,
                 effective_only=True,
                 current_user=maintainer,
                 db=db,
             )
-        )
         assert [row.goods_id for row in effective] == [goods.id]
-        authorization = asyncio.run(
-            suspend_supplier_product(
+        authorization = suspend_supplier_product(
                 partner_id=supplier.id,
                 authorization_id=authorization.id,
                 payload=ChangeReason(reason="暂停该品种供货授权"),
@@ -158,19 +148,16 @@ def test_supplier_product_scope_requires_independent_approval_and_can_be_suspend
                 current_user=approver,
                 db=db,
             )
-        )
         assert authorization.status == "SUSPENDED"
         assert not evaluate_supplier_product_authorization(
             db, supplier_id=supplier.id, goods_id=goods.id
         ).qualified
-        effective = asyncio.run(
-            list_supplier_products(
+        effective = list_supplier_products(
                 partner_id=supplier.id,
                 effective_only=True,
                 current_user=maintainer,
                 db=db,
             )
-        )
         assert effective == []
     finally:
         db.rollback()
@@ -262,20 +249,17 @@ def test_bulk_import_is_atomic_pending_and_visible_in_expiry_alerts():
             ],
             reason="批量回填供应商供货品种关系",
         )
-        result = asyncio.run(
-            bulk_import_supplier_products(
+        result = bulk_import_supplier_products(
                 partner_id=supplier.id,
                 payload=payload,
                 request=_request(),
                 current_user=maintainer,
                 db=db,
             )
-        )
         assert result.created == 2
         assert result.updated == 0
         assert result.pending_approval == 2
-        asyncio.run(
-            approve_supplier_product(
+        approve_supplier_product(
                 partner_id=supplier.id,
                 authorization_id=result.authorization_ids[0],
                 payload=ChangeReason(reason="独立批准临期供货授权"),
@@ -283,45 +267,38 @@ def test_bulk_import_is_atomic_pending_and_visible_in_expiry_alerts():
                 current_user=approver,
                 db=db,
             )
-        )
 
-        alerts = asyncio.run(
-            list_supplier_product_authorizations(
+        alerts = list_supplier_product_authorizations(
                 supplier_id=supplier.id,
                 alert_only=True,
                 warning_days=30,
                 current_user=maintainer,
                 db=db,
             )
-        )
         assert {row.goods_id for row in alerts} == {goods.id for goods in goods_rows}
-        summary = asyncio.run(compliance_summary(current_user=maintainer, db=db))
+        summary = compliance_summary(current_user=maintainer, db=db)
         assert summary["pending_supplier_product_authorizations"] >= 1
         assert summary["near_expiry_supplier_product_authorizations"] >= 1
 
         duplicate_payload = payload.model_copy(update={"rows": [payload.rows[0], payload.rows[0]]})
         with pytest.raises(HTTPException, match="重复货物条码"):
-            asyncio.run(
-                bulk_import_supplier_products(
+            bulk_import_supplier_products(
                     partner_id=supplier.id,
                     payload=duplicate_payload,
                     request=_request(),
                     current_user=maintainer,
                     db=db,
                 )
-            )
         approved = db.get(GspSupplierProductAuthorization, result.authorization_ids[0])
         assert approved.status == "APPROVED"
 
-        result = asyncio.run(
-            bulk_import_supplier_products(
+        result = bulk_import_supplier_products(
                 partner_id=supplier.id,
                 payload=payload,
                 request=_request(),
                 current_user=maintainer,
                 db=db,
             )
-        )
         assert result.created == 0
         assert result.updated == 2
     finally:

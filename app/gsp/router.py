@@ -181,7 +181,7 @@ def _invalidate_supplier_product_authorizations(
 
 
 @router.get("/compliance/summary")
-async def compliance_summary(
+def compliance_summary(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -431,7 +431,7 @@ async def compliance_summary(
 
 
 @router.get("/compliance/settings", response_model=list[ComplianceSettingResponse])
-async def list_compliance_settings(
+def list_compliance_settings(
     _: User = Depends(require_any_gsp_role),
     db: Session = Depends(get_db),
 ):
@@ -452,7 +452,7 @@ async def list_compliance_settings(
         )
     ],
 )
-async def set_compliance_setting(
+def set_compliance_setting(
     setting_key: str,
     payload: ComplianceSettingSet,
     request: Request,
@@ -504,7 +504,7 @@ async def set_compliance_setting(
 
 
 @router.post("/roles", status_code=201)
-async def grant_role(
+def grant_role(
     payload: RoleGrant,
     request: Request,
     current_user: User = Depends(require_quality_manager_or_bootstrap),
@@ -559,7 +559,7 @@ def _role_assignment_response(assignment: GspRoleAssignment) -> dict:
 
 
 @router.get("/roles/me", response_model=CurrentUserRolesResponse)
-async def list_my_roles(
+def list_my_roles(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -572,7 +572,7 @@ async def list_my_roles(
 
 
 @router.get("/reference/users", response_model=list[UserDirectoryItem])
-async def list_quality_user_directory(
+def list_quality_user_directory(
     _: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
@@ -581,7 +581,7 @@ async def list_quality_user_directory(
 
 
 @router.get("/roles")
-async def list_roles(
+def list_roles(
     user_id: int | None = None,
     active_only: bool = False,
     current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
@@ -608,7 +608,7 @@ async def list_roles(
         )
     ],
 )
-async def review_role(
+def review_role(
     assignment_id: int,
     payload: RoleReview,
     request: Request,
@@ -642,7 +642,7 @@ async def review_role(
         )
     ],
 )
-async def revoke_role(
+def revoke_role(
     assignment_id: int,
     payload: RoleRevoke,
     request: Request,
@@ -664,7 +664,7 @@ async def revoke_role(
 
 
 @router.post("/partners", response_model=PartnerResponse, status_code=201)
-async def create_partner(
+def create_partner(
     payload: PartnerCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES, "PROCUREMENT")),
@@ -697,7 +697,7 @@ async def create_partner(
 
 
 @router.get("/partners", response_model=list[PartnerResponse])
-async def list_partners(
+def list_partners(
     partner_type: str | None = None,
     status: str | None = None,
     current_user: User = Depends(get_current_user),
@@ -725,7 +725,7 @@ async def list_partners(
         )
     ],
 )
-async def approve_partner(
+def approve_partner(
     partner_id: int,
     payload: ChangeReason,
     request: Request,
@@ -777,7 +777,7 @@ async def approve_partner(
     "/partners/{partner_id}/documents",
     response_model=list[PartnerDocumentResponse],
 )
-async def get_partner_documents(
+def get_partner_documents(
     partner_id: int,
     status: str | None = None,
     document_type: str | None = None,
@@ -804,7 +804,7 @@ async def get_partner_documents(
     response_model=PartnerDocumentResponse,
     status_code=201,
 )
-async def create_partner_document(
+def create_partner_document(
     partner_id: int,
     payload: PartnerDocumentCreate,
     request: Request,
@@ -884,7 +884,7 @@ async def create_partner_document(
         )
     ],
 )
-async def verify_partner_document(
+def verify_partner_document(
     partner_id: int,
     document_id: int,
     payload: ChangeReason,
@@ -942,7 +942,7 @@ async def verify_partner_document(
         )
     ],
 )
-async def suspend_partner(
+def suspend_partner(
     partner_id: int,
     payload: ChangeReason,
     request: Request,
@@ -1037,7 +1037,7 @@ def _bind_supplier_authorization_values(db: Session, values: dict) -> None:
     "/supplier-product-authorizations",
     response_model=list[SupplierProductAuthorizationResponse],
 )
-async def list_supplier_product_authorizations(
+def list_supplier_product_authorizations(
     supplier_id: int | None = Query(None, gt=0),
     status: str | None = None,
     alert_only: bool = False,
@@ -1072,7 +1072,7 @@ async def list_supplier_product_authorizations(
     "/partners/{partner_id}/products",
     response_model=list[SupplierProductAuthorizationResponse],
 )
-async def list_supplier_products(
+def list_supplier_products(
     partner_id: int,
     status: str | None = None,
     effective_only: bool = False,
@@ -1112,7 +1112,7 @@ async def list_supplier_products(
     response_model=SupplierProductAuthorizationResponse,
     status_code=201,
 )
-async def upsert_supplier_product(
+def upsert_supplier_product(
     partner_id: int,
     payload: SupplierProductAuthorizationCreate,
     request: Request,
@@ -1159,7 +1159,7 @@ async def upsert_supplier_product(
     "/partners/{partner_id}/products/bulk-import",
     response_model=SupplierProductAuthorizationBulkResult,
 )
-async def bulk_import_supplier_products(
+def bulk_import_supplier_products(
     partner_id: int,
     payload: SupplierProductAuthorizationBulkImport,
     request: Request,
@@ -1251,7 +1251,7 @@ async def bulk_import_supplier_products(
         )
     ],
 )
-async def approve_supplier_product(
+def approve_supplier_product(
     partner_id: int,
     authorization_id: int,
     payload: ChangeReason,
@@ -1326,7 +1326,7 @@ async def approve_supplier_product(
         )
     ],
 )
-async def suspend_supplier_product(
+def suspend_supplier_product(
     partner_id: int,
     authorization_id: int,
     payload: ChangeReason,
@@ -1368,7 +1368,7 @@ async def suspend_supplier_product(
 
 
 @router.get("/products", response_model=list[DrugProfileResponse])
-async def get_drug_profiles(
+def get_drug_profiles(
     status: str | None = None,
     goods_id: int | None = Query(None, gt=0),
     keyword: str | None = None,
@@ -1388,7 +1388,7 @@ async def get_drug_profiles(
 
 
 @router.put("/products/{goods_id}/profile", response_model=DrugProfileResponse)
-async def upsert_drug_profile(
+def upsert_drug_profile(
     goods_id: int,
     payload: DrugProfileUpsert,
     request: Request,
@@ -1473,7 +1473,7 @@ async def upsert_drug_profile(
         )
     ],
 )
-async def approve_drug_profile(
+def approve_drug_profile(
     goods_id: int,
     payload: ChangeReason,
     request: Request,
@@ -1523,7 +1523,7 @@ async def approve_drug_profile(
 
 
 @router.get("/batches", response_model=list[BatchResponse])
-async def get_drug_batches(
+def get_drug_batches(
     status: str | None = None,
     goods_id: int | None = Query(None, gt=0),
     supplier_id: int | None = Query(None, gt=0),
@@ -1545,7 +1545,7 @@ async def get_drug_batches(
 
 
 @router.post("/batches", response_model=BatchResponse, status_code=201)
-async def create_batch(
+def create_batch(
     payload: BatchCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("RECEIVER", "INSPECTOR", *QUALITY_ROLES)),
@@ -1571,7 +1571,7 @@ async def create_batch(
         )
     ],
 )
-async def accept_batch(
+def accept_batch(
     batch_id: int,
     payload: BatchAcceptance,
     request: Request,
@@ -1585,7 +1585,7 @@ async def accept_batch(
 
 
 @router.get("/batch-stock", response_model=list[BatchStockResponse])
-async def get_batch_stock(
+def get_batch_stock(
     warehouse_id: int | None = Query(None, gt=0),
     location_id: int | None = Query(None, gt=0),
     batch_id: int | None = Query(None, gt=0),
@@ -1607,7 +1607,7 @@ async def get_batch_stock(
 
 
 @router.post("/batch-stock/receipt", status_code=201)
-async def receive_batch_stock(
+def receive_batch_stock(
     payload: BatchStockReceipt,
     request: Request,
     current_user: User = Depends(require_gsp_roles("WAREHOUSE_CUSTODIAN", "RECEIVER")),
@@ -1620,7 +1620,7 @@ async def receive_batch_stock(
 
 
 @router.get("/quality-holds", response_model=list[QualityHoldResponse])
-async def get_quality_holds(
+def get_quality_holds(
     status: str | None = None,
     batch_id: int | None = Query(None, gt=0),
     reason_code: str | None = None,
@@ -1640,7 +1640,7 @@ async def get_quality_holds(
 
 
 @router.post("/quality-holds", response_model=QualityHoldResponse, status_code=201)
-async def create_quality_hold(
+def create_quality_hold(
     payload: QualityHoldCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES, "MAINTENANCE")),
@@ -1712,7 +1712,7 @@ async def create_quality_hold(
         )
     ],
 )
-async def release_quality_hold(
+def release_quality_hold(
     hold_id: int,
     payload: QualityHoldRelease,
     request: Request,
@@ -1833,7 +1833,7 @@ async def release_quality_hold(
 
 
 @router.get("/trace/batches/{batch_no}")
-async def trace_batch(
+def trace_batch(
     batch_no: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1947,7 +1947,7 @@ async def trace_batch(
 
 
 @router.get("/audit-events", response_model=list[AuditEventResponse])
-async def list_audit_events(
+def list_audit_events(
     entity_type: str | None = None,
     entity_id: str | None = None,
     limit: int = Query(100, ge=1, le=500),
@@ -1969,7 +1969,7 @@ async def list_audit_events(
 
 
 @router.get("/audit-events/verify")
-async def verify_audit_events(
+def verify_audit_events(
     current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
     db: Session = Depends(get_db),
 ):
@@ -1978,7 +1978,7 @@ async def verify_audit_events(
 
 
 @router.post("/audit-verifications", response_model=AuditVerificationResponse, status_code=201)
-async def create_audit_verification(
+def create_audit_verification(
     payload: AuditVerificationCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),
@@ -1998,7 +1998,7 @@ async def create_audit_verification(
 
 
 @router.get("/audit-verifications", response_model=list[AuditVerificationResponse])
-async def list_audit_verifications(
+def list_audit_verifications(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(require_gsp_roles("AUDITOR", *QUALITY_ROLES)),

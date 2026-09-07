@@ -83,7 +83,7 @@ def _rollback_and_raise(db: Session, error: Exception):
 
 
 @router.post("/carriers", response_model=CarrierResponse, status_code=201)
-async def create_carrier_record(
+def create_carrier_record(
     payload: CarrierCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles("TRANSPORT_COORDINATOR")),
@@ -101,7 +101,7 @@ async def create_carrier_record(
 
 
 @router.get("/carriers", response_model=list[CarrierResponse])
-async def list_carriers(
+def list_carriers(
     status: str | None = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -120,7 +120,7 @@ async def list_carriers(
     "/carriers/{carrier_id}/documents",
     response_model=list[CarrierDocumentResponse],
 )
-async def list_carrier_documents(
+def list_carrier_documents(
     carrier_id: int,
     current_user: User = Depends(
         require_gsp_roles("TRANSPORT_COORDINATOR", "AUDITOR", *QUALITY_ROLES)
@@ -140,7 +140,7 @@ async def list_carrier_documents(
     "/carriers/{carrier_id}/vehicles",
     response_model=list[CarrierVehicleResponse],
 )
-async def list_carrier_vehicles(
+def list_carrier_vehicles(
     carrier_id: int,
     current_user: User = Depends(
         require_gsp_roles("TRANSPORT_COORDINATOR", "AUDITOR", *QUALITY_ROLES)
@@ -160,7 +160,7 @@ async def list_carrier_vehicles(
     "/carriers/{carrier_id}/drivers",
     response_model=list[CarrierDriverResponse],
 )
-async def list_carrier_drivers(
+def list_carrier_drivers(
     carrier_id: int,
     current_user: User = Depends(
         require_gsp_roles("TRANSPORT_COORDINATOR", "AUDITOR", *QUALITY_ROLES)
@@ -181,7 +181,7 @@ async def list_carrier_drivers(
     response_model=CarrierDocumentResponse,
     status_code=201,
 )
-async def add_document(
+def add_document(
     carrier_id: int,
     payload: CarrierDocumentCreate,
     request: Request,
@@ -212,7 +212,7 @@ async def add_document(
         entity_id_param="document_id", meaning="REVIEW",
     ))],
 )
-async def decide_document(
+def decide_document(
     document_id: int,
     payload: ApprovalDecision,
     request: Request,
@@ -242,7 +242,7 @@ async def decide_document(
         entity_id_param="carrier_id", meaning="APPROVAL",
     ))],
 )
-async def approve_carrier_record(
+def approve_carrier_record(
     carrier_id: int,
     payload: ApprovalDecision,
     request: Request,
@@ -265,7 +265,7 @@ async def approve_carrier_record(
 
 
 @router.post("/carriers/{carrier_id}/suspend", response_model=CarrierResponse)
-async def suspend_carrier_record(
+def suspend_carrier_record(
     carrier_id: int,
     payload: ChangeReason,
     request: Request,
@@ -292,7 +292,7 @@ async def suspend_carrier_record(
     response_model=CarrierVehicleResponse,
     status_code=201,
 )
-async def create_carrier_vehicle(
+def create_carrier_vehicle(
     carrier_id: int,
     payload: CarrierVehicleCreate,
     request: Request,
@@ -323,7 +323,7 @@ async def create_carrier_vehicle(
         entity_id_param="vehicle_id", meaning="APPROVAL",
     ))],
 )
-async def approve_vehicle(
+def approve_vehicle(
     vehicle_id: int,
     payload: ApprovalDecision,
     request: Request,
@@ -350,7 +350,7 @@ async def approve_vehicle(
     response_model=CarrierDriverResponse,
     status_code=201,
 )
-async def create_carrier_driver(
+def create_carrier_driver(
     carrier_id: int,
     payload: CarrierDriverCreate,
     request: Request,
@@ -381,7 +381,7 @@ async def create_carrier_driver(
         entity_id_param="driver_id", meaning="APPROVAL",
     ))],
 )
-async def approve_driver(
+def approve_driver(
     driver_id: int,
     payload: ApprovalDecision,
     request: Request,
@@ -404,7 +404,7 @@ async def approve_driver(
 
 
 @router.get("/tasks", response_model=list[TransportTaskResponse])
-async def list_tasks(
+def list_tasks(
     status: str | None = None,
     shipment_id: int | None = Query(None, gt=0),
     carrier_id: int | None = Query(None, gt=0),
@@ -426,7 +426,7 @@ async def list_tasks(
 
 
 @router.get("/tasks/{task_id}", response_model=TransportTaskResponse)
-async def get_task(
+def get_task(
     task_id: int,
     current_user: User = Depends(
         require_gsp_roles("TRANSPORT_COORDINATOR", "AUDITOR", *QUALITY_ROLES)
@@ -437,7 +437,7 @@ async def get_task(
 
 
 @router.get("/tasks/{task_id}/events", response_model=list[TransportEventResponse])
-async def list_task_events(
+def list_task_events(
     task_id: int,
     current_user: User = Depends(
         require_gsp_roles("TRANSPORT_COORDINATOR", "AUDITOR", *QUALITY_ROLES)
@@ -454,7 +454,7 @@ async def list_task_events(
 
 
 @router.post("/tasks/{task_id}/events", response_model=TransportEventResponse, status_code=201)
-async def add_task_event(
+def add_task_event(
     task_id: int,
     payload: TransportEventCreate,
     request: Request,
@@ -482,7 +482,7 @@ async def add_task_event(
     response_model=TransportExceptionResponse,
     status_code=201,
 )
-async def add_task_exception(
+def add_task_exception(
     task_id: int,
     payload: TransportExceptionCreate,
     request: Request,
@@ -509,7 +509,7 @@ async def add_task_exception(
     "/tasks/{task_id}/exceptions",
     response_model=list[TransportExceptionResponse],
 )
-async def list_task_exceptions(
+def list_task_exceptions(
     task_id: int,
     current_user: User = Depends(
         require_gsp_roles("TRANSPORT_COORDINATOR", "AUDITOR", *QUALITY_ROLES)
@@ -533,7 +533,7 @@ async def list_task_exceptions(
         entity_id_param="exception_id", meaning="APPROVAL",
     ))],
 )
-async def decide_exception(
+def decide_exception(
     exception_id: int,
     payload: TransportExceptionDecision,
     request: Request,
@@ -565,7 +565,7 @@ async def decide_exception(
         entity_id_param="task_id", meaning="CONFIRMATION",
     ))],
 )
-async def deliver_task(
+def deliver_task(
     task_id: int,
     payload: DeliveryCreate,
     request: Request,
@@ -595,7 +595,7 @@ async def deliver_task(
         entity_id_param="task_id", meaning="REVIEW",
     ))],
 )
-async def close_task(
+def close_task(
     task_id: int,
     payload: TransportClose,
     request: Request,

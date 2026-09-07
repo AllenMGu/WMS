@@ -20,7 +20,7 @@ class OutboxRetry(BaseModel):
 
 
 @router.get("/outbox")
-async def list_outbox(
+def list_outbox(
     destination: str | None = None,
     status: str | None = None,
     offset: int = Query(0, ge=0),
@@ -43,7 +43,7 @@ async def list_outbox(
         entity_id_param="message_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def retry_outbox_message(
+def retry_outbox_message(
     message_id: int,
     payload: OutboxRetry,
     request: Request,

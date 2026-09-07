@@ -21,6 +21,11 @@ def _csv(name: str, default: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in os.getenv(name, default).split(",") if item.strip())
 
 
+#: APP_ENV 是否被显式设置（区别于依赖默认值 "development"）。
+#: 模块级常量：在 Settings 实例化前求值，供 fail-closed 判定使用。
+APP_ENV_EXPLICIT = "APP_ENV" in os.environ
+
+
 @dataclass(frozen=True)
 class Settings:
     environment: str = os.getenv("APP_ENV", "development").lower()
@@ -66,38 +71,53 @@ class Settings:
             return "STARTTLS"
         return "PLAINTEXT"
 
+    def _require_hardening(self) -> bool:
+        """弱默认值（弱 JWT 密钥、SQLite、自动建表等）只允许显式的
+        development / test 环境。staging、production 以及任何未显式设置的
+        环境都必须执行下方全部安全强校验，杜绝"忘设 APP_ENV 就静默按
+        development 跑"的绕过路径。"""
+        return self.environment not in {"development", "test"}
+
     def validate(self) -> None:
+        # fail-closed：弱默认值仅限显式 development/test；其余环境（含 APP_ENV
+        # 未设置、或 staging/production）一律执行安全强校验。未显式设置 APP_ENV
+        # 时 environment 回落到默认 "development"，此时给出明确指引。
+        if not APP_ENV_EXPLICIT:
+            raise RuntimeError(
+                "未显式设置 APP_ENV。请显式设置 APP_ENV=development（本地开发）、"
+                "APP_ENV=test（测试）或 APP_ENV=production（生产），避免生产校验被静默跳过。"
+            )
         if self.attachment_policy.strip().lower() not in {"warn", "enforce"}:
             raise RuntimeError(
                 f"ATTACHMENT_POLICY 必须是 warn 或 enforce（当前值 {self.attachment_policy!r}）"
             )
-        if self.environment == "production" and self.attachment_policy.strip().lower() != "enforce":
+        if self._require_hardening() and self.attachment_policy.strip().lower() != "enforce":
             raise RuntimeError(
                 "生产环境必须设置 ATTACHMENT_POLICY=enforce：warn 仅允许历史数据迁移/过渡，"
                 "新业务记录的受控附件强制闭环不能被配置绕过"
             )
-        if self.environment == "production" and self.auto_create_schema:
+        if self._require_hardening() and self.auto_create_schema:
             raise RuntimeError(
                 "生产环境必须设置 AUTO_CREATE_SCHEMA=false，并通过经过评审的 Alembic 迁移管理结构"
             )
-        if self.environment == "production" and (
+        if self._require_hardening() and (
             self.secret_key == "development-only-change-me" or len(self.secret_key) < 32
         ):
             raise RuntimeError("生产环境必须通过 SECRET_KEY 提供至少 32 字符的随机密钥")
-        if self.environment == "production" and self.database_url.startswith("sqlite"):
+        if self._require_hardening() and self.database_url.startswith("sqlite"):
             raise RuntimeError("生产环境必须通过 DATABASE_URL 配置 PostgreSQL，不能使用 SQLite")
-        if self.environment == "production" and self.secrets_provider in {
+        if self._require_hardening() and self.secrets_provider in {
             "",
             "development",
             "plaintext",
         }:
             raise RuntimeError("生产环境必须配置外部秘密管理来源 SECRETS_PROVIDER")
-        if self.environment == "production" and not self.secret_key_version_ref:
+        if self._require_hardening() and not self.secret_key_version_ref:
             raise RuntimeError("生产环境必须配置 SECRET_KEY_VERSION_REF 以追踪密钥版本")
-        if self.environment == "production" and not self.database_credential_version_ref:
+        if self._require_hardening() and not self.database_credential_version_ref:
             raise RuntimeError("生产环境必须配置 DATABASE_CREDENTIAL_VERSION_REF 以追踪数据库凭据版本")
         if (
-            self.environment == "production"
+            self._require_hardening()
             and self.ldap_admin_dn
             and not self.ldap_credential_version_ref
         ):
@@ -106,7 +126,7 @@ class Settings:
             raise RuntimeError("LDAP_USE_SSL 与 LDAP_START_TLS 不能同时启用")
         if self.ldap_allow_plaintext_auth and self.ldap_transport_mode() != "PLAINTEXT":
             raise RuntimeError("LDAP_ALLOW_PLAINTEXT_AUTH 只能用于普通 LDAP 389 模式")
-        if self.environment == "production" and self.ldap_admin_dn:
+        if self._require_hardening() and self.ldap_admin_dn:
             if (
                 self.ldap_transport_mode() == "PLAINTEXT"
                 and not self.ldap_allow_plaintext_auth

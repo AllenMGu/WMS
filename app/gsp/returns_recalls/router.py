@@ -71,7 +71,7 @@ def _rollback_and_raise(db: Session, error: Exception):
 
 
 @router.get("/business-calendar", response_model=list[BusinessCalendarDayResponse])
-async def list_business_calendar(
+def list_business_calendar(
     _: User = Depends(require_gsp_roles(*QUALITY_ROLES, "AUDITOR")),
     db: Session = Depends(get_db),
 ):
@@ -88,7 +88,7 @@ async def list_business_calendar(
         entity_id_param="calendar_date", meaning="APPROVAL",
     ))],
 )
-async def configure_business_calendar_day(
+def configure_business_calendar_day(
     calendar_date: str,
     payload: BusinessCalendarDaySet,
     request: Request,
@@ -108,7 +108,7 @@ async def configure_business_calendar_day(
 
 
 @router.post("/returns/sales", response_model=SalesReturnResponse, status_code=201)
-async def receive_sales_return(
+def receive_sales_return(
     payload: SalesReturnCreate,
     request: Request,
     current_user: User = Depends(
@@ -130,7 +130,7 @@ async def receive_sales_return(
 
 
 @router.get("/returns/sales", response_model=list[SalesReturnResponse])
-async def list_sales_returns(
+def list_sales_returns(
     status: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -152,7 +152,7 @@ async def list_sales_returns(
         entity_id_param="item_id", meaning="APPROVAL",
     ))],
 )
-async def inspect_sales_return(
+def inspect_sales_return(
     return_id: int,
     item_id: int,
     payload: SalesReturnInspection,
@@ -179,7 +179,7 @@ async def inspect_sales_return(
     "/returns/sales/{return_id}/cancel",
     response_model=SalesReturnResponse,
 )
-async def cancel_sales_return_request(
+def cancel_sales_return_request(
     return_id: int,
     payload: ChangeReason,
     request: Request,
@@ -203,7 +203,7 @@ async def cancel_sales_return_request(
 
 
 @router.post("/recalls/{recall_id}/progress", response_model=RecallResponse)
-async def report_recall_progress(
+def report_recall_progress(
     recall_id: int,
     payload: RecallProgressCreate,
     request: Request,
@@ -227,7 +227,7 @@ async def report_recall_progress(
 
 
 @router.post("/recalls", response_model=RecallResponse, status_code=201)
-async def create_product_recall(
+def create_product_recall(
     payload: RecallCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
@@ -247,7 +247,7 @@ async def create_product_recall(
 
 
 @router.get("/recalls", response_model=list[RecallResponse])
-async def list_product_recalls(
+def list_product_recalls(
     status: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -266,7 +266,7 @@ async def list_product_recalls(
         entity_id_param="recall_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def activate_product_recall(
+def activate_product_recall(
     recall_id: int,
     payload: ChangeReason,
     request: Request,
@@ -291,7 +291,7 @@ async def activate_product_recall(
     "/recalls/{recall_id}/targets/{target_id}/notify",
     response_model=RecallResponse,
 )
-async def update_recall_target(
+def update_recall_target(
     recall_id: int,
     target_id: int,
     payload: RecallTargetNotification,
@@ -324,7 +324,7 @@ async def update_recall_target(
         entity_id_param="recall_id", meaning="REVIEW",
     ))],
 )
-async def close_product_recall(
+def close_product_recall(
     recall_id: int,
     payload: RecallClose,
     request: Request,
@@ -354,7 +354,7 @@ async def close_product_recall(
         entity_id_param="recall_id", meaning="RESPONSIBILITY",
     ))],
 )
-async def report_recall_completion(
+def report_recall_completion(
     recall_id: int,
     payload: RecallCompletionReportCreate,
     request: Request,
@@ -376,7 +376,7 @@ async def report_recall_completion(
 
 
 @router.post("/recall-drills", response_model=RecallDrillResponse, status_code=201)
-async def create_product_recall_drill(
+def create_product_recall_drill(
     payload: RecallDrillCreate,
     request: Request,
     current_user: User = Depends(require_gsp_roles(*QUALITY_ROLES)),
@@ -396,7 +396,7 @@ async def create_product_recall_drill(
 
 
 @router.get("/recall-drills", response_model=list[RecallDrillResponse])
-async def list_product_recall_drills(
+def list_product_recall_drills(
     status: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -411,7 +411,7 @@ async def list_product_recall_drills(
 
 
 @router.post("/recall-drills/{drill_id}/activate", response_model=RecallDrillResponse)
-async def activate_product_recall_drill(
+def activate_product_recall_drill(
     drill_id: int,
     payload: ChangeReason,
     request: Request,
@@ -436,7 +436,7 @@ async def activate_product_recall_drill(
     "/recall-drills/{drill_id}/targets/{target_id}/verify",
     response_model=RecallDrillResponse,
 )
-async def verify_product_recall_drill_target(
+def verify_product_recall_drill_target(
     drill_id: int,
     target_id: int,
     payload: RecallDrillTargetVerification,
@@ -467,7 +467,7 @@ async def verify_product_recall_drill_target(
         entity_id_param="drill_id", meaning="REVIEW",
     ))],
 )
-async def complete_product_recall_drill(
+def complete_product_recall_drill(
     drill_id: int,
     payload: RecallDrillComplete,
     request: Request,
