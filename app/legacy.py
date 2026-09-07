@@ -931,6 +931,8 @@ def login_for_access_token(
     return {
         "access_token": access_token,
         "token_type": "bearer",
+        # 服务端权威过期时刻(与 JWT exp 一致)；前端应以此为会话失效依据，不得自行伪造更长时效。
+        "expiry": (datetime.utcnow() + access_token_expires).isoformat() + "Z",
         "user": {
             "id": user.id,
             "username": user.username,
