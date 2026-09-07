@@ -4,6 +4,9 @@ Legacy WMS routes are preserved while the GSP bounded context evolves behind
 its own router and database tables.
 """
 
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,6 +16,7 @@ from app.core.database import EXPECTED_SCHEMA_REVISION, Base, SessionLocal, engi
 from app.gsp import models as gsp_models  # noqa: F401 - registers tables
 from app.gsp.attachments import models as attachments_models  # noqa: F401
 from app.gsp.attachments.router import router as attachments_router
+from app.gsp.audit_auto_verify import auto_verify_interval_seconds, run_auto_verify_loop
 from app.gsp.electronic_signature import models as electronic_signature_models  # noqa: F401
 from app.gsp.electronic_signature.router import router as electronic_signature_router
 from app.gsp.environment import models as environment_models  # noqa: F401
@@ -57,6 +61,29 @@ app.include_router(environment_router, prefix="/api")
 app.include_router(electronic_signature_router, prefix="/api")
 app.include_router(integration_router, prefix="/api")
 app.include_router(legacy_archive_router, prefix="/api")
+
+
+@asynccontextmanager
+async def _gsp_lifespan(_app):
+    """Composition-root lifespan: starts the opt-in audit/signature-chain
+    background verifier (active only when AUDIT_AUTO_VERIFY_INTERVAL > 0)."""
+    verifier_task: asyncio.Task | None = None
+    if auto_verify_interval_seconds() > 0:
+        verifier_task = asyncio.create_task(run_auto_verify_loop())
+    try:
+        yield
+    finally:
+        if verifier_task is not None:
+            verifier_task.cancel()
+            try:
+                await verifier_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
+# Attach the lifespan to the already-constructed app (FastAPI exposes it on the router).
+app.router.lifespan_context = _gsp_lifespan
+
 
 if settings.auto_create_schema:
     # Existing deployments keep their current start-up behavior.  Controlled
