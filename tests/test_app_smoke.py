@@ -78,6 +78,7 @@ def test_capped_list_routes_expose_offset_pagination():
 def test_audit_and_outbox_accept_json_safe_regulated_snapshot():
     from app.core.database import SessionLocal
     from app.gsp.audit import record_audit_verification, verify_audit_chain, write_audit_event
+    from app.gsp.http_utils import _snapshot
     from app.gsp.models import (
         GspAuditEvent,
         GspAuditVerification,
@@ -85,7 +86,6 @@ def test_audit_and_outbox_accept_json_safe_regulated_snapshot():
         GspIntegrationMessage,
     )
     from app.gsp.outbox import enqueue_integration_message
-    from app.gsp.router import _snapshot
     from app.legacy import User, UserRole, get_password_hash
 
     db = SessionLocal()

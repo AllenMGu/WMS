@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.core.database import SessionLocal
+from app.gsp.catalog_router import accept_batch, create_batch, receive_batch_stock, release_quality_hold
 from app.gsp.errors import WorkflowError
 from app.gsp.models import (
     GspBatchStock,
@@ -37,7 +38,6 @@ from app.gsp.procurement_receiving.service import (
     submit_purchase_order,
 )
 from app.gsp.quality_disposition.models import GspNonconformingRecord
-from app.gsp.router import accept_batch, create_batch, receive_batch_stock, release_quality_hold
 from app.gsp.schemas import (
     BatchAcceptance,
     BatchCreate,

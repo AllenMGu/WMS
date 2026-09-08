@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.core.database import SessionLocal
+from app.gsp.catalog_router import receive_batch_stock
 from app.gsp.errors import WorkflowError
 from app.gsp.models import (
     GspBatchStock,
@@ -14,7 +15,6 @@ from app.gsp.models import (
     GspDrugBatch,
     GspIntegrationMessage,
 )
-from app.gsp.router import receive_batch_stock
 from app.gsp.schemas import BatchStockReceipt
 from app.gsp.stocktaking.models import GspStocktakeItem
 from app.gsp.stocktaking.schemas import StocktakeCount, StocktakePlanCreate, StocktakeReview
