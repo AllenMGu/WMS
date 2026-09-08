@@ -908,8 +908,9 @@ def update_user(
         if not user_update.access_change_reason:
             raise HTTPException(status_code=400, detail="停用用户必须填写原因")
         # 停用属于受控操作：必须提供电子签名令牌并并入签名哈希链。
-        # 前端须先 create_signature_challenge(USER_ACCESS_REVOKED, User,
-        # RESPONSIBILITY, payload={}) 再用返回的令牌调用本端点。
+        # 前端须先 create_signature_challenge(USER_ACCESS_REVOKED, User, RESPONSIBILITY,
+        # payload={"is_active": false, "access_change_reason": <停用原因>}) 再用返回的令牌调用本端点，
+        # 使签名哈希覆盖真实停用语义（原因不可在签署后被篡改）。
         # 注：职责分离(SoD)要求操作人持有相应 GSP 岗位，暂以 ADMIN + 电子签名为最低保障。
         if not isinstance(signature_token, str) or not signature_token:
             raise HTTPException(status_code=401, detail="停用用户必须提供电子签名令牌")
@@ -923,7 +924,10 @@ def update_user(
             entity_type="User",
             entity_id=str(user_id),
             meaning="RESPONSIBILITY",
-            payload={},
+            payload={
+                "is_active": False,
+                "access_change_reason": user_update.access_change_reason,
+            },
             source_ip=request.client.host if request.client else None,
         )
         from app.gsp.access_control import deactivate_user_access
@@ -960,7 +964,8 @@ def assign_warehouse_to_user(
     reason = normalize_legacy_audit_reason(reason)
 
     # 受控操作：仓库分配须电子签名并入签名哈希链（前端先 create_signature_challenge
-    # (USER_WAREHOUSE_ASSIGN, User, RESPONSIBILITY, payload={}) 再携带令牌调用）。
+    # (USER_WAREHOUSE_ASSIGN, User, RESPONSIBILITY, payload 覆盖 user_id/warehouse_id/reason/is_default)
+    # 再携带令牌调用，签名哈希绑定真实分配语义，防签署后篡改）。
     if not isinstance(signature_token, str) or not signature_token:
         raise HTTPException(status_code=401, detail="分配仓库必须提供电子签名令牌")
     from app.gsp.electronic_signature.service import consume_signature_challenge
@@ -973,7 +978,12 @@ def assign_warehouse_to_user(
         entity_type="User",
         entity_id=f"{user_id}:{warehouse_id}",
         meaning="RESPONSIBILITY",
-        payload={},
+        payload={
+            "user_id": user_id,
+            "warehouse_id": warehouse_id,
+            "reason": reason,
+            "is_default": is_default,
+        },
         source_ip=request.client.host if request.client else None,
     )
 
@@ -1057,7 +1067,7 @@ def delete_user(
         raise HTTPException(status_code=404, detail="用户不存在")
 
     # 受控操作：必须提供电子签名令牌并并入签名哈希链（前端先 create_signature_challenge
-    # (USER_ACCESS_REVOKED, User, RESPONSIBILITY, payload={}) 再携带令牌调用）。
+    # (USER_ACCESS_REVOKED, User, RESPONSIBILITY, payload 覆盖 user_id/reason) 再携带令牌调用）。
     if not isinstance(signature_token, str) or not signature_token:
         raise HTTPException(status_code=401, detail="删除/停用用户必须提供电子签名令牌")
     from app.gsp.electronic_signature.service import consume_signature_challenge
@@ -1070,7 +1080,10 @@ def delete_user(
         entity_type="User",
         entity_id=str(user_id),
         meaning="RESPONSIBILITY",
-        payload={},
+        payload={
+            "user_id": user_id,
+            "reason": reason,
+        },
         source_ip=request.client.host if request.client else None,
     )
 
@@ -1103,7 +1116,8 @@ def unassign_warehouse_from_user(
     reason = normalize_legacy_audit_reason(reason)
 
     # 受控操作：取消仓库分配须独立复核签名(REVIEW)并入签名哈希链（前端先
-    # create_signature_challenge(USER_WAREHOUSE_UNASSIGN, User, REVIEW, payload={}) 再调用）。
+    # create_signature_challenge(USER_WAREHOUSE_UNASSIGN, User, REVIEW,
+    # payload 覆盖 user_id/warehouse_id/reason) 再调用）。
     if not isinstance(signature_token, str) or not signature_token:
         raise HTTPException(status_code=401, detail="取消仓库分配必须提供电子签名令牌")
     from app.gsp.electronic_signature.service import consume_signature_challenge
@@ -1116,7 +1130,11 @@ def unassign_warehouse_from_user(
         entity_type="User",
         entity_id=f"{user_id}:{warehouse_id}",
         meaning="REVIEW",
-        payload={},
+        payload={
+            "user_id": user_id,
+            "warehouse_id": warehouse_id,
+            "reason": reason,
+        },
         source_ip=request.client.host if request.client else None,
     )
 
