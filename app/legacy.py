@@ -1,5 +1,4 @@
-﻿import enum
-import io
+﻿import io
 import logging
 import secrets
 import ssl
@@ -28,27 +27,63 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from ldap3.utils.conv import escape_filter_chars
 from passlib.context import CryptContext
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
-    Boolean,
-    CheckConstraint,
-    Column,
-    DateTime,
-    Enum,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-    UniqueConstraint,
     text,
 )
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, relationship
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import Base, get_db
+from app.core.database import get_db
 from app.core.time import utc_now
 from app.gsp.snapshots import model_snapshot
+from app.legacy_models import (
+    CheckOrderHeader,
+    CheckOrderItem,
+    CheckRecord,
+    Goods,
+    InboundOrderHeader,
+    InboundOrderItem,
+    InventoryRecord,
+    InventoryType,
+    Location,
+    LoginSecurityState,
+    OutboundOrderHeader,
+    OutboundOrderItem,
+    Stock,
+    User,
+    UserRole,
+    UserWarehouse,
+    Warehouse,
+)
+from app.legacy_schemas import (
+    CheckCreate,
+    GoodsCreate,
+    GoodsResponse,
+    GoodsUpdate,
+    InboundOrderDetailResponse,
+    InboundOrderHeaderCreate,
+    InboundOrderHeaderResponse,
+    InboundOrderItemCreate,
+    InboundOrderItemResponse,
+    InventoryCreate,
+    LocationCreate,
+    LocationResponse,
+    LocationUpdate,
+    OutboundOrderDetailResponse,
+    OutboundOrderHeaderCreate,
+    OutboundOrderHeaderResponse,
+    OutboundOrderItemCreate,
+    OutboundOrderItemResponse,
+    StockResponse,
+    UserCreate,
+    UserResponse,
+    UserUpdate,
+    WarehouseCreate,
+    WarehouseResponse,
+    WarehouseUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,272 +109,6 @@ router = APIRouter()
 # 密码加密上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
-
-# ------------------- 枚举定义 -------------------
-class UserRole(str, enum.Enum):
-    ADMIN = "admin"       # 仓库管理员，可管理所有数据
-    OPERATOR = "operator" # 操作员，仅可做出入库和盘点
-
-class InventoryType(str, enum.Enum):
-    IN = "入库"
-    OUT = "出库"
-
-# ------------------- 数据库模型 -------------------
-# 0. 配置表
-class Config(Base):
-    __tablename__ = "config"
-    id = Column(Integer, primary_key=True, index=True)
-    key = Column(String(100), unique=True, index=True, comment="配置项名称")
-    value = Column(String(500), comment="配置项值")
-    description = Column(String(500), comment="配置项描述")
-    create_time = Column(DateTime, default=datetime.now)
-    update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-
-# 1. 仓库表
-class Warehouse(Base):
-    __tablename__ = "warehouses"
-    id = Column(Integer, primary_key=True, index=True)
-    code = Column(String(50), unique=True, index=True, comment="仓库编码")
-    name = Column(String(100), comment="仓库名称")
-    address = Column(String(200), comment="仓库地址")
-    is_active = Column(Boolean, default=True, comment="是否启用")
-    create_time = Column(DateTime, default=datetime.now)
-
-# 添加用户-仓库关联表（多对多）
-class UserWarehouse(Base):
-    __tablename__ = "user_warehouses"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), comment="用户ID")
-    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), comment="仓库ID")
-    is_default = Column(Boolean, default=False, comment="是否默认仓库")
-    create_time = Column(DateTime, default=datetime.now)
-
-# 2. 用户表
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, index=True, comment="用户名")
-    hashed_password = Column(String(100), comment="加密密码")
-    full_name = Column(String(100), comment="真实姓名")
-    role = Column(Enum(UserRole), default=UserRole.OPERATOR, comment="角色")
-    is_active = Column(Boolean, default=True, comment="是否启用")
-    is_ldap_user = Column(Boolean, default=False, comment="是否是LDAP用户")
-    token_version = Column(Integer, default=1, nullable=False, comment="JWT吊销版本号；停用/撤销访问时自增以即时吊销存量令牌")
-    create_time = Column(DateTime, default=datetime.now)
-    current_warehouse_id = Column(Integer, nullable=True, comment="当前选择的仓库ID")
-
-    # 多对多关联
-    warehouses = relationship("Warehouse", secondary="user_warehouses",
-                            backref="users", lazy="dynamic")
-
-
-class LoginSecurityState(Base):
-    """Durable login throttling shared by all API processes."""
-
-    __tablename__ = "login_security_states"
-    id = Column(Integer, primary_key=True)
-    scope_type = Column(String(20), nullable=False)
-    scope_key = Column(String(200), nullable=False)
-    failed_count = Column(Integer, nullable=False, default=0)
-    window_started_at = Column(DateTime, nullable=True)
-    last_failed_at = Column(DateTime, nullable=True)
-    locked_until = Column(DateTime, nullable=True)
-    __table_args__ = (
-        UniqueConstraint("scope_type", "scope_key", name="uq_login_security_scope"),
-    )
-
-# 3. 库位表（关联仓库）
-class Location(Base):
-    __tablename__ = "locations"
-    id = Column(Integer, primary_key=True, index=True)
-    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), comment="所属仓库ID")
-    location_code = Column(String(50), unique=True, index=True, comment="库位编码")
-    name = Column(String(100), comment="库位名称")
-    is_active = Column(Boolean, default=True, comment="是否启用")
-    create_time = Column(DateTime, default=datetime.now)
-
-    # 关联关系
-    warehouse = relationship("Warehouse")
-
-# 4. 货物表（全局货物，多仓库共享）
-class Goods(Base):
-    __tablename__ = "goods"
-    id = Column(Integer, primary_key=True, index=True)
-    barcode = Column(String(100), unique=True, index=True, comment="货物条码")
-    name = Column(String(100), comment="货物名称")
-    spec = Column(String(100), comment="规格型号")
-    unit = Column(String(20), comment="单位")
-    price = Column(Float, comment="单价")
-    create_time = Column(DateTime, default=datetime.now)
-
-# 5. 库存表（关联仓库+库位+货物）
-class Stock(Base):
-    __tablename__ = "stock"
-    id = Column(Integer, primary_key=True, index=True)
-    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), comment="仓库ID")
-    goods_id = Column(Integer, ForeignKey("goods.id"), comment="货物ID")
-    location_id = Column(Integer, ForeignKey("locations.id"), comment="库位ID")
-    quantity = Column(Float, default=0, comment="库存数量")
-    update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-
-    # 复合唯一索引，防止相同仓库、货物、库位的重复记录
-    __table_args__ = (
-        UniqueConstraint('warehouse_id', 'goods_id', 'location_id', name='_warehouse_goods_location_uc'),
-        CheckConstraint("quantity >= 0", name="ck_stock_quantity_non_negative"),
-    )
-
-    # 关联关系
-    warehouse = relationship("Warehouse")
-    goods = relationship("Goods")
-    location = relationship("Location")
-
-# 6. 出入库记录表
-class InventoryRecord(Base):
-    __tablename__ = "inventory_records"
-    id = Column(Integer, primary_key=True, index=True)
-    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), comment="仓库ID")
-    goods_id = Column(Integer, ForeignKey("goods.id"), comment="货物ID")
-    location_id = Column(Integer, ForeignKey("locations.id"), comment="库位ID")
-    type = Column(Enum(InventoryType), comment="类型：入库/出库")
-    quantity = Column(Float, comment="数量")
-    operator_id = Column(Integer, ForeignKey("users.id"), comment="操作员ID")
-    remark = Column(String(500), comment="备注")
-    create_time = Column(DateTime, default=datetime.now)
-
-    # 关联关系
-    warehouse = relationship("Warehouse")
-    goods = relationship("Goods")
-    location = relationship("Location")
-    operator = relationship("User")
-
-# 7. 盘点单表头
-class CheckOrderHeader(Base):
-    __tablename__ = "check_order_header"
-    id = Column(Integer, primary_key=True, index=True)
-    order_no = Column(String(50), unique=True, index=True, comment="盘点单号")
-    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), comment="仓库ID")
-    operator_id = Column(Integer, ForeignKey("users.id"), comment="操作员ID")
-    remark = Column(String(500), comment="备注")
-    status = Column(String(20), default="DRAFT", comment="状态: DRAFT-草稿, IN_PROGRESS-盘点中, COMPLETED-已完成")
-    create_time = Column(DateTime, default=datetime.now)
-    start_time = Column(DateTime, comment="开始时间")
-    complete_time = Column(DateTime, comment="完成时间")
-
-    # 关联关系
-    warehouse = relationship("Warehouse")
-    operator = relationship("User")
-    items = relationship("CheckOrderItem", back_populates="header", cascade="all, delete-orphan")
-
-# 8. 盘点单明细
-class CheckOrderItem(Base):
-    __tablename__ = "check_order_item"
-    id = Column(Integer, primary_key=True, index=True)
-    header_id = Column(Integer, ForeignKey("check_order_header.id"), comment="单据头ID")
-    goods_id = Column(Integer, ForeignKey("goods.id"), comment="货物ID")
-    location_id = Column(Integer, ForeignKey("locations.id"), comment="库位ID")
-    check_quantity = Column(Float, comment="盘点数量")
-    actual_quantity = Column(Float, comment="系统库存数量")
-    diff_quantity = Column(Float, comment="差异数量")
-    create_time = Column(DateTime, default=datetime.now)
-
-    # 关联关系
-    header = relationship("CheckOrderHeader", back_populates="items")
-    goods = relationship("Goods")
-    location = relationship("Location")
-
-# 9. 盘点记录表（保留历史记录）
-class CheckRecord(Base):
-    __tablename__ = "check_records"
-    id = Column(Integer, primary_key=True, index=True)
-    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), comment="仓库ID")
-    goods_id = Column(Integer, ForeignKey("goods.id"), comment="货物ID")
-    location_id = Column(Integer, ForeignKey("locations.id"), comment="库位ID")
-    check_quantity = Column(Float, comment="盘点数量")
-    actual_quantity = Column(Float, comment="实际库存数量")
-    operator_id = Column(Integer, ForeignKey("users.id"), comment="操作员ID")
-    check_time = Column(DateTime, default=datetime.now)
-
-    # 关联关系
-    warehouse = relationship("Warehouse")
-    goods = relationship("Goods")
-    location = relationship("Location")
-    operator = relationship("User")
-
-# 8. 入库单表头
-class InboundOrderHeader(Base):
-    __tablename__ = "inbound_order_header"
-    id = Column(Integer, primary_key=True, index=True)
-    order_no = Column(String(50), unique=True, index=True, comment="入库单号")
-    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), comment="仓库ID")
-    supplier = Column(String(200), comment="供应商")
-    operator_id = Column(Integer, ForeignKey("users.id"), comment="操作员ID")
-    total_amount = Column(Float, default=0, comment="总金额")
-    remark = Column(String(500), comment="备注")
-    status = Column(String(20), default="DRAFT", comment="状态")
-    create_time = Column(DateTime, default=datetime.now)
-    submit_time = Column(DateTime, comment="提交时间")
-    complete_time = Column(DateTime, comment="完成时间")
-
-    # 关联关系
-    warehouse = relationship("Warehouse")
-    operator = relationship("User")
-    items = relationship("InboundOrderItem", back_populates="header", cascade="all, delete-orphan")
-
-# 9. 入库单明细
-class InboundOrderItem(Base):
-    __tablename__ = "inbound_order_item"
-    id = Column(Integer, primary_key=True, index=True)
-    header_id = Column(Integer, ForeignKey("inbound_order_header.id"), comment="单据头ID")
-    goods_id = Column(Integer, ForeignKey("goods.id"), comment="货物ID")
-    location_id = Column(Integer, ForeignKey("locations.id"), comment="库位ID")
-    quantity = Column(Float, comment="数量")
-    unit_price = Column(Float, comment="单价")
-    total_price = Column(Float, comment="总价")
-    remark = Column(String(500), comment="备注")
-    create_time = Column(DateTime, default=datetime.now)
-
-    # 关联关系
-    header = relationship("InboundOrderHeader", back_populates="items")
-    goods = relationship("Goods")
-    location = relationship("Location")
-
-# 10. 出库单表头
-class OutboundOrderHeader(Base):
-    __tablename__ = "outbound_order_header"
-    id = Column(Integer, primary_key=True, index=True)
-    order_no = Column(String(50), unique=True, index=True, comment="出库单号")
-    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), comment="仓库ID")
-    customer = Column(String(200), comment="客户")
-    operator_id = Column(Integer, ForeignKey("users.id"), comment="操作员ID")
-    total_amount = Column(Float, default=0, comment="总金额")
-    remark = Column(String(500), comment="备注")
-    status = Column(String(20), default="DRAFT", comment="状态")
-    create_time = Column(DateTime, default=datetime.now)
-    submit_time = Column(DateTime, comment="提交时间")
-    complete_time = Column(DateTime, comment="完成时间")
-
-    # 关联关系
-    warehouse = relationship("Warehouse")
-    operator = relationship("User")
-    items = relationship("OutboundOrderItem", back_populates="header", cascade="all, delete-orphan")
-
-# 11. 出库单明细
-class OutboundOrderItem(Base):
-    __tablename__ = "outbound_order_item"
-    id = Column(Integer, primary_key=True, index=True)
-    header_id = Column(Integer, ForeignKey("outbound_order_header.id"), comment="单据头ID")
-    goods_id = Column(Integer, ForeignKey("goods.id"), comment="货物ID")
-    location_id = Column(Integer, ForeignKey("locations.id"), comment="库位ID")
-    quantity = Column(Float, comment="数量")
-    unit_price = Column(Float, comment="单价")
-    total_price = Column(Float, comment="总价")
-    remark = Column(String(500), comment="备注")
-    create_time = Column(DateTime, default=datetime.now)
-
-    # 关联关系
-    header = relationship("OutboundOrderHeader", back_populates="items")
-    goods = relationship("Goods")
-    location = relationship("Location")
 
 # ------------------- FastAPI应用初始化 -------------------
 # 非 development 环境（staging/production/...）默认关闭交互式文档与 OpenAPI
@@ -602,214 +371,6 @@ def generate_order_no(prefix: str, db: Session) -> str:
             OutboundOrderHeader.order_no.like(f"{prefix}{today}%")
         ).count()
     return f"{prefix}{today}{str(count + 1).zfill(3)}"
-
-# ------------------- Pydantic模型 -------------------
-class UserCreate(BaseModel):
-    username: str
-    password: str
-    full_name: str
-    warehouse_ids: List[int] = Field(default_factory=list)  # 改为列表
-    role: UserRole = UserRole.OPERATOR
-
-class UserResponse(BaseModel):
-    id: int
-    username: str
-    full_name: str
-    current_warehouse_id: Optional[int] = None
-    role: UserRole
-    is_ldap_user: bool
-    is_active: bool
-
-    model_config = ConfigDict(from_attributes=True)
-
-class UserUpdate(BaseModel):
-    full_name: Optional[str] = None
-    role: Optional[UserRole] = None
-    password: Optional[str] = None
-    is_active: Optional[bool] = None
-    access_change_reason: Optional[str] = Field(None, min_length=3, max_length=500)
-
-class WarehouseCreate(BaseModel):
-    code: str
-    name: str
-    address: Optional[str] = ""
-
-class WarehouseResponse(BaseModel):
-    id: int
-    code: str
-    name: str
-    address: str
-    is_active: Optional[bool] = True
-
-    model_config = ConfigDict(from_attributes=True)
-
-class WarehouseUpdate(BaseModel):
-    code: Optional[str] = None
-    name: Optional[str] = None
-    address: Optional[str] = None
-    is_active: Optional[bool] = None
-
-class LocationCreate(BaseModel):
-    warehouse_id: int
-    location_code: str
-    name: str
-
-class LocationResponse(BaseModel):
-    id: int
-    warehouse_id: int
-    location_code: str
-    name: str
-    is_active: bool
-    create_time: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-class LocationUpdate(BaseModel):
-    warehouse_id: Optional[int] = None
-    location_code: Optional[str] = None
-    name: Optional[str] = None
-    is_active: Optional[bool] = None
-
-class GoodsCreate(BaseModel):
-    barcode: str
-    name: str
-    spec: Optional[str] = ""
-    unit: Optional[str] = "个"
-    price: Optional[float] = 0.0
-
-class GoodsResponse(BaseModel):
-    id: int
-    barcode: str
-    name: str
-    spec: str
-    unit: str
-    price: float
-    create_time: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-class GoodsUpdate(BaseModel):
-    barcode: Optional[str] = None
-    name: Optional[str] = None
-    spec: Optional[str] = None
-    unit: Optional[str] = None
-    price: Optional[float] = None
-
-class InventoryCreate(BaseModel):
-    goods_barcode: str  # 扫码传入条码
-    location_code: str  # 扫码传入库位编码
-    type: InventoryType
-    quantity: float
-    remark: Optional[str] = ""
-
-class CheckCreate(BaseModel):
-    goods_barcode: str
-    location_code: str
-    check_quantity: float
-
-class StockResponse(BaseModel):
-    id: int
-    warehouse_name: str
-    goods_name: str
-    goods_barcode: str
-    location_code: str
-    location_name: str
-    quantity: float
-    update_time: datetime
-
-# 入库单相关模型
-class InboundOrderItemCreate(BaseModel):
-    goods_barcode: str  # 货物条码
-    location_code: str  # 库位编码
-    quantity: float
-    unit_price: Optional[float] = None
-    remark: Optional[str] = ""
-
-class InboundOrderItemResponse(BaseModel):
-    id: int
-    goods_id: int
-    goods_barcode: str
-    goods_name: str
-    location_id: int
-    location_code: str
-    quantity: float
-    unit_price: float
-    total_price: float
-    remark: str
-
-    model_config = ConfigDict(from_attributes=True)
-
-class InboundOrderHeaderCreate(BaseModel):
-    supplier: Optional[str] = ""
-    remark: Optional[str] = ""
-
-class InboundOrderHeaderResponse(BaseModel):
-    id: int
-    order_no: str
-    warehouse_id: int
-    warehouse_name: str
-    supplier: str
-    operator_id: int
-    operator_name: str
-    total_amount: float
-    remark: str
-    status: str
-    create_time: datetime
-    submit_time: Optional[datetime] = None
-    complete_time: Optional[datetime] = None
-    item_count: int = 0
-
-    model_config = ConfigDict(from_attributes=True)
-
-class InboundOrderDetailResponse(InboundOrderHeaderResponse):
-    items: List[InboundOrderItemResponse] = []
-
-# 出库单相关模型
-class OutboundOrderItemCreate(BaseModel):
-    goods_barcode: str
-    location_code: str
-    quantity: float
-    unit_price: Optional[float] = None
-    remark: Optional[str] = ""
-
-class OutboundOrderItemResponse(BaseModel):
-    id: int
-    goods_id: int
-    goods_barcode: str
-    goods_name: str
-    location_id: int
-    location_code: str
-    quantity: float
-    unit_price: float
-    total_price: float
-    remark: str
-
-    model_config = ConfigDict(from_attributes=True)
-
-class OutboundOrderHeaderCreate(BaseModel):
-    customer: Optional[str] = ""
-    remark: Optional[str] = ""
-
-class OutboundOrderHeaderResponse(BaseModel):
-    id: int
-    order_no: str
-    warehouse_id: int
-    warehouse_name: str
-    customer: str
-    operator_id: int
-    operator_name: str
-    total_amount: float
-    remark: str
-    status: str
-    create_time: datetime
-    submit_time: Optional[datetime] = None
-    complete_time: Optional[datetime] = None
-    item_count: int = 0
-
-    model_config = ConfigDict(from_attributes=True)
-
-class OutboundOrderDetailResponse(OutboundOrderHeaderResponse):
-    items: List[OutboundOrderItemResponse] = []
 
 # ------------------- 认证接口 -------------------
 def _login_scopes(username: str, source_ip: str) -> tuple[tuple[str, str], ...]:
