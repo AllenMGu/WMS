@@ -900,11 +900,18 @@ def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    if user_update.full_name is not None:
-        user.full_name = user_update.full_name
-    if user_update.role is not None:
-        user.role = user_update.role
     if user_update.is_active is False:
+        # 停用语义 = 仅撤销访问。full_name/role/password 等修改未纳入停用的电子签名
+        # payload，若夹带会在签名未授权的情况下生效——一律拒绝，要求分开操作。
+        if (
+            user_update.full_name is not None
+            or user_update.role is not None
+            or user_update.password
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="停用用户不允许同时修改姓名/角色/密码（这些变更未纳入电子签名），请分开操作",
+            )
         if not user_update.access_change_reason:
             raise HTTPException(status_code=400, detail="停用用户必须填写原因")
         # 停用属于受控操作：必须提供电子签名令牌并并入签名哈希链。
@@ -941,7 +948,14 @@ def update_user(
         )
     elif user_update.is_active is True:
         raise HTTPException(status_code=400, detail="停用账号须通过重新审批后启用，不允许直接恢复")
+    else:
+        # is_active 未指定：普通资料维护（改名/改角色），不属于受控签名操作。
+        if user_update.full_name is not None:
+            user.full_name = user_update.full_name
+        if user_update.role is not None:
+            user.role = user_update.role
     if user_update.password:
+        # 密码维护；若与停用同请求已在停用分支被拒绝，此处仅普通改密。
         user.hashed_password = get_password_hash(user_update.password)
 
     db.commit()
