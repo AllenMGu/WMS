@@ -246,6 +246,9 @@ def deactivate_user_access(
     }
     now = utc_now()
     user.is_active = False
+    # 即时吊销该用户所有存量 JWT：token_version 自增后，未过期的旧令牌在
+    # get_current_user 中因 tv 不匹配而失效，无需等待 30 分钟过期。
+    user.token_version = (user.token_version or 0) + 1
     user.current_warehouse_id = None
     for assignment in roles:
         if assignment.is_active:

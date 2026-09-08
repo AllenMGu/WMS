@@ -94,6 +94,11 @@ SIGNATURE_POLICIES: dict[str, tuple[str, str]] = {
     "PURCHASE_ORDER_REJECT": ("GspPurchaseOrder", "REJECTION"),
     "PURCHASE_RETURN_REJECT": ("GspPurchaseReturn", "REJECTION"),
     "NONCONFORMING_REJECT": ("GspNonconformingRecord", "REJECTION"),
+    # legacy 管理员用户生命周期操作：停用/删除需职责(RESPONSIBILITY)签名，
+    # 仓库分配需职责签名，取消分配需独立复核(REVIEW)。全部并入电子签名哈希链。
+    "USER_ACCESS_REVOKED": ("User", "RESPONSIBILITY"),
+    "USER_WAREHOUSE_ASSIGN": ("User", "RESPONSIBILITY"),
+    "USER_WAREHOUSE_UNASSIGN": ("User", "REVIEW"),
 }
 
 

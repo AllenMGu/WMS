@@ -136,6 +136,19 @@ class Settings:
                 )
             if self.ldap_transport_mode() != "PLAINTEXT" and not self.ldap_tls_validate:
                 raise RuntimeError("生产环境 LDAP 必须校验证书")
+        if self._require_hardening():
+            # 审计/签名哈希链在生产环境必须启用后台自动校验，否则篡改只能在
+            # 人工调用校验接口时才被发现。下限 300 秒（5 分钟）。
+            _raw_interval = os.getenv("AUDIT_AUTO_VERIFY_INTERVAL", "0") or "0"
+            try:
+                _interval = int(_raw_interval)
+            except (TypeError, ValueError):
+                _interval = 0
+            if _interval < 300:
+                raise RuntimeError(
+                    "生产环境必须设置 AUDIT_AUTO_VERIFY_INTERVAL（秒）且不低于 300："
+                    "审计/签名哈希链需启用后台自动校验，避免篡改长期不被发现"
+                )
         if self.login_failure_limit < 3:
             raise RuntimeError("LOGIN_FAILURE_LIMIT 不能小于 3")
         if self.login_failure_window_minutes < 1 or self.login_lock_minutes < 1:

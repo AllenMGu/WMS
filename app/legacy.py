@@ -9,7 +9,19 @@ from urllib.parse import urlparse
 
 import ldap3
 import pandas as pd
-from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer
@@ -37,6 +49,8 @@ from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.time import utc_now
 from app.gsp.snapshots import model_snapshot
+
+logger = logging.getLogger(__name__)
 
 # ------------------- 配置项 -------------------
 SECRET_KEY = settings.secret_key
@@ -110,6 +124,7 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.OPERATOR, comment="角色")
     is_active = Column(Boolean, default=True, comment="是否启用")
     is_ldap_user = Column(Boolean, default=False, comment="是否是LDAP用户")
+    token_version = Column(Integer, default=1, nullable=False, comment="JWT吊销版本号；停用/撤销访问时自增以即时吊销存量令牌")
     create_time = Column(DateTime, default=datetime.now)
     current_warehouse_id = Column(Integer, nullable=True, comment="当前选择的仓库ID")
 
@@ -445,6 +460,9 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
     user = db.query(User).filter(User.username == username).first()
     if user is None or not user.is_active:
+        raise credentials_exception
+    # 即时吊销：JWT 签发时的 token_version 与当前用户不一致（如被停用自增）即失效。
+    if payload.get("tv") != user.token_version:
         raise credentials_exception
     return user
 
@@ -924,7 +942,7 @@ def login_for_access_token(
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username, "user_id": user.id, "role": user.role.value},
+        data={"sub": user.username, "user_id": user.id, "role": user.role.value, "tv": user.token_version},
         expires_delta=access_token_expires
     )
 
@@ -1274,6 +1292,8 @@ def import_ldap_users(
 # 获取所有用户
 @router.get("/users/", summary="获取所有用户")
 def get_all_users(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1281,7 +1301,13 @@ def get_all_users(
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="无权限查看用户列表")
 
-    users = db.query(User).all()
+    users = (
+        db.query(User)
+        .order_by(User.id)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
     # 返回简化用户信息
     result = []
@@ -1302,6 +1328,7 @@ def update_user(
     user_id: int,
     user_update: UserUpdate,
     request: Request,
+    signature_token: str | None = Header(None, alias="X-GSP-Signature-Token"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1319,6 +1346,25 @@ def update_user(
     if user_update.is_active is False:
         if not user_update.access_change_reason:
             raise HTTPException(status_code=400, detail="停用用户必须填写原因")
+        # 停用属于受控操作：必须提供电子签名令牌并并入签名哈希链。
+        # 前端须先 create_signature_challenge(USER_ACCESS_REVOKED, User,
+        # RESPONSIBILITY, payload={}) 再用返回的令牌调用本端点。
+        # 注：职责分离(SoD)要求操作人持有相应 GSP 岗位，暂以 ADMIN + 电子签名为最低保障。
+        if not signature_token:
+            raise HTTPException(status_code=401, detail="停用用户必须提供电子签名令牌")
+        from app.gsp.electronic_signature.service import consume_signature_challenge
+
+        consume_signature_challenge(
+            db,
+            token=signature_token,
+            actor_id=current_user.id,
+            action="USER_ACCESS_REVOKED",
+            entity_type="User",
+            entity_id=str(user_id),
+            meaning="RESPONSIBILITY",
+            payload={},
+            source_ip=request.client.host if request.client else None,
+        )
         from app.gsp.access_control import deactivate_user_access
 
         deactivate_user_access(
@@ -1344,12 +1390,31 @@ def assign_warehouse_to_user(
     request: Request,
     reason: str = Query(..., min_length=3, max_length=500),
     is_default: bool = False,
+    signature_token: str | None = Header(None, alias="X-GSP-Signature-Token"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     reason = normalize_legacy_audit_reason(reason)
+
+    # 受控操作：仓库分配须电子签名并入签名哈希链（前端先 create_signature_challenge
+    # (USER_WAREHOUSE_ASSIGN, User, RESPONSIBILITY, payload={}) 再携带令牌调用）。
+    if not signature_token:
+        raise HTTPException(status_code=401, detail="分配仓库必须提供电子签名令牌")
+    from app.gsp.electronic_signature.service import consume_signature_challenge
+
+    consume_signature_challenge(
+        db,
+        token=signature_token,
+        actor_id=current_user.id,
+        action="USER_WAREHOUSE_ASSIGN",
+        entity_type="User",
+        entity_id=f"{user_id}:{warehouse_id}",
+        meaning="RESPONSIBILITY",
+        payload={},
+        source_ip=request.client.host if request.client else None,
+    )
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -1418,6 +1483,7 @@ def delete_user(
     user_id: int,
     request: Request,
     reason: str = Query(..., min_length=3, max_length=500),
+    signature_token: str | None = Header(None, alias="X-GSP-Signature-Token"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1428,6 +1494,24 @@ def delete_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 受控操作：必须提供电子签名令牌并并入签名哈希链（前端先 create_signature_challenge
+    # (USER_ACCESS_REVOKED, User, RESPONSIBILITY, payload={}) 再携带令牌调用）。
+    if not signature_token:
+        raise HTTPException(status_code=401, detail="删除/停用用户必须提供电子签名令牌")
+    from app.gsp.electronic_signature.service import consume_signature_challenge
+
+    consume_signature_challenge(
+        db,
+        token=signature_token,
+        actor_id=current_user.id,
+        action="USER_ACCESS_REVOKED",
+        entity_type="User",
+        entity_id=str(user_id),
+        meaning="RESPONSIBILITY",
+        payload={},
+        source_ip=request.client.host if request.client else None,
+    )
 
     # 受控系统保留历史操作人引用，同时撤销全部岗位和仓库访问。
     from app.gsp.access_control import deactivate_user_access
@@ -1449,12 +1533,31 @@ def unassign_warehouse_from_user(
     warehouse_id: int,
     request: Request,
     reason: str = Query(..., min_length=3, max_length=500),
+    signature_token: str | None = Header(None, alias="X-GSP-Signature-Token"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="仅管理员可操作")
     reason = normalize_legacy_audit_reason(reason)
+
+    # 受控操作：取消仓库分配须独立复核签名(REVIEW)并入签名哈希链（前端先
+    # create_signature_challenge(USER_WAREHOUSE_UNASSIGN, User, REVIEW, payload={}) 再调用）。
+    if not signature_token:
+        raise HTTPException(status_code=401, detail="取消仓库分配必须提供电子签名令牌")
+    from app.gsp.electronic_signature.service import consume_signature_challenge
+
+    consume_signature_challenge(
+        db,
+        token=signature_token,
+        actor_id=current_user.id,
+        action="USER_WAREHOUSE_UNASSIGN",
+        entity_type="User",
+        entity_id=f"{user_id}:{warehouse_id}",
+        meaning="REVIEW",
+        payload={},
+        source_ip=request.client.host if request.client else None,
+    )
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -1598,7 +1701,7 @@ def get_warehouses(current_user: User = Depends(get_current_user), db: Session =
         if current_user.role == UserRole.ADMIN:
             # 管理员可以看到所有仓库，包括禁用的
             warehouses = db.query(Warehouse).all()
-            print(f"管理员 {current_user.username} 查询到 {len(warehouses)} 个仓库")
+            logger.info("管理员 %s 查询到 %s 个仓库", current_user.username, len(warehouses))
             return warehouses
         else:
             # 非管理员只返回自己有权限的启用的仓库
@@ -1606,20 +1709,20 @@ def get_warehouses(current_user: User = Depends(get_current_user), db: Session =
                 uw.warehouse_id for uw in
                 db.query(UserWarehouse).filter(UserWarehouse.user_id == current_user.id).all()
             ]
-            print(f"用户 {current_user.username} 有权限的仓库ID: {user_warehouse_ids}")
+            logger.info("用户 %s 有权限的仓库ID: %s", current_user.username, user_warehouse_ids)
 
             if user_warehouse_ids:
                 warehouses = db.query(Warehouse).filter(
                     Warehouse.id.in_(user_warehouse_ids),
                     Warehouse.is_active is True
                 ).all()
-                print(f"用户 {current_user.username} 查询到 {len(warehouses)} 个启用的仓库")
+                logger.info("用户 %s 查询到 %s 个启用的仓库", current_user.username, len(warehouses))
                 return warehouses
             else:
-                print(f"用户 {current_user.username} 没有分配任何仓库")
+                logger.info("用户 %s 没有分配任何仓库", current_user.username)
                 return []
     except Exception as e:
-        print(f"获取仓库列表出错: {str(e)}")
+        logger.exception("获取仓库列表出错: %s", e)
         raise HTTPException(status_code=500, detail=f"获取仓库列表失败: {str(e)}")
 
 @router.get("/warehouses/{id}", response_model=WarehouseResponse, summary="获取仓库详情")
@@ -1768,7 +1871,7 @@ def get_locations(
         return result
     except Exception as e:
         # 记录错误日志
-        print(f"获取库位列表出错: {str(e)}")
+        logger.exception("获取库位列表出错: %s", e)
         raise HTTPException(
             status_code=500,
             detail=f"获取库位列表失败: {str(e)}"
@@ -1875,6 +1978,8 @@ def create_goods(
 @router.get("/goods/", response_model=List[GoodsResponse], summary="获取所有货物（支持搜索）")
 def get_goods(
     keyword: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1888,7 +1993,12 @@ def get_goods(
             Goods.spec.contains(keyword)
         )
 
-    return query.all()
+    return (
+        query.order_by(Goods.id)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 @router.get("/goods/export", summary="导出货物数据")
 def export_goods(

@@ -700,6 +700,8 @@ def create_partner(
 def list_partners(
     partner_type: str | None = None,
     status: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -708,7 +710,12 @@ def list_partners(
         query = query.filter(GspBusinessPartner.partner_type == partner_type)
     if status:
         query = query.filter(GspBusinessPartner.status == status)
-    return query.order_by(GspBusinessPartner.name).all()
+    return (
+        query.order_by(GspBusinessPartner.name)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.post(

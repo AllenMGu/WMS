@@ -40,6 +40,27 @@ from app.gsp.transport import models as transport_models  # noqa: F401 - registe
 from app.gsp.transport.router import router as transport_router
 from app.legacy import app
 
+
+@app.middleware("http")
+async def _security_headers_middleware(request, call_next):
+    """为所有响应附加安全响应头，纵深防御点击劫持与 MIME 嗅探。
+
+    注意：前端为独立静态站点（由 nginx 伺服），后端 API 响应头主要保护 API
+    自身与任何后端直出的页面。框架的 frame-ancestors 'self' 在 meta 标签中 Chrome
+    不生效，故必须在响应头中补充。X-Frame-Options 不影响 fetch / 跨域 API 调用。
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault(
+        "Content-Security-Policy", "frame-ancestors 'self'"
+    )
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault(
+        "Referrer-Policy", "strict-origin-when-cross-origin"
+    )
+    return response
+
+
 app.title = "药品GSP仓储与质量管理系统 API"
 app.version = "0.18.1"
 app.description = (
