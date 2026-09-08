@@ -6,6 +6,7 @@ already autobegun a transaction through earlier ACL queries.
 """
 
 import os
+from uuid import uuid4
 
 import pytest
 
@@ -26,7 +27,7 @@ def test_cover_all_on_postgres_session_after_prior_queries():
 
     db = SessionLocal()
     try:
-        user = User(username="pg-rpt-user", hashed_password="x", full_name="pg",
+        user = User(username=f"pg-rpt-user-{uuid4().hex[:8]}", hashed_password="x", full_name="pg",
                     role=UserRole.OPERATOR, is_active=True)
         db.add(user)
         db.flush()

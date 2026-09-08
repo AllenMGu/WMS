@@ -1,5 +1,6 @@
 import importlib
 from datetime import date
+from uuid import uuid4
 
 
 def test_application_exposes_legacy_and_gsp_routes():
@@ -92,7 +93,7 @@ def test_audit_and_outbox_accept_json_safe_regulated_snapshot():
         audit_count_before = db.query(GspAuditEvent).count()
         outbox_count_before = db.query(GspIntegrationMessage).count()
         user = User(
-            username="quality-test",
+            username=f"quality-test-{uuid4().hex[:8]}",
             hashed_password=get_password_hash("test-only-password"),
             full_name="质量测试员",
             role=UserRole.ADMIN,
@@ -100,7 +101,7 @@ def test_audit_and_outbox_accept_json_safe_regulated_snapshot():
         db.add(user)
         db.flush()
         partner = GspBusinessPartner(
-            code="SUP-TEST",
+            code=f"SUP-TEST-{uuid4().hex[:8]}",
             name="测试供货方",
             partner_type="SUPPLIER",
             license_no="LICENSE-1",

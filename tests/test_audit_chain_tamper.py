@@ -151,7 +151,7 @@ def test_verify_audit_chain_script_exits_nonzero_on_tampered_db():
         Base.metadata.create_all(bind=engine)
         with Session(engine) as db:
             actor = User(
-                username="script-actor", hashed_password="x", full_name="actor", is_active=True
+                username=f"script-actor-{uuid4().hex[:8]}", hashed_password="x", full_name="actor", is_active=True
             )
             db.add(actor)
             db.flush()
