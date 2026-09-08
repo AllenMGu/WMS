@@ -6,17 +6,17 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.core.database import SessionLocal
+from app.gsp.compliance_router import compliance_summary
 from app.gsp.models import GspBusinessPartner, GspDrugProfile, GspSupplierProductAuthorization
-from app.gsp.qualification import evaluate_supplier_product_authorization
-from app.gsp.router import (
+from app.gsp.partners_router import (
     approve_supplier_product,
     bulk_import_supplier_products,
-    compliance_summary,
     list_supplier_product_authorizations,
     list_supplier_products,
     suspend_supplier_product,
     upsert_supplier_product,
 )
+from app.gsp.qualification import evaluate_supplier_product_authorization
 from app.gsp.schemas import (
     ChangeReason,
     SupplierProductAuthorizationBulkImport,

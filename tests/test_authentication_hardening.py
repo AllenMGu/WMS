@@ -51,6 +51,7 @@ def test_production_ldap_requires_encrypted_verified_transport():
         ldap_start_tls=False,
         ldap_tls_validate=True,
         auto_create_schema=False,
+        audit_auto_verify_interval=300,
     )
     with pytest.raises(RuntimeError, match="LDAP_ALLOW_PLAINTEXT_AUTH"):
         unsafe.validate()
@@ -70,6 +71,7 @@ def test_production_plaintext_ldap_requires_explicit_risk_switch():
         ldap_server="ldap://directory.example.com:389",
         ldap_allow_plaintext_auth=True,
         auto_create_schema=False,
+        audit_auto_verify_interval=300,
     )
     allowed.validate()
     assert allowed.ldap_transport_mode() == "PLAINTEXT"

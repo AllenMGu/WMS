@@ -7,7 +7,7 @@ from starlette.requests import Request
 
 from app.core.database import SessionLocal
 from app.gsp.models import GspBusinessPartner, GspPartnerDocument
-from app.gsp.router import approve_partner, verify_partner_document
+from app.gsp.partners_router import approve_partner, verify_partner_document
 from app.gsp.schemas import ChangeReason
 from app.legacy import User, UserRole
 

@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.gsp.audit import verify_audit_chain
 from app.gsp.electronic_signature.service import verify_signature_chain
@@ -29,13 +29,13 @@ logger = logging.getLogger("wms.gsp.audit_auto_verify")
 
 
 def auto_verify_interval_seconds() -> int:
-    """Seconds between automatic chain verifications (0 disables the task)."""
-    raw = os.getenv("AUDIT_AUTO_VERIFY_INTERVAL", "0") or "0"
-    try:
-        return max(0, int(raw))
-    except (TypeError, ValueError):
-        logger.warning("AUDIT_AUTO_VERIFY_INTERVAL 不是合法整数(%r)，自动校验已关闭", raw)
-        return 0
+    """Seconds between automatic chain verifications (0 disables the task).
+
+    单一来源：直接读取 ``settings.audit_auto_verify_interval``（由环境变量
+    AUDIT_AUTO_VERIFY_INTERVAL 在 Settings 实例化时解析），与 config.validate()
+    的强制下限保持一致。
+    """
+    return max(0, settings.audit_auto_verify_interval)
 
 
 def verify_all_chains_once() -> tuple[bool, bool]:
