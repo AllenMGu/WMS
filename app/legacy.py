@@ -911,7 +911,7 @@ def update_user(
         # 前端须先 create_signature_challenge(USER_ACCESS_REVOKED, User,
         # RESPONSIBILITY, payload={}) 再用返回的令牌调用本端点。
         # 注：职责分离(SoD)要求操作人持有相应 GSP 岗位，暂以 ADMIN + 电子签名为最低保障。
-        if not signature_token:
+        if not isinstance(signature_token, str) or not signature_token:
             raise HTTPException(status_code=401, detail="停用用户必须提供电子签名令牌")
         from app.gsp.electronic_signature.service import consume_signature_challenge
 
@@ -961,7 +961,7 @@ def assign_warehouse_to_user(
 
     # 受控操作：仓库分配须电子签名并入签名哈希链（前端先 create_signature_challenge
     # (USER_WAREHOUSE_ASSIGN, User, RESPONSIBILITY, payload={}) 再携带令牌调用）。
-    if not signature_token:
+    if not isinstance(signature_token, str) or not signature_token:
         raise HTTPException(status_code=401, detail="分配仓库必须提供电子签名令牌")
     from app.gsp.electronic_signature.service import consume_signature_challenge
 
@@ -1058,7 +1058,7 @@ def delete_user(
 
     # 受控操作：必须提供电子签名令牌并并入签名哈希链（前端先 create_signature_challenge
     # (USER_ACCESS_REVOKED, User, RESPONSIBILITY, payload={}) 再携带令牌调用）。
-    if not signature_token:
+    if not isinstance(signature_token, str) or not signature_token:
         raise HTTPException(status_code=401, detail="删除/停用用户必须提供电子签名令牌")
     from app.gsp.electronic_signature.service import consume_signature_challenge
 
@@ -1104,7 +1104,7 @@ def unassign_warehouse_from_user(
 
     # 受控操作：取消仓库分配须独立复核签名(REVIEW)并入签名哈希链（前端先
     # create_signature_challenge(USER_WAREHOUSE_UNASSIGN, User, REVIEW, payload={}) 再调用）。
-    if not signature_token:
+    if not isinstance(signature_token, str) or not signature_token:
         raise HTTPException(status_code=401, detail="取消仓库分配必须提供电子签名令牌")
     from app.gsp.electronic_signature.service import consume_signature_challenge
 

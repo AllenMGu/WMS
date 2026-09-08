@@ -7,6 +7,8 @@ from starlette.requests import Request
 
 from app.core.database import SessionLocal
 from app.gsp.audit import verify_audit_chain
+from app.gsp.electronic_signature.schemas import SignatureChallengeCreate
+from app.gsp.electronic_signature.service import create_signature_challenge
 from app.gsp.models import GspAuditEvent
 from app.legacy import (
     Location,
@@ -23,6 +25,7 @@ from app.legacy import (
     create_user,
     create_warehouse,
     delete_location,
+    get_password_hash,
     unassign_warehouse_from_user,
     update_location,
 )
@@ -163,6 +166,7 @@ def test_default_assignment_and_unassignment_capture_complete_access_state():
     db = SessionLocal()
     try:
         admin = _user(db, "权限管理员", UserRole.ADMIN)
+        admin.hashed_password = get_password_hash("correct-password")
         target = _user(db, "目标操作员", UserRole.OPERATOR)
         first = _warehouse(db, "第一仓库")
         second = _warehouse(db, "第二仓库")
@@ -183,6 +187,19 @@ def test_default_assignment_and_unassignment_capture_complete_access_state():
                 _request(),
                 reason="批准调整默认仓库",
                 is_default=True,
+                signature_token=create_signature_challenge(
+                    db,
+                    user=admin,
+                    payload=SignatureChallengeCreate(
+                        action="USER_WAREHOUSE_ASSIGN",
+                        entity_type="User",
+                        entity_id=f"{target.id}:{second.id}",
+                        meaning="RESPONSIBILITY",
+                        payload={},
+                        reason="批准调整默认仓库",
+                        password="correct-password",
+                    ),
+                )[1],
                 current_user=admin,
                 db=db,
             )
@@ -209,6 +226,19 @@ def test_default_assignment_and_unassignment_capture_complete_access_state():
                 second.id,
                 _request(),
                 reason="岗位调整解除第二仓库",
+                signature_token=create_signature_challenge(
+                    db,
+                    user=admin,
+                    payload=SignatureChallengeCreate(
+                        action="USER_WAREHOUSE_UNASSIGN",
+                        entity_type="User",
+                        entity_id=f"{target.id}:{second.id}",
+                        meaning="REVIEW",
+                        payload={},
+                        reason="岗位调整解除第二仓库",
+                        password="correct-password",
+                    ),
+                )[1],
                 current_user=admin,
                 db=db,
             )
