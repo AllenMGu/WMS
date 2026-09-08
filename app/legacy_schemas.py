@@ -44,7 +44,7 @@ class WarehouseResponse(BaseModel):
     id: int
     code: str
     name: str
-    address: str
+    address: Optional[str] = None
     is_active: Optional[bool] = True
 
     model_config = ConfigDict(from_attributes=True)
