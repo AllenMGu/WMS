@@ -13,6 +13,7 @@ def test_production_rejects_sqlite():
         secret_key_version_ref="kv://jwt/v1",
         database_credential_version_ref="kv://postgres/v1",
         auto_create_schema=False,
+        audit_auto_verify_interval=300,
     )
     with pytest.raises(RuntimeError, match="PostgreSQL"):
         config.validate()
@@ -28,6 +29,7 @@ def test_production_rejects_weak_secret():
         secret_key_version_ref="kv://jwt/v1",
         database_credential_version_ref="kv://postgres/v1",
         auto_create_schema=False,
+        audit_auto_verify_interval=300,
     )
     with pytest.raises(RuntimeError, match="SECRET_KEY"):
         config.validate()
@@ -43,6 +45,7 @@ def test_production_requires_secret_store_metadata():
         secret_key_version_ref="",
         database_credential_version_ref="",
         auto_create_schema=False,
+        audit_auto_verify_interval=300,
     )
     with pytest.raises(RuntimeError, match="SECRETS_PROVIDER"):
         config.validate()
@@ -61,6 +64,7 @@ def test_production_requires_ldap_credential_version_when_bind_is_configured():
         ldap_admin_password="not-checked-into-source",
         ldap_credential_version_ref="",
         auto_create_schema=False,
+        audit_auto_verify_interval=300,
     )
     with pytest.raises(RuntimeError, match="LDAP_CREDENTIAL_VERSION_REF"):
         config.validate()
@@ -76,6 +80,7 @@ def test_production_rejects_automatic_schema_creation():
         secret_key_version_ref="kv://jwt/v1",
         database_credential_version_ref="kv://postgres/v1",
         auto_create_schema=True,
+        audit_auto_verify_interval=300,
     )
     with pytest.raises(RuntimeError, match="AUTO_CREATE_SCHEMA=false"):
         config.validate()
@@ -95,6 +100,7 @@ def test_production_requires_attachment_policy_enforce():
             secret_key_version_ref="v1",
             database_credential_version_ref="d1",
             ldap_credential_version_ref="l1",
+            audit_auto_verify_interval=300,
         )
 
     with pytest.raises(RuntimeError, match="enforce"):

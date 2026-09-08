@@ -14,6 +14,7 @@ import subprocess
 import sys
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -28,7 +29,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _seed_events(db: Session, n: int = 3) -> list[GspAuditEvent]:
-    actor = User(username="tamper-seeder", hashed_password="x", full_name="seeder", is_active=True)
+    # username 唯一化，避免多进程/多会话测试共用同一固定用户名污染共享库。
+    actor = User(
+        username=f"tamper-seeder-{uuid4().hex[:8]}",
+        hashed_password="x",
+        full_name="seeder",
+        is_active=True,
+    )
     db.add(actor)
     db.flush()
     events: list[GspAuditEvent] = []
@@ -52,6 +59,8 @@ def test_verify_audit_chain_detects_reason_tampering():
     import main  # noqa: F401  # ensure tables / app are initialized
 
     db = SessionLocal()
+    target_id = None
+    orig_reason = None
     try:
         assert verify_audit_chain(db) == (True, None)
         events = _seed_events(db, n=3)
@@ -59,6 +68,7 @@ def test_verify_audit_chain_detects_reason_tampering():
         # Tamper: edit a stored audit row directly (as a rogue DB user would).
         target = events[1]
         target_id = target.id
+        orig_reason = target.reason
         target.reason = "edited-by-attacker"
         db.commit()
 
@@ -66,6 +76,8 @@ def test_verify_audit_chain_detects_reason_tampering():
         assert valid is False
         assert broken_event_id == target_id
     finally:
+        # 恢复被篡改的审计行，避免污染共享库、影响后续测试的链校验。
+        _restore_audit_event(db, target_id, reason=orig_reason)
         db.close()
 
 
@@ -73,12 +85,15 @@ def test_verify_audit_chain_detects_hash_tampering():
     import main  # noqa: F401
 
     db = SessionLocal()
+    target_id = None
+    orig_hash = None
     try:
         events = _seed_events(db, n=3)
 
         # Tamper: rewrite the stored event_hash to a fabricated value.
         target = events[0]
         target_id = target.id
+        orig_hash = target.event_hash
         target.event_hash = "0" * 64
         db.commit()
 
@@ -86,7 +101,37 @@ def test_verify_audit_chain_detects_hash_tampering():
         assert valid is False
         assert broken_event_id == target_id
     finally:
+        # 恢复被篡改的审计行，避免污染共享库、影响后续测试的链校验。
+        _restore_audit_event(db, target_id, event_hash=orig_hash)
         db.close()
+
+
+def _restore_audit_event(
+    db: Session,
+    event_id,
+    *,
+    reason=None,
+    event_hash=None,
+) -> None:
+    """Undo a tamper edit so the shared audit chain stays valid for other tests.
+
+    Runs in a ``finally`` block independent of the assertions above, so it
+    restores the chain even when the test itself fails.  Any error during
+    restore is swallowed after a rollback to avoid masking the original failure.
+    """
+    if event_id is None:
+        return
+    try:
+        target = db.get(GspAuditEvent, event_id)
+        if target is None:
+            return
+        if reason is not None:
+            target.reason = reason
+        if event_hash is not None:
+            target.event_hash = event_hash
+        db.commit()
+    except Exception:  # noqa: BLE001 - 恢复失败不应覆盖原始测试失败
+        db.rollback()
 
 
 def test_verify_audit_chain_script_exits_nonzero_on_tampered_db():
