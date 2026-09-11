@@ -51,7 +51,7 @@ Four items are intentionally deferred from this delivery:
 1. the formal pharmaceutical traceability-platform adapter;
 2. connection to the physical temperature/humidity gateway and external alert channels;
 3. the production JZT adapter and formal joint integration testing;
-4. the complete approved CSV validation package.
+4. the complete approved CSV validation package (the template, protocol files and validation plan have been established; formal execution in target environments is still required).
 
 ## LDAP Transport Modes
 
