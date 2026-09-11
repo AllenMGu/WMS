@@ -1,32 +1,62 @@
-# 依赖约束文件（与 pyproject.toml 范围一致的已解析版本）
-# 生成方式: python3.12 -m venv .venv-lock && pip install -e '.[dev]' && pip freeze
-# 生成时间: 2026年 09月 10日 CST
+# 依赖锁定文件（完整解析结果，含全部传递依赖）
+# 范围: pyproject.toml 项目依赖 + [dev] 额外依赖，在 Python 3.12.14 / Linux x86_64 上的完整锁定
+# 生成方式: python3.12 -m venv .venv-lock
+#             pip install -e '.[dev]' -c constraints.txt   # 先按直接依赖锁定解析
+#             pip freeze                                    # 得到完整解析结果（见下）
+# 生成时间: 2026年 09月 10日
 # 用法: pip install -e '.[dev]' -c constraints.txt
-
-# FastAPI 组件（锁定已验证的 0.115.x 单版本线，见 pyproject.toml 说明）
-fastapi==0.115.14
-starlette==0.46.2
-uvicorn==0.52.4
-pydantic==2.13.5
-
-# SQLAlchemy 组件
-sqlalchemy==2.0.52
+# 说明: fastapi 锁定在 0.115.x 单版本线（0.116+/starlette 1.x 的 include_router 行为变化），starlette 保持在 0.40–0.47
+#       如需升级任何依赖: 先在干净 venv 按上述方式重新解析，再整体更新本文件
 alembic==1.19.2
-psycopg2-binary==2.9.13
-
-# 安全/认证组件
+annotated-types==0.8.0
+anyio==4.15.1
 bcrypt==4.0.1
-passlib==1.7.4
-python-jose==3.5.0
-
-# 其他依赖组件
-ldap3==2.9.1
-pandas==2.3.3
-openpyxl==3.1.5
-python-multipart==0.0.32
-olefile==0.47
-
-# 开发工具
-pytest==8.4.2
+certifi==2026.7.22
+cffi==2.1.1
+click==8.5.0
+cryptography==50.0.1
+ecdsa==0.19.2
+et_xmlfile==2.0.0
+fastapi==0.115.14
+greenlet==3.5.5
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
 httpx==0.28.1
+idna==3.19
+iniconfig==2.3.0
+ldap3==2.9.1
+Mako==1.4.1
+MarkupSafe==3.0.3
+numpy==2.5.3
+olefile==0.47
+openpyxl==3.1.5
+packaging==26.3
+pandas==2.3.3
+passlib==1.7.4
+pluggy==1.6.0
+psycopg2-binary==2.9.13
+pyasn1==0.6.4
+pycparser==3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+Pygments==2.21.0
+pytest==8.4.2
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+python-jose==3.5.0
+python-multipart==0.0.32
+pytz==2026.3.post1
+PyYAML==6.0.3
+rsa==4.9.1
 ruff==0.16.7
+six==1.17.0
+SQLAlchemy==2.0.52
+starlette==0.46.2
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2026.3
+uvicorn==0.52.4
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.1
